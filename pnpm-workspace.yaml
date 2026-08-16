@@ -1,0 +1,4 @@
+# TypeScript workspace. Python lives in the `uv` workspace declared in the root
+# `pyproject.toml` — see docs/adr/0001-language-boundaries-in-the-monorepo.md.
+packages:
+  - "apps/*"
