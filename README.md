@@ -60,6 +60,25 @@ uv run pytest           # repository-level and per-package tests
 Build, lint and per-service commands are added as later M0 issues introduce
 them.
 
+#### API
+
+```bash
+uv run uvicorn tcg_api.main:app --reload   # API on http://localhost:8000
+```
+
+`GET /health` reports the service status and the application version; the
+OpenAPI schema is at `/openapi.json` and the interactive documentation at
+`/docs`. Settings are read from `TCG_API_`-prefixed environment variables.
+
+The image is built from the repository root, because `services/api` is a member
+of the uv workspace and cannot be resolved without it:
+
+```bash
+docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
+docker run --rm -p 8000:8000 tcg-api:dev
+```
+
+Compose wiring arrives with #20.
 #### Database
 
 Every schema change arrives through a reviewed, versioned Alembic migration —
