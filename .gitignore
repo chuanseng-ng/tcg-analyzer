@@ -221,5 +221,11 @@ __marimo__/
 .claude
 CLAUDE.md
 
+# Agent skills
+#   Vendored third-party skill content — reinstall from skills-lock.json instead.
+#   skills-lock.json is deliberately NOT ignored: it pins the source and content
+#   hash so everyone resolves the same audited version.
+.agents/
+
 # Spec
 spec/

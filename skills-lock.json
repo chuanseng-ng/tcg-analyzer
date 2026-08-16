@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "python-background-jobs": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/python-development/skills/python-background-jobs/SKILL.md",
+      "computedHash": "76c69e28428aa23acdf0b8275c9954bfbf7084d22c5cf45cb2ebf19de55cf8f2"
+    }
+  }
+}
