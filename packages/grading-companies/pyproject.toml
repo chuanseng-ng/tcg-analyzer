@@ -1,0 +1,13 @@
+[project]
+name = "tcg-grading-companies"
+version = "0.0.0"
+description = "GradingCompanyAdapter port and PSA/TAG/BGS grade scales"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tcg_grading_companies"]

@@ -1,0 +1,21 @@
+[project]
+name = "tcg-grading-advisor"
+version = "0.0.0"
+description = "TCG Grading Advisor — uv workspace root"
+requires-python = ">=3.12"
+dependencies = []
+
+# The root is a workspace container, not a distributable package.
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*", "services/*", "ml/*", "ml/grading/*"]
+# `ml/grading/` groups the per-company predictors; it is not itself a package.
+exclude = ["ml/grading"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

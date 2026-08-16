@@ -1,0 +1,13 @@
+[project]
+name = "tcg-market-data"
+version = "0.0.0"
+description = "MarketDataProvider port and market data normalization"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tcg_market_data"]

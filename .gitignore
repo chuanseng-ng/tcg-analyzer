@@ -229,3 +229,57 @@ CLAUDE.md
 
 # Spec
 spec/
+
+# ---------------------------------------------------------------------------
+# Node / TypeScript
+# ---------------------------------------------------------------------------
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+.eslintcache
+.pnpm-store/
+
+#   The Python template above ignores `lib/` as a setuptools build artifact.
+#   In a Next.js app `lib/` is source. Re-include it.
+!apps/**/lib/
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+.env.*
+!.env.example
+
+# ---------------------------------------------------------------------------
+# Model weights — never commit. The project may be open-sourced later, so these
+# must stay out of history, not merely out of the working tree.
+# ---------------------------------------------------------------------------
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.tflite
+*.pkl
+
+# ---------------------------------------------------------------------------
+# Card and training images — never commit. `datasets/` holds schemas, manifests
+# and documentation only.
+# ---------------------------------------------------------------------------
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.tif
+*.tiff
+*.heic
+*.heif
+*.bmp
+
+#   Application and documentation assets are not training data.
+!apps/**/public/**
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.svg
