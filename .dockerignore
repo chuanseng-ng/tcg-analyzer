@@ -1,0 +1,29 @@
+# Docker builds run from the repository root because the Python workspace is
+# only resolvable there. Keep the context to what a build actually needs.
+
+.git
+.gitignore
+.github
+
+# Environments and caches — rebuilt inside the image, and a host `.venv`
+# contains absolute paths that are wrong in a container.
+.venv
+node_modules
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.uv-cache
+
+# Local-only and never shipped.
+spec/
+.claude
+.env
+.env.*
+*.log
+
+# Build outputs.
+.next
+dist/
+build/

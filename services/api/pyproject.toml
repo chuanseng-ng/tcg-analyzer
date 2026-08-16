@@ -3,7 +3,12 @@ name = "tcg-api"
 version = "0.0.0"
 description = "FastAPI HTTP surface for TCG Grading Advisor"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.4",
+    "structlog>=24.4",
+]
 
 [build-system]
 requires = ["hatchling"]

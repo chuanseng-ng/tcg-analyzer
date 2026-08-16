@@ -1,0 +1,69 @@
+"""Application assembly for the API service (spec §8).
+
+Python and FastAPI are intentional: the ML system is Python-native, so the HTTP
+surface shares a language with the models it will eventually call.
+
+The application is built by a factory rather than a module-level constant so
+tests can construct isolated instances, and so configuration is read at
+construction time rather than at import time.
+"""
+
+from __future__ import annotations
+
+import structlog
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from tcg_api.config import Settings, get_settings
+from tcg_api.logging import configure_logging
+from tcg_api.routers import health
+from tcg_api.version import application_version
+
+__all__ = ["create_app"]
+
+DESCRIPTION = """\
+HTTP surface for TCG Grading Advisor.
+
+Returns a card's identity, its condition, a probability distribution over grades
+for each grading company, market values and the economics of grading it.
+
+This is not an official grading service. It does not authenticate cards, and its
+predictions are probabilities — never guaranteed grades.
+"""
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Build the FastAPI application.
+
+    The OpenAPI schema this produces is the sole source of types for
+    ``apps/web`` (ADR 0001), so every route must declare a typed response model.
+    """
+    settings = settings or get_settings()
+    configure_logging(settings)
+
+    version = application_version()
+    app = FastAPI(
+        title="TCG Grading Advisor API",
+        version=version,
+        description=DESCRIPTION,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(health.router)
+
+    structlog.get_logger(__name__).info(
+        "api.startup",
+        application_version=version,
+        log_format=settings.log_format,
+        log_level=settings.log_level,
+        cors_origins=settings.cors_origins,
+    )
+
+    return app
