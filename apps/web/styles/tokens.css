@@ -1,0 +1,91 @@
+/*
+ * Design tokens.
+ *
+ * Plain CSS custom properties, deliberately: the results UI in M9 — grade
+ * distribution bars, confidence meters, price history — consumes these values
+ * directly, and a chart palette that has to be extracted from a build step is a
+ * palette that drifts. Everything downstream reads from here.
+ *
+ * Every colour has its base definition on bare `:root`. The dark block below
+ * redefines colours only; it never introduces one.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---------------------------------------------------------------- type */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  /* Fluid from the 375px phone the product is designed around. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: clamp(1.0625rem, 1rem + 0.4vw, 1.25rem);
+  --text-xl: clamp(1.25rem, 1.1rem + 0.9vw, 1.625rem);
+  --text-2xl: clamp(1.75rem, 1.4rem + 2.2vw, 2.75rem);
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.6;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-bold: 700;
+
+  /* ------------------------------------------------------------- spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.5rem;
+
+  /* -------------------------------------------------------------- shape */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-full: 999rem;
+
+  /* ------------------------------------------------------------- layout */
+  --measure: 40rem; /* comfortable reading width for prose */
+  --layout-max: 64rem; /* outer content width */
+  --gutter: clamp(1rem, 4vw, 2rem);
+  --tap-target: 2.75rem; /* 44px — the minimum comfortable touch target */
+
+  /* ------------------------------------------------------------ colour */
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-fg: #10131a;
+  --color-muted: #565e6c;
+  --color-border: #d9dde4;
+  --color-accent: #1a4fd6;
+  --color-accent-hover: #143eab;
+  --color-accent-fg: #ffffff;
+  --color-success: #17603a;
+  --color-warning: #8a5a00;
+  --color-danger: #b42318;
+  --color-focus: #1a4fd6;
+
+  --shadow-sm: 0 1px 2px rgb(16 19 26 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0c1017;
+    --color-surface: #141a23;
+    --color-fg: #e9edf3;
+    --color-muted: #9aa5b5;
+    --color-border: #26303d;
+    --color-accent: #7aa5ff;
+    --color-accent-hover: #9ebcff;
+    --color-accent-fg: #08101f;
+    --color-success: #6ee7a8;
+    --color-warning: #f0c274;
+    --color-danger: #ff9c92;
+    --color-focus: #7aa5ff;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  }
+}

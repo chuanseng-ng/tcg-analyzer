@@ -57,5 +57,17 @@ uv sync --all-packages  # resolve all Python workspace members
 uv run pytest           # repository-level tests
 ```
 
+#### Web
+
+```bash
+pnpm install
+pnpm --filter @tcg/web dev     # http://localhost:3000
+pnpm --filter @tcg/web test
+pnpm --filter @tcg/web build
+```
+
+The app reads `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`); see
+`apps/web/.env.example`.
+
 Build, lint and per-service commands are added as later M0 issues introduce
 them.
