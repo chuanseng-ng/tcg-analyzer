@@ -14,12 +14,15 @@ The frozen contract:
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 
 from tcg_api.database import check_database_connectivity, get_engine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
@@ -42,8 +45,22 @@ class ReadinessResponse(BaseModel):
 
 
 async def database_is_reachable() -> bool:
-    """Dependency wrapping the connectivity probe, so tests can override it."""
-    return await check_database_connectivity(get_engine())
+    """Dependency wrapping the connectivity probe, so tests can override it.
+
+    Building the engine sits inside the guard because it is itself a thing that
+    can fail: `get_engine` reads `TCG_API_DATABASE_URL`, and an unset or
+    malformed value raises before any connection is attempted. Letting that
+    escape would answer a readiness probe with a 500 — "this probe is broken" —
+    when the truthful answer is a 503 naming the database as unavailable.
+    Misconfiguration is the most likely reason a fresh deployment is not ready,
+    so it is the last thing that should surface as a crash.
+    """
+    try:
+        engine = get_engine()
+    except Exception:  # noqa: BLE001 - unconfigurable is "not ready", not "broken"
+        logger.warning("database engine could not be configured", exc_info=True)
+        return False
+    return await check_database_connectivity(engine)
 
 
 @router.get(

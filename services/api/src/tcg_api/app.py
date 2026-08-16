@@ -10,16 +10,35 @@ construction time rather than at import time.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from tcg_api.config import Settings, get_settings
+from tcg_api.database import get_engine
 from tcg_api.logging import configure_logging
-from tcg_api.routers import health
+from tcg_api.routers import health, readiness
 from tcg_api.version import application_version
 
 __all__ = ["create_app"]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Release the connection pool on shutdown.
+
+    `get_engine` is lazily cached, so an engine exists only if something
+    actually reached for the database. Checking that before disposing keeps a
+    process that never touched PostgreSQL — anything serving only `/health` —
+    from constructing an engine purely in order to throw it away, which would
+    also make shutdown require configuration that startup did not.
+    """
+    yield
+    if get_engine.cache_info().currsize:
+        await get_engine().dispose()
 
 DESCRIPTION = """\
 HTTP surface for TCG Grading Advisor.
@@ -46,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="TCG Grading Advisor API",
         version=version,
         description=DESCRIPTION,
+        lifespan=lifespan,
     )
 
     app.add_middleware(
@@ -57,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(readiness.router)
 
     structlog.get_logger(__name__).info(
         "api.startup",
