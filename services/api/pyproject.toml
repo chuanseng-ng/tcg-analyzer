@@ -3,7 +3,17 @@ name = "tcg-api"
 version = "0.0.0"
 description = "FastAPI HTTP surface for TCG Grading Advisor"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    "fastapi>=0.115",
+    # Imported directly by database.py and routers/readiness.py, so it is
+    # declared directly. Arriving transitively via fastapi/pydantic-settings
+    # would let either package's pin silently break those modules.
+    "pydantic>=2",
+    "pydantic-settings>=2.4",
+    "sqlalchemy[asyncio]>=2.0",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -54,8 +54,52 @@ Two workspaces, split by language — see
 ```bash
 pnpm install            # resolve the TypeScript workspace
 uv sync --all-packages  # resolve all Python workspace members
-uv run pytest           # repository-level tests
+uv run pytest           # repository-level and per-package tests
 ```
 
 Build, lint and per-service commands are added as later M0 issues introduce
 them.
+
+#### Database
+
+Every schema change arrives through a reviewed, versioned Alembic migration —
+never ad-hoc DDL. Start PostgreSQL, then migrate:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait
+
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+
+uv run alembic upgrade head              # migrate up
+uv run alembic downgrade -1              # migrate down one revision
+uv run alembic revision -m "description" # new revision
+uv run alembic current                   # which revision is applied
+uv run alembic history                   # the revision graph
+```
+
+Tear the database down with `docker compose -f
+infrastructure/local/docker-compose.yml down -v`. The `-v` discards the volume,
+so the next `up` starts from an empty database and `upgrade head` rebuilds the
+schema from the migrations alone.
+
+`TCG_API_DATABASE_URL` is a SQLAlchemy URL using the asyncpg driver:
+
+```text
+postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>
+```
+
+It is the single source of the connection string — the API service and Alembic
+both read it, and it never appears in `alembic.ini` or any committed file. The
+Compose defaults above are local-only values, not secrets; see
+`infrastructure/local/README.md`.
+
+Migrations are portable, plain PostgreSQL. Nothing may depend on a
+Supabase-specific feature (spec §8).
+
+Tests that need a live database are marked `integration` and skip when
+`TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
+
+```bash
+uv run pytest -m integration   # requires PostgreSQL to be running
+uv run pytest -m "not integration"
+```
