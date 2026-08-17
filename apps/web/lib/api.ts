@@ -1,24 +1,28 @@
 /**
  * Client for the FastAPI service in `services/api`.
  *
- * NOTE: the response types below are hand-written against the frozen `/health`
- * contract. They are temporary. Per
- * `docs/adr/0001-language-boundaries-in-the-monorepo.md` the frontend/backend
- * contract is the OpenAPI schema, and #21 replaces this file's types with ones
- * generated from it. Do not grow a hand-maintained type surface here in the
- * meantime — add the endpoint to the schema instead.
+ * Response types come from `./api-types`, generated from the service's OpenAPI
+ * schema — see `docs/adr/0001-language-boundaries-in-the-monorepo.md`. The
+ * schema is the frontend/backend contract, so do not hand-write a response
+ * type here: add the endpoint to the schema and regenerate with
+ * `pnpm --filter @tcg/web gen:api-types`. CI fails if the two drift apart.
  */
+
+import type { components } from "./api-types";
 
 const DEFAULT_API_BASE_URL = "http://localhost:8000";
 
 /** Health checks are a liveness signal; a slow answer is a failed one. */
 const HEALTH_TIMEOUT_MS = 5_000;
 
-/** `GET /health` — see services/api. */
-export interface HealthResponse {
-  status: string;
-  application_version: string;
-}
+/**
+ * `GET /health`.
+ *
+ * Aliased rather than re-declared so that a change to the server's model is a
+ * compile error here, not a silent mismatch. `status` is narrower than it looks
+ * — the schema pins it to the literal `"ok"`.
+ */
+export type HealthResponse = components["schemas"]["HealthResponse"];
 
 export interface ApiErrorOptions {
   /** HTTP status, when the request reached the server at all. */

@@ -17,6 +17,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
+# `apps/web` generates its API types from this schema (ADR 0001), so producing
+# it must not require starting a server.
+[project.scripts]
+tcg-api-schema = "tcg_api.schema:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
