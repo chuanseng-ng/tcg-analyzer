@@ -11,6 +11,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "gen:api-types": "node scripts/generate-api-types.mjs",
+    "gen:api-types:check": "node scripts/generate-api-types.mjs --check",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "next typegen && tsc --noEmit"
@@ -32,6 +34,7 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.23",
     "jsdom": "^30.0.1",
+    "openapi-typescript": "^7.13.0",
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
