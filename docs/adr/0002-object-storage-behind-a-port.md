@@ -63,8 +63,10 @@ packages/shared/src/tcg_shared/storage/
   the two operations that touch the network pay for a thread.
 - Adapters raise only `tcg_shared.storage.errors` types. A botocore exception
   never escapes.
-- **MinIO locally**, in the same Compose file as PostgreSQL, with a one-shot
-  container that creates the bucket.
+- **MinIO locally**, in the same Compose file as PostgreSQL, creating its
+  bucket on startup rather than through a one-shot `mc` container: `up --wait`
+  waits for services to be running or healthy, and a container that has finished
+  its job is neither.
 - Credentials reach the API as `TCG_API_STORAGE_*` settings, with the secret key
   typed `SecretStr` — the first use of it in this codebase.
 

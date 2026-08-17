@@ -6,8 +6,8 @@ supporting services needed to run the complete application from a fresh clone.
 ## Current state
 
 `docker-compose.yml` defines **PostgreSQL** (`postgres:17-alpine`) and
-**MinIO**, plus a one-shot `minio-bucket` container that creates the bucket and
-exits. The `api` and `web` services extend this same file in #20 — there will
+**MinIO**, which creates its bucket on startup so a fresh volume comes up
+usable. The `api` and `web` services extend this same file in #20 — there will
 not be a second Compose file.
 
 ```bash
@@ -18,9 +18,13 @@ docker compose -f infrastructure/local/docker-compose.yml down      # stop, keep
 docker compose -f infrastructure/local/docker-compose.yml down -v   # stop, discard data
 ```
 
-`--wait` blocks until every healthcheck passes and the bucket container has
-exited, so a following `alembic upgrade head` does not race the database's
-startup and the first signed request does not race MinIO's.
+`--wait` blocks until every healthcheck passes, so a following
+`alembic upgrade head` does not race the database's startup and the first signed
+request does not race MinIO's.
+
+Every service here is long-running by design. `--wait` waits for services to be
+*running or healthy*, so a one-shot container — the idiomatic `mc mb` way to
+create a bucket — would make this command report failure even after exiting 0.
 
 Data lives in the named volumes `postgres-data` and `minio-data`. `down -v`
 discards both; the next `up` starts from an empty database and an empty bucket,
@@ -41,7 +45,7 @@ to see what an upload actually produced.
 | `MINIO_ROOT_PASSWORD` | `tcglocaldev` | Object-store secret key |
 | `MINIO_PORT` | `9000` | Published S3 API port |
 | `MINIO_CONSOLE_PORT` | `9001` | Published browser console port |
-| `TCG_API_STORAGE_BUCKET` | `tcg-local` | Bucket the init container creates |
+| `TCG_API_STORAGE_BUCKET` | `tcg-local` | Bucket MinIO creates on startup |
 
 Override them with an untracked `.env` beside `docker-compose.yml` — most often
 `POSTGRES_PORT=5433`, when something already owns 5432.

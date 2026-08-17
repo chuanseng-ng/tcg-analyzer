@@ -170,12 +170,12 @@ jobs:
 
       - run: uv sync --all-packages --frozen
 
-      # `--wait` blocks until MinIO is healthy and the bucket container has
-      # exited, so the first signed request does not race the store's startup.
+      # `--wait` blocks until MinIO's healthcheck passes, so the first signed
+      # request does not race the store's startup.
       - name: Start MinIO
         run: >-
           docker compose -f infrastructure/local/docker-compose.yml
-          up -d --wait minio minio-bucket
+          up -d --wait minio
 
       - name: Object-storage tests
         run: uv run pytest -m object_storage
