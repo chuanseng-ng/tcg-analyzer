@@ -16,8 +16,6 @@ import logging
 from collections.abc import AsyncIterator
 from functools import lru_cache
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -26,51 +24,40 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from tcg_api.config import DATABASE_URL_ENV_VAR, Settings, get_settings
+
 logger = logging.getLogger(__name__)
 
-DATABASE_URL_ENV_VAR = "TCG_API_DATABASE_URL"
+__all__ = [
+    "DATABASE_URL_ENV_VAR",
+    "check_database_connectivity",
+    "create_engine",
+    "create_session_factory",
+    "get_engine",
+    "get_session",
+    "get_session_factory",
+]
 
 
-class DatabaseSettings(BaseSettings):
-    """Database configuration, read from the `TCG_API_` environment namespace.
-
-    This is deliberately a settings class of its own rather than fields on
-    `tcg_api.config.Settings`. Issue #18 introduces unified environment and
-    secrets handling and will fold this into that single `Settings` object; the
-    `TCG_API_` prefix is already the one the rest of the service uses, so the
-    variable name does not change when it does.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="TCG_API_",
-        env_file=".env",
-        extra="ignore",
-        populate_by_name=True,
-    )
-
-    database_url: str = Field(
-        # Spelling the variable out rather than relying on `env_prefix` costs a
-        # little repetition and buys a validation error that names the thing the
-        # operator has to set, instead of the internal field name.
-        validation_alias=DATABASE_URL_ENV_VAR,
-        description="SQLAlchemy URL, e.g. postgresql+asyncpg://tcg:tcg@localhost:5432/tcg",
-    )
-
-
-@lru_cache(maxsize=1)
-def get_database_settings() -> DatabaseSettings:
-    """Return the process-wide database settings, read once."""
-    return DatabaseSettings()
-
-
-def create_engine(settings: DatabaseSettings | None = None) -> AsyncEngine:
+def create_engine(settings: Settings | None = None) -> AsyncEngine:
     """Build an async engine.
 
     `pool_pre_ping` costs one cheap round trip per checkout and buys immunity to
     connections severed by a restarted database or an idle-timeout proxy — both
     routine in container-based local development and in managed PostgreSQL.
+
+    An unconfigured database raises here rather than at `Settings` construction,
+    because a service with no `TCG_API_DATABASE_URL` must still start and report
+    itself unready (`routers/readiness.py`). The message names the variable, so
+    the readiness log says what to set rather than that something was `None`.
     """
-    settings = settings or get_database_settings()
+    settings = settings or get_settings()
+    if settings.database_url is None:
+        raise RuntimeError(
+            f"{DATABASE_URL_ENV_VAR} is not set. Point it at the database, e.g. "
+            f"{DATABASE_URL_ENV_VAR}=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg. "
+            f"See .env.example."
+        )
     return create_async_engine(settings.database_url, pool_pre_ping=True)
 
 

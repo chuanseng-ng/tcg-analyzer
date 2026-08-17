@@ -9,8 +9,7 @@
  */
 
 import type { components } from "./api-types";
-
-const DEFAULT_API_BASE_URL = "http://localhost:8000";
+import { apiBaseUrl } from "./env";
 
 /** Health checks are a liveness signal; a slow answer is a failed one. */
 const HEALTH_TIMEOUT_MS = 5_000;
@@ -45,15 +44,10 @@ export class ApiError extends Error {
 }
 
 /**
- * Base URL of the API, without a trailing slash.
- *
- * Read as a literal `process.env.NEXT_PUBLIC_*` member so Next can inline it
- * into the browser bundle at build time.
+ * Re-exported so a caller needs one import to talk to the API. The variable
+ * itself is owned by `./env`, which validates it — see that module.
  */
-export function apiBaseUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  return configured ? configured.replace(/\/+$/, "") : DEFAULT_API_BASE_URL;
-}
+export { apiBaseUrl };
 
 function isHealthResponse(payload: unknown): payload is HealthResponse {
   if (typeof payload !== "object" || payload === null) {

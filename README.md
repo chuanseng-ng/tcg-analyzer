@@ -52,10 +52,31 @@ Two workspaces, split by language — see
 ### Commands
 
 ```bash
+cp .env.example .env    # local configuration; `.env` is never committed
 pnpm install            # resolve the TypeScript workspace
 uv sync --all-packages  # resolve all Python workspace members
 uv run pytest           # repository-level and per-package tests
 ```
+
+### Configuration
+
+Every variable the stack reads is documented in [`.env.example`](.env.example)
+with a placeholder value. Copy it to `.env` and edit that — `.env` is
+gitignored, and no credential is ever committed (the project may be
+open-sourced). `tests/test_environment_example.py` fails if a setting exists in
+code but not in the example, so the two cannot drift.
+
+Configuration fails fast on a value that is wrong, and tolerates one that is
+absent. A malformed `TCG_API_DATABASE_URL` — an unparseable URL, or a
+synchronous driver where the engine is async — stops startup with a message
+naming the variable. An *unset* one does not: the API starts, `/health`
+answers, and `/readiness` reports `database: unavailable`, which is what a
+fresh clone looks like before PostgreSQL is running.
+
+The API's settings live in `services/api/src/tcg_api/config.py`; the web app's
+in `apps/web/lib/env.ts`. Nothing else reads the environment directly, because
+a variable only one module knows about is a variable that never reaches
+`.env.example`.
 
 #### Checks
 
@@ -91,8 +112,10 @@ pnpm --filter @tcg/web test
 pnpm --filter @tcg/web build
 ```
 
-The app reads `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`); see
-`apps/web/.env.example`.
+The app reads `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`),
+validated by `lib/env.ts`. Next reads env files from the app directory, so for
+`pnpm dev` copy `apps/web/.env.example` to `apps/web/.env.local`; the root
+`.env` is what the Compose stack passes to the container.
 
 #### API
 
@@ -102,7 +125,8 @@ uv run uvicorn tcg_api.main:app --reload   # API on http://localhost:8000
 
 `GET /health` reports the service status and the application version; the
 OpenAPI schema is at `/openapi.json` and the interactive documentation at
-`/docs`. Settings are read from `TCG_API_`-prefixed environment variables.
+`/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
+from `.env` — see [Configuration](#configuration).
 
 The image is built from the repository root, because `services/api` is a member
 of the uv workspace and cannot be resolved without it:
@@ -142,9 +166,11 @@ postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>
 ```
 
 It is the single source of the connection string — the API service and Alembic
-both read it, and it never appears in `alembic.ini` or any committed file. The
-Compose defaults above are local-only values, not secrets; see
-`infrastructure/local/README.md`.
+both read it, and it never appears in `alembic.ini`. Alembic reads the
+environment only, so export it as above even when `.env` already carries it for
+the API. The value in `.env.example` matches the Compose defaults: local-only
+values, not secrets; see `infrastructure/local/README.md`. A real credential
+belongs in `.env`, which is not committed.
 
 Migrations are portable, plain PostgreSQL. Nothing may depend on a
 Supabase-specific feature (spec §8).

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, apiBaseUrl, getHealth } from "@/lib/api";
+import { apiBaseUrl as validatedApiBaseUrl } from "@/lib/env";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -15,22 +16,11 @@ afterEach(() => {
 });
 
 describe("apiBaseUrl", () => {
-  it("falls back to the local FastAPI service", () => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", undefined);
-
-    expect(apiBaseUrl()).toBe("http://localhost:8000");
-  });
-
-  it("prefers the configured base URL", () => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.test");
-
-    expect(apiBaseUrl()).toBe("https://api.example.test");
-  });
-
-  it("strips a trailing slash so paths join cleanly", () => {
-    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.test/");
-
-    expect(apiBaseUrl()).toBe("https://api.example.test");
+  // The variable's own parsing rules are tested in `env.test.ts`, which owns
+  // it. What matters here is that the re-export is the same function, so a
+  // caller importing it from `@/lib/api` gets the validated one.
+  it("is the validated accessor from lib/env", () => {
+    expect(apiBaseUrl).toBe(validatedApiBaseUrl);
   });
 });
 
