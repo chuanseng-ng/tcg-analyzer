@@ -10,53 +10,31 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from tcg_api import database
+from tcg_api.config import DATABASE_URL_ENV_VAR, Settings
 
 # A syntactically valid URL that is never connected to.
 UNUSED_URL = "postgresql+asyncpg://unused:unused@127.0.0.1:1/unused"
 
 
 # ---------------------------------------------------------------------------
-# DatabaseSettings
-# ---------------------------------------------------------------------------
-def test_database_settings_reads_the_prefixed_environment_variable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TCG_API_DATABASE_URL", UNUSED_URL)
-
-    assert database.DatabaseSettings().database_url == UNUSED_URL
-
-
-def test_database_settings_ignores_unrelated_environment_variables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("TCG_API_DATABASE_URL", UNUSED_URL)
-    monkeypatch.setenv("TCG_API_SOMETHING_ELSE", "irrelevant")
-
-    assert database.DatabaseSettings().database_url == UNUSED_URL
-
-
-def test_database_settings_without_the_environment_variable_names_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("TCG_API_DATABASE_URL", raising=False)
-
-    with pytest.raises(ValidationError) as excinfo:
-        database.DatabaseSettings(_env_file=None)
-
-    assert "TCG_API_DATABASE_URL" in str(excinfo.value)
-
-
-# ---------------------------------------------------------------------------
 # Engine construction
+#
+# Settings themselves are tested in `test_config.py`; `database_url` lives on
+# the one service-wide `Settings` object rather than a second settings class.
 # ---------------------------------------------------------------------------
 def test_create_engine_uses_the_configured_url_and_pre_ping() -> None:
-    engine = database.create_engine(database.DatabaseSettings(database_url=UNUSED_URL))
+    engine = database.create_engine(Settings(_env_file=None, database_url=UNUSED_URL))
 
     assert engine.url.render_as_string(hide_password=False) == UNUSED_URL
     assert engine.pool._pre_ping is True
+
+
+def test_create_engine_without_configuration_names_the_variable() -> None:
+    """The readiness probe turns this into a 503, so the message reaches a log."""
+    with pytest.raises(RuntimeError, match=DATABASE_URL_ENV_VAR):
+        database.create_engine(Settings(_env_file=None))
 
 
 # ---------------------------------------------------------------------------

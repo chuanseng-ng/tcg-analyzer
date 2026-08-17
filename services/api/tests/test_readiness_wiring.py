@@ -17,7 +17,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from tcg_api.app import create_app
-from tcg_api.database import get_database_settings, get_engine, get_session_factory
+from tcg_api.config import get_settings
+from tcg_api.database import get_engine, get_session_factory
 from tcg_api.routers.readiness import database_is_reachable
 
 
@@ -25,10 +26,10 @@ from tcg_api.routers.readiness import database_is_reachable
 def app_without_database(monkeypatch: pytest.MonkeyPatch):
     """The application with no database configuration at all."""
     monkeypatch.delenv("TCG_API_DATABASE_URL", raising=False)
-    for cached in (get_database_settings, get_engine, get_session_factory):
+    for cached in (get_settings, get_engine, get_session_factory):
         cached.cache_clear()
     yield create_app()
-    for cached in (get_database_settings, get_engine, get_session_factory):
+    for cached in (get_settings, get_engine, get_session_factory):
         cached.cache_clear()
 
 
