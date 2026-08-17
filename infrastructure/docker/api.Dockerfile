@@ -16,7 +16,7 @@
 # Both stages share one base image so the interpreter the virtual environment
 # points at is byte-identical to the interpreter that runs it.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
 
@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --------------------------------------------------------------------------
 # Runtime — the environment and the source, run unprivileged.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 # Uploaded card images are untrusted input; nothing here needs root.
 RUN groupadd --system --gid 1001 tcg \
