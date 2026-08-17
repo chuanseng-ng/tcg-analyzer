@@ -150,3 +150,32 @@ def test_bucket_sorts_below_the_next_grade_up() -> None:
 def test_comparison_with_a_non_grade_is_not_supported() -> None:
     with pytest.raises(TypeError):
         _ = Grade.parse("9") < 9  # type: ignore[operator]
+
+
+# --------------------------------------------------------------------------
+# Exhaustiveness
+#
+# Both matches below cover every `GradeBound` today, so neither default branch
+# is reachable. They exist for the fourth member somebody adds later: without
+# them the function falls off the end and returns `None`, which `sort_key`
+# would carry into a comparison and `__str__` would turn into a `TypeError`
+# several frames away from the omission that caused it.
+#
+# Reached here through an unbound call with a stand-in, because a `GradeBound`
+# that is not one of the three cannot be constructed.
+# --------------------------------------------------------------------------
+class _NotABound:
+    """Stands in for a `GradeBound` member that has no `case` yet."""
+
+    value = Decimal("9")
+    bound = "or_sideways"
+
+
+def test_an_unhandled_bound_fails_loudly_in_sort_offset() -> None:
+    with pytest.raises(AssertionError):
+        GradeBound.sort_offset.fget(_NotABound.bound)  # type: ignore[attr-defined]
+
+
+def test_an_unhandled_bound_fails_loudly_in_str() -> None:
+    with pytest.raises(AssertionError):
+        Grade.__str__(_NotABound())  # type: ignore[arg-type]

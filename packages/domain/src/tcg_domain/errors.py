@@ -42,8 +42,15 @@ class InvalidGradeDistribution(DomainError, ValueError):
     """
 
 
-class InvalidMoney(DomainError, ValueError):
-    """A monetary amount is not representable — most often a binary float."""
+class InvalidMoney(DomainError, ValueError, ArithmeticError):
+    """A monetary amount is not representable — most often a binary float.
+
+    Also an `ArithmeticError`, because `Money.__mul__` raises it rather than
+    returning `NotImplemented` for a float factor: returning `NotImplemented`
+    would hand the operation to `float.__rmul__` and produce an unhelpful
+    `TypeError` in place of the message naming `Decimal` as the fix. Since the
+    exception escapes an arithmetic operator, it should be catchable as one.
+    """
 
 
 class CurrencyMismatch(DomainError, ValueError):
