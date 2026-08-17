@@ -23,15 +23,31 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, NoSuchModuleError
 
-__all__ = ["DATABASE_URL_ENV_VAR", "Settings", "get_settings"]
+__all__ = [
+    "DATABASE_URL_ENV_VAR",
+    "STORAGE_ACCESS_KEY_ID_ENV_VAR",
+    "STORAGE_BUCKET_ENV_VAR",
+    "STORAGE_ENDPOINT_URL_ENV_VAR",
+    "STORAGE_SECRET_ACCESS_KEY_ENV_VAR",
+    "Settings",
+    "get_settings",
+]
 
 DATABASE_URL_ENV_VAR = "TCG_API_DATABASE_URL"
+STORAGE_ACCESS_KEY_ID_ENV_VAR = "TCG_API_STORAGE_ACCESS_KEY_ID"
+STORAGE_BUCKET_ENV_VAR = "TCG_API_STORAGE_BUCKET"
+STORAGE_ENDPOINT_URL_ENV_VAR = "TCG_API_STORAGE_ENDPOINT_URL"
+# bandit reads any string named `..._KEY` as a credential. This one is the name
+# of an environment variable, which is the opposite: it exists so that error
+# messages can name the thing to set without naming its value.
+STORAGE_SECRET_ACCESS_KEY_ENV_VAR = "TCG_API_STORAGE_SECRET_ACCESS_KEY"  # noqa: S105
 
 
 def _require_async_database_url(value: str) -> str:
@@ -60,6 +76,24 @@ def _require_async_database_url(value: str) -> str:
 
 
 AsyncDatabaseUrl = Annotated[str, AfterValidator(_require_async_database_url)]
+
+
+def _require_absolute_url(value: str) -> str:
+    """Reject a storage endpoint boto3 could never resolve.
+
+    An endpoint missing its scheme is the overwhelmingly common mistake
+    (``localhost:9000`` rather than ``http://localhost:9000``), and botocore's
+    own message for it names neither the variable nor the omission.
+    """
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            f"must be an absolute http(s) URL such as http://localhost:9000, got {value!r}"
+        )
+    return value
+
+
+StorageEndpointUrl = Annotated[str, AfterValidator(_require_absolute_url)]
 
 
 class Settings(BaseSettings):
@@ -95,6 +129,58 @@ class Settings(BaseSettings):
         description="SQLAlchemy URL, e.g. postgresql+asyncpg://tcg:tcg@localhost:5432/tcg",
     )
     """Where PostgreSQL lives. ``None`` means unconfigured, not invalid."""
+
+    # ----------------------------------------------------------------
+    # Object storage — the S3-compatible adapter in tcg_shared.storage.s3.
+    #
+    # These name S3 concepts because an adapter's configuration legitimately
+    # does. The port does not: nothing below crosses into `tcg_shared.storage`,
+    # which is what keeps the provider replaceable (ADR 0002).
+    # ----------------------------------------------------------------
+
+    storage_endpoint_url: StorageEndpointUrl | None = Field(
+        default=None,
+        validation_alias=STORAGE_ENDPOINT_URL_ENV_VAR,
+        description="S3-compatible endpoint, e.g. http://localhost:9000 for MinIO",
+    )
+    """Where the object store lives. ``None`` means real AWS S3, whose endpoint
+    boto3 derives from the region."""
+
+    storage_bucket: str | None = Field(
+        default=None,
+        validation_alias=STORAGE_BUCKET_ENV_VAR,
+        description="Bucket every storage key is relative to",
+    )
+    """The bucket. ``None`` means unconfigured, not invalid."""
+
+    storage_region: str = "us-east-1"
+    """The region to sign for. MinIO ignores it, but a v4 signature needs one."""
+
+    storage_access_key_id: str | None = Field(
+        default=None,
+        validation_alias=STORAGE_ACCESS_KEY_ID_ENV_VAR,
+        description="Access key for the object store",
+    )
+    """Access key. Never defaulted to a real credential (spec §77)."""
+
+    storage_secret_access_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=STORAGE_SECRET_ACCESS_KEY_ENV_VAR,
+        description="Secret key for the object store",
+    )
+    """Secret key, wrapped so it cannot be printed into a log line by accident.
+
+    ``SecretStr`` renders as ``**********`` in reprs and in structlog output;
+    reading it requires an explicit ``.get_secret_value()``, which is visible in
+    review in a way that a bare string never is.
+    """
+
+    storage_signed_url_ttl_seconds: int = Field(default=900, gt=0)
+    """How long a signed URL stays valid.
+
+    Short by design: a signed URL is a bearer credential nobody can revoke, so
+    the only bound on its misuse is how quickly it stops working (spec §55).
+    """
 
 
 @lru_cache

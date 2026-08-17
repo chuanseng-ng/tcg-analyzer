@@ -19,18 +19,30 @@ from fastapi.testclient import TestClient
 from tcg_api.app import create_app
 from tcg_api.config import get_settings
 from tcg_api.database import get_engine, get_session_factory
-from tcg_api.routers.readiness import database_is_reachable
+from tcg_api.routers.readiness import database_is_reachable, object_storage_is_reachable
+from tcg_api.storage import get_object_storage
+
+CACHES = (get_settings, get_engine, get_session_factory, get_object_storage)
 
 
 @pytest.fixture
-def app_without_database(monkeypatch: pytest.MonkeyPatch):
-    """The application with no database configuration at all."""
-    monkeypatch.delenv("TCG_API_DATABASE_URL", raising=False)
-    for cached in (get_settings, get_engine, get_session_factory):
+def app_without_dependencies(monkeypatch: pytest.MonkeyPatch):
+    """The application with no database and no storage configuration at all."""
+    for variable in ("TCG_API_DATABASE_URL", "TCG_API_STORAGE_BUCKET"):
+        monkeypatch.delenv(variable, raising=False)
+    for cached in CACHES:
         cached.cache_clear()
     yield create_app()
-    for cached in (get_settings, get_engine, get_session_factory):
+    for cached in CACHES:
         cached.cache_clear()
+
+
+def app_with_dependencies(*, database: bool = True, storage: bool = True):
+    """The application with both probes forced to a known answer."""
+    app = create_app()
+    app.dependency_overrides[database_is_reachable] = lambda: database
+    app.dependency_overrides[object_storage_is_reachable] = lambda: storage
+    return app
 
 
 def test_readiness_is_mounted_on_the_application() -> None:
@@ -41,38 +53,47 @@ def test_readiness_is_mounted_on_the_application() -> None:
     introspection would test the framework's internals. A response that is not
     404 is the claim itself.
     """
-    app = create_app()
-    app.dependency_overrides[database_is_reachable] = lambda: True
-
-    with TestClient(app) as client:
+    with TestClient(app_with_dependencies()) as client:
         assert client.get("/readiness").status_code != 404
 
 
-def test_readiness_reports_ok_when_the_database_answers() -> None:
-    app = create_app()
-    app.dependency_overrides[database_is_reachable] = lambda: True
-
-    with TestClient(app) as client:
+def test_readiness_reports_ok_when_every_dependency_answers() -> None:
+    with TestClient(app_with_dependencies()) as client:
         response = client.get("/readiness")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "checks": {"database": "ok"}}
+    assert response.json() == {"status": "ok", "checks": {"database": "ok", "storage": "ok"}}
 
 
-def test_readiness_degrades_to_503_on_the_application() -> None:
-    app = create_app()
-    app.dependency_overrides[database_is_reachable] = lambda: False
+@pytest.mark.parametrize("failing", ["database", "storage"])
+def test_readiness_degrades_to_503_when_any_one_dependency_is_down(failing: str) -> None:
+    """Either dependency alone is enough to make the service unready."""
+    app = app_with_dependencies(database=failing != "database", storage=failing != "storage")
 
     with TestClient(app) as client:
         response = client.get("/readiness")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "degraded", "checks": {"database": "unavailable"}}
+    assert response.json()["status"] == "degraded"
+    assert response.json()["checks"][failing] == "unavailable"
 
 
-def test_health_still_answers_without_any_database_configuration(app_without_database) -> None:
+def test_readiness_names_every_failing_dependency_not_merely_the_first() -> None:
+    """An operator fixing a deployment wants the whole list in one round trip."""
+    app = app_with_dependencies(database=False, storage=False)
+
+    with TestClient(app) as client:
+        response = client.get("/readiness")
+
+    assert response.json() == {
+        "status": "degraded",
+        "checks": {"database": "unavailable", "storage": "unavailable"},
+    }
+
+
+def test_health_still_answers_without_any_database_configuration(app_without_dependencies) -> None:
     """The liveness probe must not have acquired a database dependency."""
-    with TestClient(app_without_database) as client:
+    with TestClient(app_without_dependencies) as client:
         response = client.get("/health")
 
     assert response.status_code == 200
@@ -80,22 +101,29 @@ def test_health_still_answers_without_any_database_configuration(app_without_dat
     assert response.json()["application_version"]
 
 
+@pytest.mark.parametrize("dependency", ["database", "storage"])
 def test_readiness_is_degraded_rather_than_broken_without_configuration(
-    app_without_database,
+    app_without_dependencies, dependency: str
 ) -> None:
-    """No `TCG_API_DATABASE_URL` is an unready service, not a crashing one."""
-    with TestClient(app_without_database) as client:
+    """Unconfigured is an unready service, not a crashing one.
+
+    Neither a missing `TCG_API_DATABASE_URL` nor a missing `TCG_API_STORAGE_*`
+    may surface as a 500: misconfiguration is the likeliest reason a fresh
+    deployment is not ready, so it is the last thing that should read as a bug
+    in the probe.
+    """
+    with TestClient(app_without_dependencies) as client:
         response = client.get("/readiness")
 
     assert response.status_code == 503
-    assert response.json()["checks"]["database"] == "unavailable"
+    assert response.json()["checks"][dependency] == "unavailable"
 
 
-def test_shutdown_does_not_build_an_engine_it_never_needed(app_without_database) -> None:
+def test_shutdown_does_not_build_an_engine_it_never_needed(app_without_dependencies) -> None:
     """A process that only served `/health` must not construct a pool to close one."""
     get_engine.cache_clear()
 
-    with TestClient(app_without_database) as client:
+    with TestClient(app_without_dependencies) as client:
         client.get("/health")
 
     assert get_engine.cache_info().currsize == 0

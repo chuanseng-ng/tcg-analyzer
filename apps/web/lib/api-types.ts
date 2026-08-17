@@ -40,6 +40,10 @@ export interface paths {
          *     Degrades to 503 with a body rather than raising: an orchestrator reading a
          *     500 from a readiness probe learns only that the probe is broken, whereas a
          *     503 with `checks` names the dependency that is down.
+         *
+         *     Every check is reported, not just the first failure: an operator fixing a
+         *     deployment wants the whole list, and a probe that stops at the first problem
+         *     turns one outage into two round trips.
          */
         get: operations["readiness_readiness_get"];
         put?: never;
@@ -122,6 +126,12 @@ export interface components {
              * @enum {string}
              */
             database: "ok" | "unavailable";
+            /**
+             * Storage
+             * @description Whether the API could reach the object store.
+             * @enum {string}
+             */
+            storage: "ok" | "unavailable";
         };
         /**
          * ReadinessResponse

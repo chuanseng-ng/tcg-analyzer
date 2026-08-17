@@ -16,12 +16,20 @@ from __future__ import annotations
 
 import pytest
 from tcg_api.config import Settings, get_settings
+from tcg_api.storage import get_object_storage
+
+# Every process-wide cache derived from settings. Clearing settings alone would
+# leave a client built from the previous test's environment in place, which is
+# the same leak one step further down.
+_CACHED_ON_SETTINGS = (get_settings, get_object_storage)
 
 
 @pytest.fixture(autouse=True)
 def _isolate_from_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     """Describe the code, not the machine it happens to be running on."""
     monkeypatch.setitem(Settings.model_config, "env_file", None)
-    get_settings.cache_clear()
+    for cached in _CACHED_ON_SETTINGS:
+        cached.cache_clear()
     yield
-    get_settings.cache_clear()
+    for cached in _CACHED_ON_SETTINGS:
+        cached.cache_clear()
