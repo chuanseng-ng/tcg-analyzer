@@ -73,8 +73,14 @@ def test_insufficient_information_can_be_carried_by_a_successful_response() -> N
 
 
 def test_raising_insufficient_information_as_an_error_is_refused() -> None:
+    """The `raise` never runs — construction is what fails, which is the point.
+
+    Written as a `raise` rather than a bare construction so the statement says
+    what the developer being protected here would have written. `ApiError` is
+    not a `ValueError`, so the only way this passes is `__init__` refusing.
+    """
     with pytest.raises(ValueError, match="result"):
-        ApiError(ErrorCode.INSUFFICIENT_INFORMATION, "not a failure")
+        raise ApiError(ErrorCode.INSUFFICIENT_INFORMATION, "not a failure")
 
 
 # ---------------------------------------------------------------------------
