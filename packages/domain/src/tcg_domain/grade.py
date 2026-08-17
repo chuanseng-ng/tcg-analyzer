@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 from functools import total_ordering
-from typing import Final
+from typing import Final, assert_never
 
 from tcg_domain.errors import InvalidGrade
 
@@ -56,6 +56,11 @@ class GradeBound(StrEnum):
                 return 0
             case GradeBound.OR_HIGHER:
                 return 1
+            case _:
+                # Unreachable today. A fourth member added without a case would
+                # otherwise return `None`, which `sort_key` carries into a
+                # comparison that fails far from the omission.
+                assert_never(self)
 
 
 def _canonical(value: object) -> Decimal:
@@ -162,6 +167,10 @@ class Grade:
                 return f"{rendered}_or_lower"
             case GradeBound.OR_HIGHER:
                 return f"{rendered}_or_higher"
+            case _:
+                # As above: silently returning `None` from `__str__` becomes a
+                # `TypeError` in whatever formats the grade, not here.
+                assert_never(self.bound)
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Grade):
