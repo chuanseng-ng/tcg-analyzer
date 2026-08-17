@@ -185,8 +185,14 @@ jobs:
         run: docker compose -f infrastructure/local/docker-compose.yml down -v
 
   docker:
-    name: Docker — API image builds
+    name: Docker — ${{ matrix.image }} image builds
     runs-on: ubuntu-latest
+    strategy:
+      # Both images build independently, and a failure should name the one that
+      # broke rather than stop at whichever came first.
+      fail-fast: false
+      matrix:
+        image: [api, web]
     steps:
       - uses: actions/checkout@v7
 
@@ -194,14 +200,71 @@ jobs:
 
       # Build only. Publishing is a deployment concern and deliberately out of
       # scope; this answers "would this image build for anyone else?".
-      - name: Build API image
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: infrastructure/docker/api.Dockerfile
+          file: infrastructure/docker/${{ matrix.image }}.Dockerfile
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  compose:
+    name: Compose — the whole stack starts
+    runs-on: ubuntu-latest
+    # M0's acceptance criterion is that a developer can clone the repository and
+    # run the complete empty application locally. That is a claim about this
+    # exact command, so it is asserted rather than described. The unit-level
+    # wiring checks live in `tests/test_compose_stack.py` and need no Docker.
+    env:
+      COMPOSE: docker compose -f infrastructure/local/docker-compose.yml
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # `--wait` blocks until every long-running service is healthy and the
+      # one-shot `migrate` service has exited successfully, so nothing below
+      # races the stack's startup.
+      - name: Start the stack
+        run: $COMPOSE up -d --wait
+
+      # `up --wait` waits for services to be running or healthy, and a
+      # container that has finished its job is neither — the trap that made
+      # MinIO create its own bucket rather than use an `mc` init container. The
+      # `migrate` service is exempt because `api` depends on it with
+      # `service_completed_successfully`; this asserts that exemption holds
+      # rather than trusting it.
+      - name: Migrations ran and exited cleanly
+        run: |
+          $COMPOSE ps -a
+          test "$($COMPOSE ps -aq migrate | xargs docker inspect -f '{{.State.ExitCode}}')" = 0
+
+      # `/health` is dependency-free by design, so it proves only that the
+      # container is alive. `/readiness` is the one that proves the stack was
+      # actually wired together: it returns 503 unless the API reached both
+      # PostgreSQL and MinIO.
+      - name: The API is live
+        run: curl -fsS --retry 5 --retry-all-errors localhost:8000/health
+
+      - name: The API reached PostgreSQL and MinIO
+        run: |
+          readiness=$(curl -fsS --retry 5 --retry-all-errors localhost:8000/readiness)
+          echo "$readiness"
+          test "$(echo "$readiness" | jq -r '.status')" = ok
+          test "$(echo "$readiness" | jq -r '.checks.database')" = ok
+          test "$(echo "$readiness" | jq -r '.checks.storage')" = ok
+
+      - name: The web application serves
+        run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3000
+
+      - name: Logs
+        if: failure()
+        run: $COMPOSE logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: $COMPOSE down -v
 
   secrets:
     name: Secrets — no credentials in history

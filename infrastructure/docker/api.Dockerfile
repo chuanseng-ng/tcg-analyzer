@@ -8,7 +8,9 @@
 #
 #   docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
 #
-# Compose wiring arrives with #20.
+# `infrastructure/local/docker-compose.yml` builds this image twice: once as the
+# `api` service, and once as the one-shot `migrate` service that runs `alembic
+# upgrade head` before the API is allowed to start.
 
 # --------------------------------------------------------------------------
 # Builder — resolve the workspace into a virtual environment.
@@ -37,6 +39,18 @@ COPY ml/ ml/
 # exactly the resolution that was reviewed and tested.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package tcg-api
+
+# The migration harness, copied *after* the sync so that editing a migration
+# does not reinvalidate dependency resolution.
+#
+# `alembic` is already a runtime dependency of `tcg-api`, so the binary is in
+# the virtual environment either way; what was missing was the configuration and
+# the revisions themselves. Both paths in `alembic.ini` (`script_location`,
+# `prepend_sys_path`) resolve against the working directory rather than against
+# the file, and that directory is `/app` in both stages — so `alembic upgrade
+# head` works in this image with no `-c` and no `cd`.
+COPY alembic.ini ./
+COPY database/ database/
 
 # --------------------------------------------------------------------------
 # Runtime — the environment and the source, run unprivileged.
