@@ -1,0 +1,86 @@
+# The repository's commit conventions are enforced only by whoever remembers
+# them. PR titles matter more than most: they become the commit subject on a
+# squash merge, so a sloppy title is permanent.
+#
+# This checks the mechanical rules. "Imperative mood" is not mechanically
+# decidable — plenty of valid imperatives end in -ed ("embed", "seed") — so it
+# stays a review concern.
+name: PR title
+
+on:
+  pull_request:
+    # `edited` matters: a title fixed after the first failure must re-run.
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commit:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate
+        env:
+          # Passed through the environment rather than interpolated into the
+          # script. A PR title is attacker-controlled on a public repository,
+          # and `${{ ... }}` inside a script body is a shell injection.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node <<'NODE'
+          const title = process.env.TITLE ?? "";
+
+          const types = [
+            "feat", "fix", "docs", "style", "refactor",
+            "perf", "test", "build", "ci", "chore", "revert",
+          ];
+          // Scopes are the monorepo's own directories. `ml/<module>` is spelled
+          // with the slash so `ml/grading-psa` reads the way the tree does.
+          const scopes = [
+            "web", "annotation", "api", "analysis", "market-data", "ingestion",
+            "domain", "economic-engine", "grading-companies", "db", "datasets",
+            "infra",
+          ];
+          const scopePattern = `(?:${scopes.join("|")}|ml/[a-z0-9-]+)`;
+          const pattern = new RegExp(
+            `^(${types.join("|")})(\\((${scopePattern})\\))?!?: (.+)$`,
+          );
+
+          const problems = [];
+          const match = title.match(pattern);
+
+          if (!match) {
+            problems.push(
+              "does not match `<type>(<scope>): <subject>`.\n" +
+                `      types:  ${types.join(", ")}\n` +
+                `      scopes: ${scopes.join(", ")}, ml/<module> — omit only when repo-wide`,
+            );
+          } else {
+            const subject = match[4];
+            if (title.length > 72) {
+              problems.push(`is ${title.length} characters; the limit is 72.`);
+            }
+            if (/[.]$/.test(subject)) {
+              problems.push("ends with a period.");
+            }
+            // Allow an acronym or an identifier to lead; reject sentence case.
+            if (/^[A-Z][a-z]/.test(subject)) {
+              problems.push("starts with a capital; subjects are lowercase.");
+            }
+          }
+
+          if (problems.length > 0) {
+            console.error(`\nPR title: ${title}\n`);
+            for (const problem of problems) {
+              console.error(`  - Title ${problem}`);
+            }
+            console.error("\nSee CONTRIBUTING for the full convention.\n");
+            process.exit(1);
+          }
+
+          console.log(`PR title OK: ${title}`);
+          NODE
