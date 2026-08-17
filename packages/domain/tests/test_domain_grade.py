@@ -1,11 +1,11 @@
-"""`Grade` — the key forms spec §24 actually produces, and their ordering."""
+"""`Grade` â€” the key forms spec Â§24 actually produces, and their ordering."""
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
-
 from tcg_domain import Grade, GradeBound, InvalidGrade
 
 # --------------------------------------------------------------------------
@@ -26,7 +26,7 @@ def test_parse_whole_grade() -> None:
 
 
 def test_parse_half_grade() -> None:
-    """BGS must support half grades — spec §24."""
+    """BGS must support half grades â€” spec Â§24."""
     grade = Grade.parse("9.5")
     assert grade.value == Decimal("9.5")
     assert grade.bound is GradeBound.EXACT
@@ -116,12 +116,12 @@ def test_trailing_zero_is_canonicalised() -> None:
 
 def test_grade_is_frozen() -> None:
     grade = Grade.parse("9")
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         grade.value = Decimal("10")  # type: ignore[misc]
 
 
 # --------------------------------------------------------------------------
-# Ordering — the UI orders a distribution without reimplementing this rule.
+# Ordering â€” the UI orders a distribution without reimplementing this rule.
 # --------------------------------------------------------------------------
 
 

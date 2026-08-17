@@ -160,8 +160,22 @@ def test_uv_workspace_covers_every_python_package() -> None:
 def test_no_model_weights_or_images_are_tracked() -> None:
     """Weights and card images must stay out of history, not merely out of the tree."""
     forbidden = {
-        ".pt", ".pth", ".ckpt", ".onnx", ".safetensors", ".h5", ".tflite", ".pkl",
-        ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif", ".bmp",
+        ".pt",
+        ".pth",
+        ".ckpt",
+        ".onnx",
+        ".safetensors",
+        ".h5",
+        ".tflite",
+        ".pkl",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".bmp",
     }
     tracked = [
         path

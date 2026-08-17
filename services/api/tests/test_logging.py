@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-
 from tcg_api.config import Settings
 from tcg_api.logging import configure_logging
 

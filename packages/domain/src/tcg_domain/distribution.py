@@ -154,6 +154,7 @@ class GradeDistribution:
         The full distribution remains available and must accompany this value
         wherever a prediction is recorded (spec §2.1).
         """
+
         def rank(grade: Grade) -> tuple[float, tuple[Decimal, int]]:
             return (self.probabilities[grade], grade.sort_key)
 

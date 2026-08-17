@@ -37,8 +37,16 @@ class Currency(StrEnum):
     SGD = "SGD"
 
 
-def _quantised(amount: Decimal) -> Decimal:
-    """Round an amount to the cent, half away from zero."""
+def _quantised(amount: object) -> Decimal:
+    """Round an amount to the cent, half away from zero.
+
+    Typed `object` rather than `Decimal` on purpose. This is a trust boundary:
+    amounts reach it from JSON payloads, provider responses and untyped callers,
+    where a static annotation guarantees nothing. Declaring `Decimal` would make
+    the float rejection below unreachable *to the type checker* while remaining
+    entirely reachable at runtime — the exact combination that gets a real guard
+    deleted as dead code.
+    """
     if isinstance(amount, float):
         raise InvalidMoney(
             f"monetary amounts must be Decimal, not float: {amount!r}. "

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-
 from tcg_api.app import create_app
 from tcg_api.database import get_database_settings, get_engine, get_session_factory
 from tcg_api.routers.readiness import database_is_reachable

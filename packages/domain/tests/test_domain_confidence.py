@@ -1,4 +1,4 @@
-"""`Confidence` and `InsufficientInformation` — spec §2.7.
+"""`Confidence` and `InsufficientInformation` â€” spec Â§2.7.
 
 Uncertainty is a product feature. "We cannot assess this" must be expressible
 as a *result*, not signalled by an exception.
@@ -7,9 +7,9 @@ as a *result*, not signalled by an exception.
 from __future__ import annotations
 
 import math
+from dataclasses import FrozenInstanceError
 
 import pytest
-
 from tcg_domain import (
     INSUFFICIENT_INFORMATION,
     Confidence,
@@ -57,7 +57,7 @@ def test_direct_construction_validates_too() -> None:
 
 def test_confidence_is_frozen() -> None:
     confidence = Confidence.of(0.82)
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         confidence.value = 0.1  # type: ignore[misc]
 
 
@@ -97,7 +97,7 @@ def test_str_is_a_percentage() -> None:
 
 
 # --------------------------------------------------------------------------
-# InsufficientInformation — a result, never an exception
+# InsufficientInformation â€” a result, never an exception
 # --------------------------------------------------------------------------
 
 
@@ -116,12 +116,12 @@ def test_equal_reasons_compare_equal() -> None:
 
 
 def test_it_is_frozen() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         INSUFFICIENT_INFORMATION.reason = "changed"  # type: ignore[misc]
 
 
 def test_it_is_not_an_exception() -> None:
-    """spec §2.7 — uncertainty is an outcome, so it must not be raisable."""
+    """spec Â§2.7 â€” uncertainty is an outcome, so it must not be raisable."""
     assert not isinstance(INSUFFICIENT_INFORMATION, BaseException)
     assert not issubclass(InsufficientInformation, BaseException)
     assert not issubclass(InsufficientInformation, DomainError)
