@@ -130,6 +130,24 @@ def test_multiplication_by_a_float_is_rejected() -> None:
         _ = Money.of("100.00") * 0.075  # type: ignore[operator]
 
 
+def test_a_rejected_scaling_is_catchable_as_an_arithmetic_error() -> None:
+    """`__mul__` raises rather than returning `NotImplemented`, deliberately.
+
+    Returning `NotImplemented` would hand the operation to `float.__rmul__` and
+    surface an unhelpful `TypeError` instead of the message telling the caller
+    to use `Decimal`. Keeping that behaviour costs nothing if the exception is
+    catchable the way a caller of an arithmetic operator would expect.
+    """
+    with pytest.raises(ArithmeticError):
+        _ = Money.of("100.00") * 0.075  # type: ignore[operator]
+
+
+def test_invalid_money_remains_catchable_as_a_value_error() -> None:
+    """Widening the hierarchy must not narrow it — existing handlers still work."""
+    assert issubclass(InvalidMoney, ValueError)
+    assert issubclass(InvalidMoney, ArithmeticError)
+
+
 def test_addition_of_a_non_money_is_rejected() -> None:
     with pytest.raises(TypeError):
         _ = Money.of("1.00") + 1  # type: ignore[operator]
