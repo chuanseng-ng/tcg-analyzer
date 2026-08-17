@@ -47,12 +47,12 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Types
-        run: uv run mypy packages/domain/src services/api/src
+        run: uv run mypy packages/domain/src packages/shared/src services/api/src
 
-      # Integration tests are deselected here and covered by the migrations job,
-      # which is the one with a database.
+      # Tests needing a live service are deselected here and covered by the jobs
+      # that have one: `migrations` has PostgreSQL, `storage` has MinIO.
       - name: Tests
-        run: uv run pytest -m "not integration"
+        run: uv run pytest -m "not integration and not object_storage"
 
   web:
     name: Web — lint, format, types, tests, build
@@ -144,6 +144,45 @@ jobs:
 
       - name: Integration tests
         run: uv run pytest -m integration
+
+  storage:
+    name: Storage — signed URLs against MinIO
+    runs-on: ubuntu-latest
+
+    # Not a `services:` block: MinIO needs `server /data`, and a service
+    # container cannot supply a command. Running the Compose file instead has a
+    # second benefit — it makes that file a tested artifact rather than one
+    # nobody exercises until a developer clones the repository.
+    env:
+      TCG_API_STORAGE_ENDPOINT_URL: http://localhost:9000
+      TCG_API_STORAGE_BUCKET: tcg-local
+      TCG_API_STORAGE_ACCESS_KEY_ID: tcg
+      TCG_API_STORAGE_SECRET_ACCESS_KEY: tcglocaldev
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --all-packages --frozen
+
+      # `--wait` blocks until MinIO is healthy and the bucket container has
+      # exited, so the first signed request does not race the store's startup.
+      - name: Start MinIO
+        run: >-
+          docker compose -f infrastructure/local/docker-compose.yml
+          up -d --wait minio minio-bucket
+
+      - name: Object-storage tests
+        run: uv run pytest -m object_storage
+
+      - name: Stop MinIO
+        if: always()
+        run: docker compose -f infrastructure/local/docker-compose.yml down -v
 
   docker:
     name: Docker — API image builds
