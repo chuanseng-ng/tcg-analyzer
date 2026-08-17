@@ -62,7 +62,6 @@ class ObjectStorage(Protocol):
         Raises:
             StorageUnavailable: If the store could not be reached.
         """
-        ...
 
     async def get(self, key: StorageKey) -> bytes:
         """Return the bytes stored under ``key``.
@@ -71,7 +70,6 @@ class ObjectStorage(Protocol):
             ObjectNotFound: If nothing is stored under ``key``.
             StorageUnavailable: If the store could not be reached.
         """
-        ...
 
     async def delete(self, key: StorageKey) -> None:
         """Remove the object at ``key``.
@@ -83,7 +81,6 @@ class ObjectStorage(Protocol):
         Raises:
             StorageUnavailable: If the store could not be reached.
         """
-        ...
 
     async def signed_upload_url(
         self,
@@ -100,7 +97,6 @@ class ObjectStorage(Protocol):
         Raises:
             StorageUnavailable: If the store could not be reached.
         """
-        ...
 
     async def signed_download_url(self, key: StorageKey, *, expires_in: timedelta) -> SignedUrl:
         """Mint a URL a client may use to read one object.
@@ -111,4 +107,3 @@ class ObjectStorage(Protocol):
         Raises:
             StorageUnavailable: If the store could not be reached.
         """
-        ...
