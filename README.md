@@ -48,6 +48,36 @@ Two workspaces, split by language — see
   administrator rights.
 - **[uv](https://docs.astral.sh/uv/)**. The Python version is pinned in
   `.python-version`; uv will fetch it.
+- **Docker**, with Compose v2.22+ — only for running the stack, not for the
+  tests. `docker compose version` reports both.
+
+### Run the whole thing
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait
+```
+
+That is the entire setup from a fresh clone. It starts PostgreSQL and MinIO,
+runs the migrations, then starts the API and the web application in dependency
+order.
+
+| | |
+| --- | --- |
+| Web application | <http://localhost:3000> |
+| API | <http://localhost:8000> — `/health`, `/readiness`, `/docs` |
+| MinIO console | <http://localhost:9001> |
+
+The landing page reports whether it can reach the API, so **"Analysis API
+reachable"** on <http://localhost:3000> means the whole stack is talking to
+itself.
+
+Swap `up` for `watch` to get hot reload — source changes are synced into the
+running containers. Stop with `down`, or `down -v` to discard the database and
+the bucket as well. See [`infrastructure/local`](infrastructure/local) for the
+full reference.
+
+The sections below are the host-based workflows. They remain the faster loop
+for a focused change, and they are what CI runs.
 
 ### Commands
 
@@ -136,8 +166,10 @@ docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
 docker run --rm -p 8000:8000 tcg-api:dev
 ```
 
-Compose wiring for the API container arrives with #20; PostgreSQL and MinIO are
-already in the local stack.
+The same image is what the local stack runs, both as the `api` service and as
+the one-shot `migrate` service that applies the migrations before the API is
+allowed to start.
+
 #### Database
 
 Every schema change arrives through a reviewed, versioned Alembic migration —

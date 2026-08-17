@@ -1,7 +1,19 @@
-# Local development environment.
+# Local development environment — the whole application, in one command.
 #
-# PostgreSQL and MinIO. The api and web services arrive with #20, which extends
-# this same file rather than adding a second one.
+#   docker compose -f infrastructure/local/docker-compose.yml up -d --wait
+#
+# Brings up PostgreSQL, MinIO, the FastAPI service and the Next.js application,
+# having first run the migrations. That is M0's acceptance criterion: a
+# developer can clone the repository and run the complete empty application
+# locally without a setup step.
+#
+# For a hot-reloading loop use `watch` in place of `up`:
+#
+#   docker compose -f infrastructure/local/docker-compose.yml watch
+#
+# which starts the same stack and then syncs source changes into the running
+# containers. See docs/adr/0003-the-local-development-stack.md for why this is
+# a file sync rather than a bind mount.
 #
 # The credentials below are NOT secrets. They are deliberately obvious
 # local-only values so that nobody mistakes them for something to protect, and
@@ -14,6 +26,29 @@
 
 name: tcg-analyzer-local
 
+# The API image serves two services — the long-running `api` and the one-shot
+# `migrate` — which must be byte-identical, since the point of running
+# migrations from the application's own image is that they cannot drift from
+# the code that reads the schema. Naming the tag explicitly keeps Compose from
+# building the same context twice under two generated names.
+x-api-image: &api-image
+  build:
+    context: ../..
+    dockerfile: infrastructure/docker/api.Dockerfile
+  image: tcg-analyzer-local/api:dev
+
+# Reached over the Compose network, so the host is the service name rather than
+# localhost — and the port is the container's, never the published one.
+x-api-database-url: &api-database-url
+  TCG_API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tcg}:${POSTGRES_PASSWORD:-tcg}@postgres:5432/${POSTGRES_DB:-tcg}
+
+# A container that cannot gain privileges it was not started with. Cheap, and
+# the direction spec §56 requires of the ML worker that arrives in M6 — the
+# baseline is established here, while there is nothing to break.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+
 services:
   postgres:
     # Plain upstream PostgreSQL. Spec §8 keeps the deployment platform open
@@ -21,6 +56,7 @@ services:
     # lowest common denominator and nothing gets to depend on an extension that
     # only one of them has.
     image: postgres:17-alpine
+    <<: *hardening
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tcg}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tcg}
@@ -47,6 +83,7 @@ services:
     # in the application knows which of the two it is talking to — that is the
     # point of the port in packages/shared.
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    <<: *hardening
     # The bucket is created before the server starts, so a fresh volume comes up
     # usable and nobody has to be told to click through the console first.
     #
@@ -82,6 +119,116 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+
+  migrate:
+    # Schema first, then the service that depends on it. Running migrations as
+    # a separate step rather than from the API's own startup is deliberate:
+    # startup migrations race each other the moment there is more than one
+    # replica, and this is the shape that survives into a deployment.
+    #
+    # It runs from the API image, so the migrations that run are always the
+    # ones that shipped with the code reading the schema.
+    <<: [*api-image, *hardening]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *api-database-url
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # This container is finished when it exits. Restarting it would re-run
+    # `upgrade head` in a loop against an already-current database.
+    restart: "no"
+
+  api:
+    <<: [*api-image, *hardening]
+    # `--reload` rather than the image's plain `uvicorn`, paired with the watch
+    # rules below. `uvicorn[standard]` already carries watchfiles, so this needs
+    # no dependency the production image lacks. The reload directories are
+    # named explicitly because the default watches the whole working directory,
+    # which here includes `.venv` and every installed package in it.
+    command:
+      - uvicorn
+      - tcg_api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/services/api/src
+      - --reload-dir
+      - /app/packages
+    environment:
+      <<: *api-database-url
+      # The API reaches MinIO over the Compose network. A signed URL generated
+      # against this endpoint is NOT reachable from a browser on the host —
+      # ADR 0002 records that, and M2 adds a separate public-endpoint setting
+      # when there is finally something to upload.
+      TCG_API_STORAGE_ENDPOINT_URL: http://minio:9000
+      TCG_API_STORAGE_BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
+      TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
+      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
+      # Spelled out rather than left to the default, so that overriding
+      # WEB_PORT does not silently break CORS for the app that was moved.
+      TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}"]'
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+      TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # The healthcheck is inherited from the image, and it probes `/health`
+    # rather than `/readiness` on purpose: `/health` consults no dependency, so
+    # it reports this container's own liveness. A database outage must not make
+    # the liveness probe fail and get the container killed.
+    restart: unless-stopped
+    develop:
+      watch:
+        # uv installs workspace members editable, so the interpreter is already
+        # looking at these paths — a synced file is picked up with no reinstall.
+        - action: sync
+          path: ../../services/api/src
+          target: /app/services/api/src
+        - action: sync
+          path: ../../packages
+          target: /app/packages
+        # A dependency change cannot be synced into an existing environment.
+        - action: rebuild
+          path: ../../uv.lock
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web.Dockerfile
+    <<: *hardening
+    environment:
+      # The browser's view of the API, not the Compose network's. `ApiStatus`
+      # is a client component, so the only fetch in the application runs in the
+      # browser — `http://api:8000` would resolve for the container and for
+      # nobody else.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${API_PORT:-8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ../../apps/web
+          target: /app/apps/web
+          ignore:
+            - node_modules/
+            - .next/
+        - action: rebuild
+          path: ../../pnpm-lock.yaml
 
 volumes:
   postgres-data:
