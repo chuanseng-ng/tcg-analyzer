@@ -55,6 +55,42 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ErrorCode
+         * @description Spec §66, verbatim. The closed set of things that can go wrong.
+         * @enum {string}
+         */
+        ErrorCode: "invalid_image" | "image_quality_failure" | "card_not_identified" | "market_data_unavailable" | "analysis_failed" | "insufficient_information" | "provider_error" | "internal_error";
+        /**
+         * ErrorResponse
+         * @description The one error body this API produces.
+         *
+         *     `apps/web` generates its types from this model (ADR 0001), so the field
+         *     names are a public contract.
+         * @example {
+         *       "code": "market_data_unavailable",
+         *       "details": {
+         *         "card_id": "base1-4"
+         *       },
+         *       "message": "No usable price is available for this card."
+         *     }
+         */
+        ErrorResponse: {
+            /** @description Machine-readable classification from the spec §66 taxonomy. */
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * Details
+             * @description Optional structured context, e.g. which field was rejected.
+             */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Message
+             * @description Human-readable summary. Safe to show a user; never contains internal detail.
+             */
+            message: string;
+        };
+        /**
          * HealthResponse
          * @description The body of a successful ``GET /health``.
          *
@@ -127,6 +163,15 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readiness_readiness_get: {
@@ -145,6 +190,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description At least one dependency did not answer. */

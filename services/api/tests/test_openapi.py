@@ -47,3 +47,39 @@ def test_openapi_reports_the_application_version() -> None:
     schema = create_app().openapi()
 
     assert schema["info"]["version"] == version("tcg-api")
+
+
+# ---------------------------------------------------------------------------
+# The error taxonomy — spec §66
+# ---------------------------------------------------------------------------
+def test_openapi_documents_the_error_envelope() -> None:
+    """`apps/web` needs a generated type for the body every endpoint can return."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    assert set(schemas["ErrorResponse"]["properties"]) == {"code", "message", "details"}
+
+
+def test_openapi_documents_all_eight_error_codes() -> None:
+    """The acceptance criterion of #19: the whole taxonomy is in the contract."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    assert set(schemas["ErrorCode"]["enum"]) == {
+        "invalid_image",
+        "image_quality_failure",
+        "card_not_identified",
+        "market_data_unavailable",
+        "analysis_failed",
+        "insufficient_information",
+        "provider_error",
+        "internal_error",
+    }
+
+
+def test_every_documented_path_can_answer_with_the_envelope() -> None:
+    """Any endpoint may fail; the schema should not pretend otherwise."""
+    paths = create_app().openapi()["paths"]
+
+    for path, operations in paths.items():
+        for method, operation in operations.items():
+            content = operation["responses"]["500"]["content"]["application/json"]
+            assert content["schema"]["$ref"].endswith("/ErrorResponse"), f"{method} {path}"
