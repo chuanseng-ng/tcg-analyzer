@@ -1,0 +1,45 @@
+# Local development environment.
+#
+# PostgreSQL only. The api, web and minio services arrive with #20, which
+# extends this same file rather than adding a second one.
+#
+# The credentials below are NOT secrets. They are deliberately obvious
+# local-only values so that nobody mistakes them for something to protect, and
+# so that a fresh clone runs without a setup step. Production credentials come
+# from the environment and secrets handling introduced in #18 — never from this
+# file and never from a committed default.
+#
+# Override any of them per developer with an untracked `.env` beside this file,
+# e.g. POSTGRES_PORT=5433 when something already owns 5432.
+
+name: tcg-analyzer-local
+
+services:
+  postgres:
+    # Plain upstream PostgreSQL. Spec §8 keeps the deployment platform open
+    # between ordinary PostgreSQL and Supabase, so local development runs the
+    # lowest common denominator and nothing gets to depend on an extension that
+    # only one of them has.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tcg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tcg}
+      POSTGRES_DB: ${POSTGRES_DB:-tcg}
+      # Deterministic collation, so index ordering matches across machines.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` reports true during initdb's temporary startup server too,
+      # hence start_period: the first probe that counts happens after it.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tcg} -d ${POSTGRES_DB:-tcg}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
