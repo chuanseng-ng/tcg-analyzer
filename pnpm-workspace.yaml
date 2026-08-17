@@ -2,3 +2,10 @@
 # `pyproject.toml` — see docs/adr/0001-language-boundaries-in-the-monorepo.md.
 packages:
   - "apps/*"
+
+# pnpm blocks dependency lifecycle scripts by default. These two need theirs:
+# both ship native binaries that are selected or linked at install time, and
+# ESLint's import resolver fails without `unrs-resolver`.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true

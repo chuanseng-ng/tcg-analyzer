@@ -1,0 +1,20 @@
+.page {
+  padding-block: var(--space-6);
+}
+
+.heading {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+.body {
+  max-width: var(--measure);
+  color: var(--color-muted);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  color: var(--color-accent);
+}

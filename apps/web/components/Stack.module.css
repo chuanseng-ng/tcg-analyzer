@@ -1,0 +1,13 @@
+/*
+ * Vertical layout primitive: one axis, one gap, no fixed dimensions. The gap
+ * is supplied per instance as `--stack-gap`, always a spacing token.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--stack-gap, var(--space-4));
+  inline-size: 100%;
+  min-inline-size: 0;
+}
