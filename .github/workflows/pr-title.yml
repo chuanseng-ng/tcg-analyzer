@@ -30,9 +30,18 @@ jobs:
           # script. A PR title is attacker-controlled on a public repository,
           # and `${{ ... }}` inside a script body is a shell injection.
           TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           node <<'NODE'
           const title = process.env.TITLE ?? "";
+          const author = process.env.AUTHOR ?? "";
+
+          // Dependabot writes its own subjects — "Bump X from A to B in /dir" —
+          // and neither the capital nor the length is configurable. Only the
+          // `type(scope):` prefix is, via `commit-message` in dependabot.yml,
+          // so that is all we hold a bot to. Dropping the check entirely would
+          // stop catching a misconfigured prefix, which is the part we own.
+          const isBot = author.endsWith("[bot]");
 
           const types = [
             "feat", "fix", "docs", "style", "refactor",
@@ -40,10 +49,11 @@ jobs:
           ];
           // Scopes are the monorepo's own directories. `ml/<module>` is spelled
           // with the slash so `ml/grading-psa` reads the way the tree does.
+          // `deps` and `deps-dev` are Dependabot's, not ours.
           const scopes = [
             "web", "annotation", "api", "analysis", "market-data", "ingestion",
             "domain", "economic-engine", "grading-companies", "db", "datasets",
-            "infra",
+            "infra", "deps", "deps-dev",
           ];
           const scopePattern = `(?:${scopes.join("|")}|ml/[a-z0-9-]+)`;
           const pattern = new RegExp(
@@ -59,7 +69,7 @@ jobs:
                 `      types:  ${types.join(", ")}\n` +
                 `      scopes: ${scopes.join(", ")}, ml/<module> — omit only when repo-wide`,
             );
-          } else {
+          } else if (!isBot) {
             const subject = match[4];
             if (title.length > 72) {
               problems.push(`is ${title.length} characters; the limit is 72.`);
@@ -82,5 +92,9 @@ jobs:
             process.exit(1);
           }
 
-          console.log(`PR title OK: ${title}`);
+          console.log(
+            isBot
+              ? `PR title OK (bot — prefix only): ${title}`
+              : `PR title OK: ${title}`,
+          );
           NODE

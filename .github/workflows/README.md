@@ -9,6 +9,12 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
+**Bot PRs are held to the prefix only.** Dependabot writes its own subjects —
+`Bump X from A to B in /dir` — and neither the capital letter nor the length is
+configurable. The `type(scope):` prefix *is*, through `commit-message` in
+`dependabot.yml`, so that part is still checked: a misconfigured prefix is the
+half we own.
+
 Dependency updates are configured in [`../dependabot.yml`](../dependabot.yml).
 
 ## Notes
