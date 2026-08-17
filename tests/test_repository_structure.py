@@ -8,8 +8,10 @@ the tree itself.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -157,9 +159,9 @@ def test_uv_workspace_covers_every_python_package() -> None:
     assert covered == set(PYTHON_PACKAGES)
 
 
-def test_no_model_weights_or_images_are_tracked() -> None:
-    """Weights and card images must stay out of history, not merely out of the tree."""
-    forbidden = {
+FORBIDDEN_SUFFIXES: frozenset[str] = frozenset(
+    {
+        # Model weights and serialised artifacts.
         ".pt",
         ".pth",
         ".ckpt",
@@ -168,6 +170,7 @@ def test_no_model_weights_or_images_are_tracked() -> None:
         ".h5",
         ".tflite",
         ".pkl",
+        # Card photography.
         ".jpg",
         ".jpeg",
         ".webp",
@@ -177,13 +180,54 @@ def test_no_model_weights_or_images_are_tracked() -> None:
         ".heif",
         ".bmp",
     }
-    tracked = [
+)
+
+
+def _tracked_files() -> list[str]:
+    """Every path in git's index, as repository-relative POSIX strings.
+
+    Asking git rather than walking the filesystem is both the faster and the
+    more truthful answer. Walking meant descending into `node_modules` — 97% of
+    the paths under the repository root once `apps/web` has dependencies — only
+    to discard them, and it meant reporting on files git has never been told
+    about, which is not what "tracked" means. An exclusion list is also
+    unnecessary here: `node_modules`, `.venv` and `.git` are untracked by
+    definition, so they cannot appear.
+    """
+    # Resolved rather than relying on PATH lookup at exec time: it satisfies
+    # the "no partial executable path" lint, and it turns a missing git into a
+    # sentence instead of a bare FileNotFoundError from deep inside subprocess.
+    git = shutil.which("git")
+    assert git is not None, "git is required to check which files are tracked"
+
+    completed = subprocess.run(
+        [git, "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return [path for path in completed.stdout.split("\0") if path]
+
+
+def test_no_model_weights_or_images_are_tracked() -> None:
+    """Weights and card images must never enter the repository.
+
+    The project may be open-sourced later, so these must stay out of history
+    rather than merely out of the working tree. This checks the index, which is
+    the last point at which that is still cheap to enforce; nothing here can
+    speak to commits that were already made.
+    """
+    offenders = [
         path
-        for path in REPO_ROOT.rglob("*")
-        if path.is_file()
-        and path.suffix.lower() in forbidden
-        and ".git" not in path.parts
-        and "node_modules" not in path.parts
-        and ".venv" not in path.parts
+        for path in _tracked_files()
+        if PurePosixPath(path).suffix.lower() in FORBIDDEN_SUFFIXES
     ]
-    assert tracked == []
+    assert offenders == []
+
+
+def test_the_tracked_file_listing_is_not_silently_empty() -> None:
+    """Guard the guard: an empty listing would make the check above vacuous."""
+    tracked = _tracked_files()
+    assert len(tracked) > 50
+    assert "pyproject.toml" in tracked
