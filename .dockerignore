@@ -7,14 +7,19 @@
 
 # Environments and caches — rebuilt inside the image, and a host `.venv`
 # contains absolute paths that are wrong in a container.
-.venv
-node_modules
-__pycache__
-*.py[cod]
-.pytest_cache
-.ruff_cache
-.mypy_cache
-.uv-cache
+#
+# The `**/` matters: a bare `node_modules` matches only the context root, so
+# without it `apps/web/node_modules` — the one that actually exists, and which
+# holds platform-specific binaries compiled for the host — would be shipped
+# into the build context.
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.uv-cache
 
 # Local-only and never shipped.
 spec/
@@ -24,6 +29,7 @@ spec/
 *.log
 
 # Build outputs.
-.next
-dist/
-build/
+**/.next
+**/dist/
+**/build/
+**/*.tsbuildinfo
