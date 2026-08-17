@@ -14,16 +14,28 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from tcg_api.config import Settings, get_settings
 from tcg_api.database import get_engine
+from tcg_api.errors import ErrorResponse, install_error_handlers
 from tcg_api.logging import configure_logging
 from tcg_api.routers import health, readiness
 from tcg_api.version import application_version
 
 __all__ = ["create_app"]
+
+#: Declared on every router so the taxonomy reaches the OpenAPI schema, and so
+#: `apps/web` has a generated type for the body any endpoint can return. Every
+#: endpoint really can 500 — the catch-all guarantees the shape when it does —
+#: so documenting it once here is accurate rather than defensive.
+ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {
+        "model": ErrorResponse,
+        "description": "The request failed. `code` classifies it; see spec §66.",
+    },
+}
 
 
 @asynccontextmanager
@@ -77,8 +89,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(health.router)
-    app.include_router(readiness.router)
+    install_error_handlers(app)
+
+    app.include_router(health.router, responses=ERROR_RESPONSES)
+    app.include_router(readiness.router, responses=ERROR_RESPONSES)
 
     structlog.get_logger(__name__).info(
         "api.startup",

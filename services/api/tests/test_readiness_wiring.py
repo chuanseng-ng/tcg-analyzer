@@ -101,6 +101,26 @@ def test_shutdown_does_not_build_an_engine_it_never_needed(app_without_database)
     assert get_engine.cache_info().currsize == 0
 
 
+def test_an_unhandled_exception_on_the_real_app_is_shaped(caplog) -> None:
+    """The handlers are installed by `create_app`, not merely available.
+
+    Exercised through a route added after construction, because no real
+    endpoint should ever be written to fail on purpose.
+    """
+    app = create_app()
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise LookupError("internal detail that must not be published")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal_error"
+    assert "LookupError" not in response.text
+
+
 def test_both_probes_are_documented_in_the_openapi_schema() -> None:
     """apps/web generates its types from this schema — ADR 0001."""
     schema = create_app().openapi()

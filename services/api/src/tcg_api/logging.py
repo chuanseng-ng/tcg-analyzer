@@ -34,6 +34,11 @@ def configure_logging(settings: Settings) -> None:
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
+        # Renders `exc_info` into a traceback string. Without it the console
+        # renderer still formats exceptions but the JSON renderer does not, so
+        # a 500 would be logged with no record of its cause — and the error
+        # handler deliberately keeps that cause out of the response body.
+        structlog.processors.format_exc_info,
     ]
 
     structlog.configure(
