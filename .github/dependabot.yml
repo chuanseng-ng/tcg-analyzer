@@ -21,8 +21,13 @@ updates:
       python-minor-and-patch:
         update-types: [minor, patch]
 
+  # The directory is the workspace root, not apps/web. pnpm keeps a single
+  # `pnpm-lock.yaml` beside `pnpm-workspace.yaml` here; pointing Dependabot at
+  # apps/web finds a package.json with no lockfile next to it, so it edits the
+  # manifest alone and every resulting PR fails `pnpm install --frozen-lockfile`
+  # on a specifier mismatch.
   - package-ecosystem: npm
-    directory: /apps/web
+    directory: /
     schedule:
       interval: weekly
       day: monday
@@ -41,6 +46,21 @@ updates:
       - dependency-name: react
         update-types: [version-update:semver-major]
       - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      # These three majors are pinned deliberately, each for a failure found
+      # while bootstrapping the app in #14 — see apps/web/package.json:
+      #   typescript 7 removed `ts.sys`, which Next 15 uses to read
+      #     tsconfig.json; the symptom is silent, with path aliases failing to
+      #     resolve at build time rather than an error at startup.
+      #   eslint 10 breaks eslint-config-next's @rushstack/eslint-patch.
+      #   eslint-config-next 16 targets Next 16.
+      # They become available again when Next itself moves, which is a
+      # deliberate upgrade rather than a weekly one.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      - dependency-name: eslint-config-next
         update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
@@ -62,3 +82,14 @@ updates:
     commit-message:
       prefix: build
       include: scope
+    ignore:
+      # The base image's Python must match `.python-version` and the workspace's
+      # `requires-python`. Dependabot can only see the Dockerfile, so a bump
+      # here desyncs the interpreter that builds the venv from the one the
+      # project targets — `uv sync --frozen` then fails. Moving Python version
+      # is a repository-wide decision; only security patches to the base image
+      # are safe to take automatically.
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
