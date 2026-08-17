@@ -12,12 +12,7 @@ export interface StackProps {
   className?: string;
 }
 
-export function Stack({
-  children,
-  gap = 4,
-  as: Element = "div",
-  className,
-}: StackProps) {
+export function Stack({ children, gap = 4, as: Element = "div", className }: StackProps) {
   const classes = [styles.stack, className].filter(Boolean).join(" ");
   const style = { "--stack-gap": `var(--space-${gap})` } as CSSProperties;
 

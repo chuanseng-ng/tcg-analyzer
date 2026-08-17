@@ -23,13 +23,13 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path | Contents |
-| --- | --- |
-| `app/` | App Router routes. `/` is the landing page; `/analyze` is an M2 placeholder |
-| `components/` | `Container` and `Stack` layout primitives, and `ApiStatus` |
-| `lib/` | `api.ts` — the client for `services/api` |
-| `styles/` | `tokens.css` (design tokens) and `globals.css` (reset) |
-| `tests/` | Vitest + React Testing Library, jsdom environment |
+| Path          | Contents                                                                    |
+| ------------- | --------------------------------------------------------------------------- |
+| `app/`        | App Router routes. `/` is the landing page; `/analyze` is an M2 placeholder |
+| `components/` | `Container` and `Stack` layout primitives, and `ApiStatus`                  |
+| `lib/`        | `api.ts` — the client for `services/api`                                    |
+| `styles/`     | `tokens.css` (design tokens) and `globals.css` (reset)                      |
+| `tests/`      | Vitest + React Testing Library, jsdom environment                           |
 
 ## Styling
 
@@ -37,7 +37,7 @@ CSS custom properties plus CSS Modules — no utility framework, no CSS-in-JS.
 `styles/tokens.css` is the single source of colour, spacing, type scale, radii
 and layout widths, and it is deliberately plain CSS so the results UI in M9 and
 its chart palette can read the same values without a build step. Colours are
-defined on bare `:root` and only *redefined* under
+defined on bare `:root` and only _redefined_ under
 `@media (prefers-color-scheme: dark)`.
 
 **Mobile-first is a requirement, not a preference** — the primary input device

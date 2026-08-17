@@ -22,8 +22,7 @@ export default function LandingPage() {
               <h1 className={styles.heading}>Should you grade this card?</h1>
               {/* spec §48 — secondary explanation, verbatim. */}
               <p className={styles.lead}>
-                Estimate condition, likely grades and whether grading is
-                worthwhile.
+                Estimate condition, likely grades and whether grading is worthwhile.
               </p>
               {/* spec §48 — primary call to action. */}
               <Link className={styles.cta} href="/analyze">
@@ -34,10 +33,9 @@ export default function LandingPage() {
 
             <Stack gap={4}>
               <p className={styles.body}>
-                Photograph the front and back of an ungraded Pokémon card. You
-                get an identification, a read on its physical condition, likely
-                grades for PSA, TAG and BGS, and the numbers behind whether
-                sending it in pays for itself.
+                Photograph the front and back of an ungraded Pokémon card. You get an
+                identification, a read on its physical condition, likely grades for PSA, TAG and
+                BGS, and the numbers behind whether sending it in pays for itself.
               </p>
               <ul className={styles.scopeList}>
                 <li>Identify the card, and confirm it with you before going on.</li>
@@ -48,10 +46,9 @@ export default function LandingPage() {
             </Stack>
 
             <p className={styles.disclaimer}>
-              TCG Grading Advisor is not an official grading service and does
-              not authenticate cards. Every grade it reports is a probability,
-              never a guaranteed grade, and where the photographs cannot support
-              a confident answer it says so instead of inventing one.
+              TCG Grading Advisor is not an official grading service and does not authenticate
+              cards. Every grade it reports is a probability, never a guaranteed grade, and where
+              the photographs cannot support a confident answer it says so instead of inventing one.
             </p>
           </div>
         </Container>

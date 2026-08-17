@@ -53,9 +53,7 @@ export function ApiStatus() {
     <p className={styles.status} role="status" aria-live="polite">
       <span className={styles.dot} data-state={state} aria-hidden="true" />
       <span>{LABELS[state]}</span>
-      {version === null ? null : (
-        <span className={styles.version}>version {version}</span>
-      )}
+      {version === null ? null : <span className={styles.version}>version {version}</span>}
     </p>
   );
 }

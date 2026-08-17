@@ -48,9 +48,7 @@ export class ApiError extends Error {
  */
 export function apiBaseUrl(): string {
   const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  return configured
-    ? configured.replace(/\/+$/, "")
-    : DEFAULT_API_BASE_URL;
+  return configured ? configured.replace(/\/+$/, "") : DEFAULT_API_BASE_URL;
 }
 
 function isHealthResponse(payload: unknown): payload is HealthResponse {
@@ -58,10 +56,7 @@ function isHealthResponse(payload: unknown): payload is HealthResponse {
     return false;
   }
   const candidate = payload as Record<string, unknown>;
-  return (
-    typeof candidate.status === "string" &&
-    typeof candidate.application_version === "string"
-  );
+  return typeof candidate.status === "string" && typeof candidate.application_version === "string";
 }
 
 /**
@@ -71,16 +66,12 @@ function isHealthResponse(payload: unknown): payload is HealthResponse {
  */
 function requestSignal(caller: AbortSignal | undefined): AbortSignal | undefined {
   const deadline =
-    typeof AbortSignal.timeout === "function"
-      ? AbortSignal.timeout(HEALTH_TIMEOUT_MS)
-      : undefined;
+    typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(HEALTH_TIMEOUT_MS) : undefined;
 
   if (caller === undefined) return deadline;
   if (deadline === undefined) return caller;
 
-  return typeof AbortSignal.any === "function"
-    ? AbortSignal.any([caller, deadline])
-    : caller;
+  return typeof AbortSignal.any === "function" ? AbortSignal.any([caller, deadline]) : caller;
 }
 
 /**
@@ -119,10 +110,9 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
   }
 
   if (!isHealthResponse(payload)) {
-    throw new ApiError(
-      `The API at ${url} returned an unrecognised health payload.`,
-      { status: response.status },
-    );
+    throw new ApiError(`The API at ${url} returned an unrecognised health payload.`, {
+      status: response.status,
+    });
   }
 
   return payload;
