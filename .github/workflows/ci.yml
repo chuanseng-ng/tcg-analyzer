@@ -28,10 +28,10 @@ jobs:
     name: Python — lint, types, tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -58,11 +58,11 @@ jobs:
     name: Web — lint, format, types, tests, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -70,7 +70,7 @@ jobs:
       # The API type check builds the FastAPI app to read its OpenAPI schema,
       # so this job needs the Python toolchain too (ADR 0001).
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -123,10 +123,10 @@ jobs:
       TCG_API_DATABASE_URL: postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -149,14 +149,14 @@ jobs:
     name: Docker — API image builds
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Build only. Publishing is a deployment concern and deliberately out of
       # scope; this answers "would this image build for anyone else?".
       - name: Build API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infrastructure/docker/api.Dockerfile
@@ -168,7 +168,7 @@ jobs:
     name: Secrets — no credentials in history
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Scanning the diff alone is not enough. A key removed from the
           # working tree is still a leaked key, and this project may be
@@ -190,9 +190,9 @@ jobs:
     # to compare on a push to main.
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           # Copyleft licences are the concern for a product that may ship
