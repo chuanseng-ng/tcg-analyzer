@@ -7,7 +7,6 @@ API on :8000.
 from __future__ import annotations
 
 import pytest
-
 from tcg_api.config import Settings, get_settings
 
 

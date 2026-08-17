@@ -10,7 +10,6 @@ from __future__ import annotations
 from importlib.metadata import version
 
 from fastapi.testclient import TestClient
-
 from tcg_api.app import create_app
 
 

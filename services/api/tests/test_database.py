@@ -12,7 +12,6 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from tcg_api import database
 
 # A syntactically valid URL that is never connected to.

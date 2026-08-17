@@ -28,7 +28,7 @@ from typing import Final
 
 from tcg_domain.errors import InvalidGrade
 
-__all__ = ["Grade", "GradeBound", "MAX_GRADE", "MIN_GRADE"]
+__all__ = ["MAX_GRADE", "MIN_GRADE", "Grade", "GradeBound"]
 
 MIN_GRADE: Final = Decimal("0")
 MAX_GRADE: Final = Decimal("10")
@@ -58,12 +58,17 @@ class GradeBound(StrEnum):
                 return 1
 
 
-def _canonical(value: Decimal) -> Decimal:
+def _canonical(value: object) -> Decimal:
     """Normalise a grade value so equal grades render identically.
 
     ``Decimal("9.0")`` and ``Decimal("9")`` are numerically equal but render
     differently, which would give one grade two spellings on the API boundary.
     Whole values canonicalise to ``9``; half values to ``9.5``.
+
+    Typed `object` rather than `Decimal` for the same reason as `_quantised`:
+    grade values arrive from model output and API payloads, so the float
+    rejection below is a runtime guard, not a redundant check on a type the
+    checker has already proven.
     """
     if isinstance(value, float):
         raise InvalidGrade(

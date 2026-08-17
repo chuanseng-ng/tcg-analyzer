@@ -27,7 +27,7 @@ __all__ = ["create_app"]
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001 - FastAPI passes it
     """Release the connection pool on shutdown.
 
     `get_engine` is lazily cached, so an engine exists only if something
@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     if get_engine.cache_info().currsize:
         await get_engine().dispose()
+
 
 DESCRIPTION = """\
 HTTP surface for TCG Grading Advisor.

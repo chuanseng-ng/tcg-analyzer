@@ -17,8 +17,90 @@ exclude = ["ml/grading"]
 [dependency-groups]
 # `tzdata` backs alembic.ini's `timezone = UTC`: Windows ships no tz database,
 # so without it `alembic revision` cannot stamp a filename.
-dev = ["httpx>=0.27", "pytest>=8", "tzdata>=2024.1"]
+dev = [
+    "httpx>=0.27",
+    "mypy>=1.14",
+    "pytest>=8",
+    "ruff>=0.9",
+    "tzdata>=2024.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages", "services", "ml"]
 markers = ["integration: requires a live PostgreSQL (set TCG_API_DATABASE_URL)"]
+
+# ---------------------------------------------------------------------------
+# ruff — lint and format for every Python workspace member.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+# 100, not the default 88: the existing code was written to it, and the domain
+# invariants read better on one line than wrapped.
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "I",      # import sorting
+    "UP",     # pyupgrade — this is a 3.12-only codebase
+    "B",      # bugbear
+    # Blind `except Exception` is sometimes exactly right — a readiness probe
+    # must not propagate — but it should always be a deliberate, annotated
+    # choice rather than a default.
+    "BLE",
+    "C4",     # comprehensions
+    "SIM",    # simplify
+    "RUF",    # ruff-specific
+    "ASYNC",  # async correctness — the API and the DB layer are async throughout
+    "S",      # bandit; the project may be open-sourced, so keep it honest
+    "DTZ",    # naive datetimes: market snapshots and analyses are timestamped
+    "PTH",    # pathlib over os.path
+    "T20",    # no stray print()
+    "TID",    # tidy imports
+    "RET", "ARG", "PIE", "PERF",
+]
+ignore = [
+    # The formatter owns line breaks; this only fires on strings and comments
+    # it cannot split, where the alternative is worse than a long line.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on hard-coded values and trip bandit's "hardcoded password" and
+# assert checks by design. ARG fires on pytest fixtures requested for effect.
+# S603 fires on every `subprocess.run`; the calls here pass literal argument
+# lists with no shell and no caller-supplied data, which is the safe form the
+# rule exists to steer toward.
+"**/tests/**" = ["S101", "S105", "S106", "S603", "ARG001", "ARG002"]
+# Alembic's generated scaffolding is not ours to restyle.
+"database/migrations/versions/*" = ["E402", "I001"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# `packages/domain` must stay importable from anywhere; relative imports across
+# package boundaries are the first way that quietly stops being true.
+ban-relative-imports = "all"
+
+# ---------------------------------------------------------------------------
+# mypy — strict on source, relaxed on tests.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# The domain package's invariants are only worth as much as the types that
+# express them, so untyped code must not slip in unnoticed.
+warn_unreachable = true
+warn_no_return = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Tests use pytest fixtures and monkeypatch heavily; requiring full annotations
+# there buys noise, not safety.
+module = ["tests.*", "*.tests.*"]
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+# Alembic generates these without annotations.
+module = ["migrations.*", "versions.*"]
+ignore_errors = true

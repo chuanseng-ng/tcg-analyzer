@@ -8,6 +8,7 @@ the tree itself.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path, PurePosixPath
@@ -158,12 +159,28 @@ def test_uv_workspace_covers_every_python_package() -> None:
     assert covered == set(PYTHON_PACKAGES)
 
 
-FORBIDDEN_SUFFIXES: frozenset[str] = frozenset({
-    # Model weights and serialised artifacts.
-    ".pt", ".pth", ".ckpt", ".onnx", ".safetensors", ".h5", ".tflite", ".pkl",
-    # Card photography.
-    ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif", ".bmp",
-})
+FORBIDDEN_SUFFIXES: frozenset[str] = frozenset(
+    {
+        # Model weights and serialised artifacts.
+        ".pt",
+        ".pth",
+        ".ckpt",
+        ".onnx",
+        ".safetensors",
+        ".h5",
+        ".tflite",
+        ".pkl",
+        # Card photography.
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".bmp",
+    }
+)
 
 
 def _tracked_files() -> list[str]:
@@ -177,8 +194,14 @@ def _tracked_files() -> list[str]:
     unnecessary here: `node_modules`, `.venv` and `.git` are untracked by
     definition, so they cannot appear.
     """
+    # Resolved rather than relying on PATH lookup at exec time: it satisfies
+    # the "no partial executable path" lint, and it turns a missing git into a
+    # sentence instead of a bare FileNotFoundError from deep inside subprocess.
+    git = shutil.which("git")
+    assert git is not None, "git is required to check which files are tracked"
+
     completed = subprocess.run(
-        ["git", "ls-files", "-z"],
+        [git, "ls-files", "-z"],
         cwd=REPO_ROOT,
         capture_output=True,
         check=True,
@@ -196,7 +219,9 @@ def test_no_model_weights_or_images_are_tracked() -> None:
     speak to commits that were already made.
     """
     offenders = [
-        path for path in _tracked_files() if PurePosixPath(path).suffix.lower() in FORBIDDEN_SUFFIXES
+        path
+        for path in _tracked_files()
+        if PurePosixPath(path).suffix.lower() in FORBIDDEN_SUFFIXES
     ]
     assert offenders == []
 

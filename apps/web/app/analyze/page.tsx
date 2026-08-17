@@ -8,8 +8,7 @@ import styles from "./page.module.css";
 
 export const metadata: Metadata = {
   title: "Analyze a card",
-  description:
-    "The upload and analysis flow. Arriving in M2 — this page is a placeholder.",
+  description: "The upload and analysis flow. Arriving in M2 — this page is a placeholder.",
 };
 
 /**
@@ -26,9 +25,8 @@ export default function AnalyzePage() {
           <Stack gap={4}>
             <h1 className={styles.heading}>Analysis is not built yet</h1>
             <p className={styles.body}>
-              Uploading a card&apos;s front and back, checking the photographs
-              are usable and confirming which card it is arrive in M2. Nothing
-              on this page accepts an image yet.
+              Uploading a card&apos;s front and back, checking the photographs are usable and
+              confirming which card it is arrive in M2. Nothing on this page accepts an image yet.
             </p>
             <Link className={styles.back} href="/">
               Back to the start

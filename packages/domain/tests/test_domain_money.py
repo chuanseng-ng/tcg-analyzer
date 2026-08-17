@@ -1,11 +1,11 @@
-"""`Money` — exact decimal arithmetic, denominated in SGD."""
+"""`Money` â€” exact decimal arithmetic, denominated in SGD."""
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
-
 from tcg_domain import Currency, CurrencyMismatch, InvalidMoney, Money
 
 # --------------------------------------------------------------------------
@@ -68,7 +68,7 @@ def test_quantisation_rounds_half_up() -> None:
 
 def test_money_is_frozen() -> None:
     price = Money.of("10")
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         price.amount = Decimal("0")  # type: ignore[misc]
 
 
@@ -78,7 +78,7 @@ def test_str_names_the_currency() -> None:
 
 
 # --------------------------------------------------------------------------
-# Exactness — the reason for Decimal
+# Exactness â€” the reason for Decimal
 # --------------------------------------------------------------------------
 
 
@@ -146,7 +146,7 @@ def in_another_currency(amount: str) -> Money:
     `Currency` has a single member in V1 (spec: non-SGD currencies are out of
     scope), so a second currency cannot be constructed through the public API.
     The mismatch guard still has to be proven, so the currency is forced onto a
-    validated instance — the guard reads the field, which is what matters.
+    validated instance â€” the guard reads the field, which is what matters.
     """
     money = Money.of(amount)
     object.__setattr__(money, "currency", "USD")

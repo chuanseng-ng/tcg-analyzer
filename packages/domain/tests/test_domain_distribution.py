@@ -1,4 +1,4 @@
-"""`GradeDistribution` — the probability-validity invariant of spec §63.
+"""`GradeDistribution` â€” the probability-validity invariant of spec Â§63.
 
 An invalid distribution must be *impossible to construct*. Every test here
 asserts at the constructor, never on a downstream check.
@@ -7,10 +7,10 @@ asserts at the constructor, never on a downstream check.
 from __future__ import annotations
 
 import math
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
-
 from tcg_domain import (
     SUM_TOLERANCE,
     Grade,
@@ -18,12 +18,12 @@ from tcg_domain import (
     InvalidGradeDistribution,
 )
 
-# A realistic PSA-shaped output, taken from spec §24.
+# A realistic PSA-shaped output, taken from spec Â§24.
 SPEC_EXAMPLE = {"10": 0.12, "9": 0.69, "8": 0.17, "7_or_lower": 0.02}
 
 
 # --------------------------------------------------------------------------
-# spec §63 — 0 <= P(g) <= 1
+# spec Â§63 â€” 0 <= P(g) <= 1
 # --------------------------------------------------------------------------
 
 
@@ -53,7 +53,7 @@ def test_rejects_a_non_numeric_probability() -> None:
 
 
 # --------------------------------------------------------------------------
-# spec §63 — sum(P(g)) ~= 1
+# spec Â§63 â€” sum(P(g)) ~= 1
 # --------------------------------------------------------------------------
 
 
@@ -113,12 +113,12 @@ def test_rejects_an_unparseable_grade_key() -> None:
 
 def test_distribution_is_frozen() -> None:
     distribution = GradeDistribution.from_mapping(SPEC_EXAMPLE)
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         distribution.probabilities = {}  # type: ignore[misc]
 
 
 def test_the_retained_mapping_cannot_be_mutated_through() -> None:
-    """The full distribution is retained (spec §2.1) and must stay intact."""
+    """The full distribution is retained (spec Â§2.1) and must stay intact."""
     distribution = GradeDistribution.from_mapping(SPEC_EXAMPLE)
     with pytest.raises(TypeError):
         distribution.probabilities[Grade.parse("9")] = 0.0  # type: ignore[index]
@@ -132,7 +132,7 @@ def test_mutating_the_source_mapping_does_not_affect_the_distribution() -> None:
 
 
 # --------------------------------------------------------------------------
-# Round-tripping the forms spec §24 produces
+# Round-tripping the forms spec Â§24 produces
 # --------------------------------------------------------------------------
 
 
@@ -141,7 +141,7 @@ def test_round_trips_the_spec_example() -> None:
 
 
 def test_round_trips_half_grades() -> None:
-    """BGS half grades — spec §24."""
+    """BGS half grades â€” spec Â§24."""
     mapping = {"10": 0.25, "9.5": 0.5, "9": 0.25}
     assert GradeDistribution.from_mapping(mapping).as_mapping() == mapping
 
@@ -171,7 +171,7 @@ def test_len_counts_the_terms() -> None:
 
 
 # --------------------------------------------------------------------------
-# Reading a distribution — never lossily
+# Reading a distribution â€” never lossily
 # --------------------------------------------------------------------------
 
 
@@ -191,7 +191,7 @@ def test_probability_of_an_absent_grade_is_zero() -> None:
 
 
 def test_the_full_distribution_is_retained_not_collapsed() -> None:
-    """spec §2.1 — the UI may show one grade; the distribution stays whole."""
+    """spec Â§2.1 â€” the UI may show one grade; the distribution stays whole."""
     distribution = GradeDistribution.from_mapping(SPEC_EXAMPLE)
     assert distribution.as_mapping() == SPEC_EXAMPLE
     assert distribution.most_likely_grade == Grade.parse("9")
@@ -204,6 +204,6 @@ def test_equal_distributions_compare_equal() -> None:
 
 
 def test_direct_construction_enforces_the_same_invariant() -> None:
-    """Bypassing `from_mapping` must not bypass spec §63."""
+    """Bypassing `from_mapping` must not bypass spec Â§63."""
     with pytest.raises(InvalidGradeDistribution):
         GradeDistribution({Grade.parse("10"): 0.4, Grade.parse("9"): 0.5})

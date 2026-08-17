@@ -38,9 +38,7 @@ describe("getHealth", () => {
   it("parses the health payload", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ status: "ok", application_version: "0.0.0" }),
-      );
+      .mockResolvedValue(jsonResponse({ status: "ok", application_version: "0.0.0" }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(getHealth()).resolves.toEqual({
@@ -52,9 +50,7 @@ describe("getHealth", () => {
   it("requests /health on the configured base URL without caching it", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        jsonResponse({ status: "ok", application_version: "0.0.0" }),
-      );
+      .mockResolvedValue(jsonResponse({ status: "ok", application_version: "0.0.0" }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.test");
 
@@ -67,30 +63,21 @@ describe("getHealth", () => {
   });
 
   it("throws ApiError carrying the status on a 500", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ detail: "boom" }, 500)),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "boom" }, 500)));
 
     await expect(getHealth()).rejects.toBeInstanceOf(ApiError);
     await expect(getHealth()).rejects.toMatchObject({ status: 500 });
   });
 
   it("throws ApiError when the network fails", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 
     await expect(getHealth()).rejects.toBeInstanceOf(ApiError);
     await expect(getHealth()).rejects.toMatchObject({ status: undefined });
   });
 
   it("throws ApiError when the response is not the health contract", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ unexpected: true })),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ unexpected: true })));
 
     await expect(getHealth()).rejects.toBeInstanceOf(ApiError);
   });

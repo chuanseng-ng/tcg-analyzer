@@ -120,7 +120,7 @@ async def check_database_connectivity(engine: AsyncEngine) -> bool:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
-    except Exception:  # noqa: BLE001 - any failure to reach the database is "not ready"
+    except Exception:
         logger.warning("database connectivity check failed", exc_info=True)
         return False
     return True

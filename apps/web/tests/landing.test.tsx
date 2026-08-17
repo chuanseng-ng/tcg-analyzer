@@ -14,27 +14,21 @@ describe("landing page", () => {
   it("renders the primary call to action from spec §48", () => {
     render(<LandingPage />);
 
-    expect(
-      screen.getByRole("link", { name: "Analyze a card" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Analyze a card" })).toBeInTheDocument();
   });
 
   it("renders the secondary explanation from spec §48 verbatim", () => {
     render(<LandingPage />);
 
     expect(
-      screen.getByText(
-        "Estimate condition, likely grades and whether grading is worthwhile.",
-      ),
+      screen.getByText("Estimate condition, likely grades and whether grading is worthwhile."),
     ).toBeInTheDocument();
   });
 
   it("states that this is not an official grading service", () => {
     render(<LandingPage />);
 
-    expect(
-      screen.getByText(/not an official grading service/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/not an official grading service/i)).toBeInTheDocument();
   });
 
   it("states that predictions are probabilities rather than grades", () => {

@@ -1,9 +1,10 @@
-"""`CardReference` — TCG-agnostic identity of a single printed card."""
+"""`CardReference` â€” TCG-agnostic identity of a single printed card."""
 
 from __future__ import annotations
 
-import pytest
+from dataclasses import FrozenInstanceError
 
+import pytest
 from tcg_domain import ENGLISH, JAPANESE, POKEMON, CardReference, InvalidCardReference
 
 
@@ -34,7 +35,7 @@ def test_variant_is_optional() -> None:
 
 def test_reference_is_frozen() -> None:
     card = a_card()
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         card.game = "magic"  # type: ignore[misc]
 
 
@@ -43,7 +44,7 @@ def test_reference_is_hashable() -> None:
 
 
 # --------------------------------------------------------------------------
-# `game` is a field, not an enum. V1 ships Pokémon; nothing hard-codes it.
+# `game` is a field, not an enum. V1 ships PokÃ©mon; nothing hard-codes it.
 # --------------------------------------------------------------------------
 
 
@@ -57,7 +58,7 @@ def test_another_game_is_representable() -> None:
 
 
 @pytest.mark.parametrize(
-    "game", ["", "   ", "Pokemon", "poké mon", "pokemon_tcg", "-pokemon", "pokemon-"]
+    "game", ["", "   ", "Pokemon", "pokÃ© mon", "pokemon_tcg", "-pokemon", "pokemon-"]
 )
 def test_game_must_be_a_lowercase_slug(game: str) -> None:
     with pytest.raises(InvalidCardReference):

@@ -57,7 +57,7 @@ async def database_is_reachable() -> bool:
     """
     try:
         engine = get_engine()
-    except Exception:  # noqa: BLE001 - unconfigurable is "not ready", not "broken"
+    except Exception:
         logger.warning("database engine could not be configured", exc_info=True)
         return False
     return await check_database_connectivity(engine)
