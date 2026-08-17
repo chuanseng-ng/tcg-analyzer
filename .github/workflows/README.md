@@ -5,7 +5,7 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 
 | Workflow | Runs on | Checks |
 | --- | --- | --- |
-| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; API image build; secret scan; dependency review |
+| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO; API image build; secret scan; dependency review |
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
@@ -21,7 +21,13 @@ Dependency updates are configured in [`../dependabot.yml`](../dependabot.yml).
 
 **`/health` and `/readiness` are checked separately** because they answer
 different questions — see `services/api`. The migrations job is the only one
-with a database; the Python job deselects `-m integration` for that reason.
+with a database and the storage job the only one with MinIO, so the Python job
+deselects both `-m integration` and `-m object_storage`.
+
+**The storage job runs the local Compose file** rather than a service container,
+because MinIO needs a `server /data` command and a service container cannot
+supply one. It also means `infrastructure/local/docker-compose.yml` is exercised
+on every PR instead of only when someone clones the repository.
 
 **The secret scan reads full history**, not the diff. A credential removed from
 the working tree is still leaked, and this repository is public.

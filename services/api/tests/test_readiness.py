@@ -15,29 +15,44 @@ from tcg_api.routers import readiness
 
 @pytest.fixture
 def client_factory():
-    def build(database_reachable: bool) -> TestClient:
+    def build(database_reachable: bool = True, storage_reachable: bool = True) -> TestClient:
         app = FastAPI()
         app.include_router(readiness.router)
         app.dependency_overrides[readiness.database_is_reachable] = lambda: database_reachable
+        app.dependency_overrides[readiness.object_storage_is_reachable] = lambda: storage_reachable
         return TestClient(app)
 
     return build
 
 
-def test_readiness_reports_ok_when_the_database_answers(client_factory) -> None:
-    response = client_factory(True).get("/readiness")
+def test_readiness_reports_ok_when_every_dependency_answers(client_factory) -> None:
+    response = client_factory().get("/readiness")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "checks": {"database": "ok"}}
+    assert response.json() == {"status": "ok", "checks": {"database": "ok", "storage": "ok"}}
 
 
 def test_readiness_reports_degraded_when_the_database_does_not_answer(
     client_factory,
 ) -> None:
-    response = client_factory(False).get("/readiness")
+    response = client_factory(database_reachable=False).get("/readiness")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "degraded", "checks": {"database": "unavailable"}}
+    assert response.json() == {
+        "status": "degraded",
+        "checks": {"database": "unavailable", "storage": "ok"},
+    }
+
+
+def test_readiness_reports_degraded_when_storage_does_not_answer(client_factory) -> None:
+    """Storage is a dependency of serving traffic, not an optional extra."""
+    response = client_factory(storage_reachable=False).get("/readiness")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "degraded",
+        "checks": {"database": "ok", "storage": "unavailable"},
+    }
 
 
 def test_readiness_is_tagged_health_in_the_openapi_schema(client_factory) -> None:

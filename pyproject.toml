@@ -18,6 +18,9 @@ exclude = ["ml/grading"]
 # `tzdata` backs alembic.ini's `timezone = UTC`: Windows ships no tz database,
 # so without it `alembic revision` cannot stamp a filename.
 dev = [
+    # boto3 ships no inline type information, so `mypy --strict` cannot see
+    # through the S3 client without these. Dev-only: they are types, not code.
+    "boto3-stubs[s3]>=1.35",
     "httpx>=0.27",
     "mypy>=1.14",
     "pytest>=8",
@@ -27,7 +30,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages", "services", "ml"]
-markers = ["integration: requires a live PostgreSQL (set TCG_API_DATABASE_URL)"]
+markers = [
+    "integration: requires a live PostgreSQL (set TCG_API_DATABASE_URL)",
+    # Separate from `integration` because the two need different services and
+    # run in different CI jobs: only a real S3-compatible store can prove that a
+    # signature expires, and the migrations job has no MinIO.
+    "object_storage: requires a live MinIO (set TCG_API_STORAGE_ENDPOINT_URL)",
+]
 
 # ---------------------------------------------------------------------------
 # ruff — lint and format for every Python workspace member.

@@ -3,7 +3,18 @@ name = "tcg-shared"
 version = "0.0.0"
 description = "Cross-cutting utilities with no domain knowledge"
 requires-python = ">=3.12"
-dependencies = []
+# Both are imported directly by `tcg_shared.storage.s3` and so are declared
+# directly. `anyio` in particular arrives transitively via Starlette in the API,
+# and relying on that would let a FastAPI pin quietly break this package.
+#
+# Plain dependencies rather than an extra: CI resolves the workspace with
+# `uv sync --all-packages`, which does not install extras, so the storage tests
+# would fail to import. The purity test is what keeps the port itself free of
+# them — see tests/test_storage_purity.py.
+dependencies = [
+    "anyio>=4",
+    "boto3>=1.35",
+]
 
 [build-system]
 requires = ["hatchling"]

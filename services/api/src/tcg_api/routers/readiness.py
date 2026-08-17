@@ -9,7 +9,13 @@ killed.
 The frozen contract:
 
     GET /readiness -> 200 | 503
-    {"status": "ok" | "degraded", "checks": {"database": "ok" | "unavailable"}}
+    {
+      "status": "ok" | "degraded",
+      "checks": {
+        "database": "ok" | "unavailable",
+        "storage":  "ok" | "unavailable"
+      }
+    }
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 
 from tcg_api.database import check_database_connectivity, get_engine
+from tcg_api.storage import check_object_storage_connectivity, get_object_storage
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,9 @@ class ReadinessChecks(BaseModel):
 
     database: Literal["ok", "unavailable"] = Field(
         description="Whether the API could execute a trivial statement against PostgreSQL.",
+    )
+    storage: Literal["ok", "unavailable"] = Field(
+        description="Whether the API could reach the object store.",
     )
 
 
@@ -63,6 +73,22 @@ async def database_is_reachable() -> bool:
     return await check_database_connectivity(engine)
 
 
+async def object_storage_is_reachable() -> bool:
+    """Dependency wrapping the storage probe, so tests can override it.
+
+    Construction sits inside the guard for the same reason it does above:
+    `get_object_storage` reads the `TCG_API_STORAGE_*` variables, and an
+    unconfigured store raises before any request is attempted. That is a 503
+    naming storage, not a 500 saying the probe itself is broken.
+    """
+    try:
+        storage = get_object_storage()
+    except Exception:
+        logger.warning("object storage could not be configured", exc_info=True)
+        return False
+    return await check_object_storage_connectivity(storage)
+
+
 @router.get(
     "/readiness",
     response_model=ReadinessResponse,
@@ -81,18 +107,25 @@ async def database_is_reachable() -> bool:
 async def readiness(
     response: Response,
     database_reachable: bool = Depends(database_is_reachable),
+    storage_reachable: bool = Depends(object_storage_is_reachable),
 ) -> ReadinessResponse:
     """Report dependency health.
 
     Degrades to 503 with a body rather than raising: an orchestrator reading a
     500 from a readiness probe learns only that the probe is broken, whereas a
     503 with `checks` names the dependency that is down.
-    """
-    if not database_reachable:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return ReadinessResponse(
-            status="degraded",
-            checks=ReadinessChecks(database="unavailable"),
-        )
 
-    return ReadinessResponse(status="ok", checks=ReadinessChecks(database="ok"))
+    Every check is reported, not just the first failure: an operator fixing a
+    deployment wants the whole list, and a probe that stops at the first problem
+    turns one outage into two round trips.
+    """
+    checks = ReadinessChecks(
+        database="ok" if database_reachable else "unavailable",
+        storage="ok" if storage_reachable else "unavailable",
+    )
+
+    if not (database_reachable and storage_reachable):
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return ReadinessResponse(status="degraded", checks=checks)
+
+    return ReadinessResponse(status="ok", checks=checks)

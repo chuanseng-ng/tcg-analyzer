@@ -86,8 +86,8 @@ in the pipeline is a step you cannot reproduce yourself.
 ```bash
 uv run ruff check .                     # lint
 uv run ruff format --check .            # formatting
-uv run mypy packages/domain/src services/api/src
-uv run pytest -m "not integration"      # integration tests need a database
+uv run mypy packages/domain/src packages/shared/src services/api/src
+uv run pytest -m "not integration and not object_storage"   # both need Docker
 
 pnpm --filter @tcg/web lint
 pnpm --filter @tcg/web format:check
@@ -136,7 +136,8 @@ docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
 docker run --rm -p 8000:8000 tcg-api:dev
 ```
 
-Compose wiring arrives with #20.
+Compose wiring for the API container arrives with #20; PostgreSQL and MinIO are
+already in the local stack.
 #### Database
 
 Every schema change arrives through a reviewed, versioned Alembic migration —
@@ -181,4 +182,41 @@ Tests that need a live database are marked `integration` and skip when
 ```bash
 uv run pytest -m integration   # requires PostgreSQL to be running
 uv run pytest -m "not integration"
+```
+
+#### Object storage
+
+Uploaded card images live in S3-compatible object storage — MinIO locally, any
+S3-compatible provider in a deployment. The application never talks to either
+directly: it goes through the `ObjectStorage` port in `packages/shared`, so the
+provider is replaceable ([ADR 0002](docs/adr/0002-object-storage-behind-a-port.md)).
+
+The same `up` that starts PostgreSQL starts MinIO and creates the bucket:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait
+
+export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
+```
+
+The browser console is on <http://localhost:9001>. `down -v` discards the
+`minio-data` volume along with the database's, so the next `up` starts from an
+empty bucket.
+
+Two rules matter more than the configuration:
+
+- **Storage keys are generated server-side, always.** `generate_key` takes no
+  filename argument, so a client-supplied name cannot reach a storage path
+  (spec §55). An original filename may be kept as metadata via
+  `sanitise_filename`, and never as a path.
+- **Signed URLs are short-lived and scoped to one object.** A signed URL is a
+  bearer credential nobody can revoke, so the only bound on its misuse is
+  `TCG_API_STORAGE_SIGNED_URL_TTL_SECONDS`.
+
+Tests that need a live MinIO are marked `object_storage` and skip when
+`TCG_API_STORAGE_ENDPOINT_URL` is unset. They are separate from `integration`
+because the two need different services:
+
+```bash
+uv run pytest -m object_storage   # requires MinIO to be running
 ```
