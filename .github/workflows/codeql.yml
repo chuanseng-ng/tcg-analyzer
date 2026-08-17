@@ -1,0 +1,55 @@
+# Static analysis for injection, unsafe deserialisation and similar defects.
+#
+# This complements the secret scan in ci.yml rather than duplicating it: that
+# one finds credentials that were committed, this one finds code that mishandles
+# input. Both matter here, because uploaded card photographs are untrusted input
+# that ML code will eventually open, decode and resize.
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Advisories land after code does. A weekly pass re-analyses an unchanged
+    # tree against rules that have changed since it was last touched.
+    - cron: "0 3 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Required to upload results to the Security tab.
+      security-events: write
+
+    strategy:
+      # One language failing should not hide the other's findings.
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # `security-and-quality` over the default `security`: the extra rules
+          # are cheap on a codebase this size and the noise is manageable now,
+          # which is not true if it is switched on years later.
+          queries: security-and-quality
+
+      # Both languages are interpreted, so CodeQL's own extraction is enough —
+      # no build step to configure.
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

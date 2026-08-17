@@ -57,6 +57,31 @@ uv sync --all-packages  # resolve all Python workspace members
 uv run pytest           # repository-level and per-package tests
 ```
 
+#### Checks
+
+CI runs exactly these, so a green run locally means a green run there. Nothing
+in the pipeline is a step you cannot reproduce yourself.
+
+```bash
+uv run ruff check .                     # lint
+uv run ruff format --check .            # formatting
+uv run mypy packages/domain/src services/api/src
+uv run pytest -m "not integration"      # integration tests need a database
+
+pnpm --filter @tcg/web lint
+pnpm --filter @tcg/web format:check
+pnpm --filter @tcg/web gen:api-types:check   # frontend types match the schema
+pnpm --filter @tcg/web typecheck
+pnpm --filter @tcg/web test
+```
+
+If `gen:api-types:check` fails, the API's OpenAPI schema and the committed
+frontend types have diverged. Regenerate and commit:
+
+```bash
+pnpm --filter @tcg/web gen:api-types
+```
+
 #### Web
 
 ```bash
@@ -68,9 +93,6 @@ pnpm --filter @tcg/web build
 
 The app reads `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`); see
 `apps/web/.env.example`.
-
-Build, lint and per-service commands are added as later M0 issues introduce
-them.
 
 #### API
 
