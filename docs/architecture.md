@@ -160,6 +160,11 @@ enforces that separation. See
 TCGplayer API access is neither assumed nor hard-coded. Access is not currently
 granted, and its terms restrict competing commercial products.
 
+The canonical card catalog is sourced from TCGdex under its MIT licence, entered
+through `card_external_ids` so it stays replaceable, and imported without card
+images — see [ADR 0004](adr/0004-the-canonical-card-catalog-source.md). The
+market-price provider is a separate, still-open decision.
+
 ### Everything is versioned and immutable
 
 Grading rules, model bundles, dataset versions and market snapshots are
