@@ -5,11 +5,54 @@ get back its identity, its physical condition, a probability distribution over
 grades for each grading company, market values, the economics of grading it, and
 a recommendation on whether grading is worthwhile.
 
-**This is not an official grading service.** It does not authenticate cards, and
-its predictions are probabilities, never guaranteed grades.
+## What this is, and what it is not
 
-> This README is a stub. The full overview, setup guide and architecture
-> documentation arrive with #22.
+**This is not an official grading service.** It does not authenticate cards, and
+it does not detect counterfeits. Its output is a probability distribution over
+grades — never a guaranteed grade, and never a promise about what a grading
+company will decide.
+
+What it does is answer a question the grading companies do not: *given this
+card, in this condition, at today's prices, is paying to have it graded worth
+it?* Two independent halves produce that answer. The models predict the physical
+outcome; the economic engine decides whether that outcome is worth pursuing.
+Neither depends on the other's internals, and that separation is the single most
+load-bearing rule in the codebase.
+
+## V1 scope
+
+| | |
+| --- | --- |
+| **Cards** | Pokémon, English and Japanese |
+| **Grading companies** | PSA, TAG, BGS |
+| **Input** | Ordinary front and back photographs, from a mobile camera or a desktop |
+| **Analysis** | Identification, centering, corners, edges, surface, manufacturing defects, condition confidence |
+| **Output** | A grade probability distribution per company, market values, grading economics, a recommendation |
+| **Economics** | SGD, with configurable grading, shipping, insurance, miscellaneous and selling costs |
+| **Sessions** | Anonymous. Mobile-first, desktop-compatible |
+
+Deliberately **not** in V1: authentication, user accounts, collections,
+portfolio management, social features, counterfeit detection, slab analysis,
+crack-and-resubmit analysis, guided photography, grading submission, card
+selling, CGC, ARS, other TCGs, currencies other than SGD, and monetization.
+
+They are excluded from the scope, not from the design: the architecture has to
+accommodate every one of them later without a rewrite.
+
+## Architecture
+
+Photographs become a neutral condition representation, that representation feeds
+a separate model per grading company, and the resulting distributions meet a
+pre-ingested market snapshot in the economic engine. Uncertainty is a valid
+answer at every step — `insufficient_information` is a legitimate result, and
+the pipeline stops rather than guessing when an image or an identification
+cannot support the next stage.
+
+The invariants that shape all of this — distributions rather than point grades,
+replaceable providers, immutable versioning, provenance-gated training data —
+are documented in **[`docs/architecture.md`](docs/architecture.md)**. Read it
+before making a structural change; the decisions behind it are recorded in
+[`docs/adr/`](docs/adr).
 
 ## Repository layout
 
@@ -252,3 +295,27 @@ because the two need different services:
 ```bash
 uv run pytest -m object_storage   # requires MinIO to be running
 ```
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the working conventions: one primary
+capability per pull request, Conventional Commits, the PR description headings,
+and the Definition of Done a change has to meet before it is finished.
+
+Two of those rules are worth repeating here, because their cost is paid in the
+history rather than in review: **never commit model weights, training images,
+API keys or provider credentials**, and **do not skip hooks**. The project may
+be open-sourced later, so proprietary assets have to stay out of the history,
+not merely out of the working tree.
+
+## Documentation
+
+| | |
+| --- | --- |
+| [`docs/architecture.md`](docs/architecture.md) | Domain architecture, the analysis pipeline, the invariants |
+| [`docs/adr/`](docs/adr) | Why things are the way they are, one decision per file |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Commits, pull requests, Definition of Done |
+| [`.env.example`](.env.example) | Every variable the stack reads |
+| `/docs` on the running API | The generated OpenAPI reference |
+
+Each directory also carries its own `README.md` describing what belongs in it.
