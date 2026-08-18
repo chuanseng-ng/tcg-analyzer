@@ -38,18 +38,36 @@ uv run alembic current                   # which revision is applied
   revision that has already been applied anywhere.
 - **One capability per migration**, matching the one-capability-per-PR rule.
 - **No credentials.** The URL lives in the environment, never in `alembic.ini`.
-- **Autogenerate is not available yet.** `target_metadata` is `None` because no
-  models exist. M1 brings the first domain tables; point `target_metadata` at
-  their `MetaData` then, or `alembic revision --autogenerate` will propose
-  dropping every table it finds.
+- **Declare every table in code, not only in a migration.** `env.py` reads
+  `target_metadata` from `services/api/src/tcg_api/catalog/tables.py`, so
+  `alembic revision --autogenerate` compares a database against what that module
+  declares — and proposes dropping anything it does not find there. A migration
+  is still written and reviewed by hand; autogenerate is a starting point, not
+  an author.
 
 ## Current state
 
-One revision, the baseline: `migration_harness_check`. It is scaffolding, not
-domain — a single-column table whose only job is to prove the harness applies
-and reverts cleanly against real PostgreSQL. Its `COMMENT ON TABLE` says so in
-the database itself. The migration that introduces the first domain table drops
-it.
+Two revisions.
 
-Domain tables — `cards`, `analyses`, `images`, `market_observations` — arrive in
-their own milestones.
+`0255d9f37125` is the baseline: `migration_harness_check`, a single-column table
+whose only job was to prove the harness applies and reverts cleanly against real
+PostgreSQL. Its `COMMENT ON TABLE` said it would be dropped by the migration
+that introduced the first domain table, and it was.
+
+`0d60d1982d83` is that migration — spec §10's card catalog: `sets`, `cards` and
+`card_external_ids`. Three things about it are load-bearing and should survive
+any later change:
+
+- **No provider column on `cards`.** Several external databases may point at one
+  canonical card, so provider identifiers live only in `card_external_ids`.
+- **`game` is a column.** Nothing hard-codes Pokémon; a second TCG is rows of
+  data (spec §73).
+- **Printed text is `COLLATE "C"`.** The local database is initialised
+  `--locale=C` and CI's PostgreSQL service inherits the image default, so a
+  column that took the server's collation would sort — and index `LIKE 'x%'` —
+  differently in the two.
+
+`downgrade` restores the harness table, so the history reverses exactly.
+
+The remaining domain tables — `analyses`, `images`, `market_observations` —
+arrive in their own milestones.

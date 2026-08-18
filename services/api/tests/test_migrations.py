@@ -31,6 +31,13 @@ pytestmark = [
 
 HARNESS_TABLE = "migration_harness_check"
 
+# The baseline revision, which is as far as the harness table survives: the
+# first domain migration drops it, exactly as its own COMMENT ON TABLE said it
+# would. `BASELINE` rather than `head` is therefore what these tests upgrade to,
+# and the assertion that `head` has dropped it lives in `test_catalog_schema.py`
+# alongside the tables that replaced it.
+BASELINE = "0255d9f37125"
+
 
 def alembic(*args: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
@@ -68,13 +75,13 @@ def clean_database():
 
 
 def test_upgrade_creates_the_harness_table() -> None:
-    alembic("upgrade", "head")
+    alembic("upgrade", BASELINE)
 
     assert table_exists(HARNESS_TABLE)
 
 
 def test_downgrade_removes_the_harness_table() -> None:
-    alembic("upgrade", "head")
+    alembic("upgrade", BASELINE)
 
     alembic("downgrade", "base")
 
@@ -82,17 +89,32 @@ def test_downgrade_removes_the_harness_table() -> None:
 
 
 def test_the_harness_is_repeatable_on_a_fresh_schema() -> None:
+    """The whole history, not just the baseline: this is CI's migrations job."""
     alembic("upgrade", "head")
     alembic("downgrade", "base")
 
     alembic("upgrade", "head")
 
+    assert table_exists("cards")
+
+
+def test_downgrading_one_revision_restores_the_harness_table() -> None:
+    """`downgrade` is a real inverse, not a declaration.
+
+    The revision that drops the harness table must put it back, or the history
+    stops being reversible at exactly the point the first domain table arrives.
+    """
+    alembic("upgrade", "head")
+
+    alembic("downgrade", "-1")
+
     assert table_exists(HARNESS_TABLE)
+    assert not table_exists("cards")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:
     """The baseline table must announce that it is scaffolding, not domain."""
-    alembic("upgrade", "head")
+    alembic("upgrade", BASELINE)
 
     async def read_comment() -> str | None:
         engine = create_async_engine(DATABASE_URL or "")
