@@ -1,6 +1,15 @@
 # `docs/`
 
-Project documentation: architecture overview, contributing guide, API contracts
-and architecture decision records under `docs/adr/`.
+Project documentation.
 
-Fleshed out in M0 (#22).
+| Path | Contents |
+| --- | --- |
+| [`architecture.md`](architecture.md) | Domain architecture, the analysis pipeline, and the architectural invariants |
+| [`adr/`](adr) | Architecture decision records, one numbered file per decision |
+| [`adr/template.md`](adr/template.md) | Starting point for a new ADR |
+
+Setup and the day-to-day commands live in the root [`README.md`](../README.md);
+the working conventions live in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The API
+documents itself — the OpenAPI schema is served at `/openapi.json` and the
+interactive reference at `/docs`, so there is no hand-written API reference here
+to fall out of date.
