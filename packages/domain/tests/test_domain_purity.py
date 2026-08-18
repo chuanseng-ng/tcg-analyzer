@@ -63,5 +63,16 @@ def test_the_public_surface_is_explicit() -> None:
     # Submodules are reachable as attributes once imported, and `annotations` is
     # the __future__ flag every module here imports. Neither is public surface,
     # so neither is listed in __all__.
-    incidental = {"annotations", "card", "confidence", "distribution", "errors", "grade", "money"}
+    incidental = {
+        "annotations",
+        "card",
+        "catalog",
+        "confidence",
+        "distribution",
+        "errors",
+        "grade",
+        "identification",
+        "money",
+        "repository",
+    }
     assert exported - incidental == set(tcg_domain.__all__)
