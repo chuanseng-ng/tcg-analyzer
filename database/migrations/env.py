@@ -19,19 +19,22 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# The schema's source of truth, so `alembic revision --autogenerate` compares a
+# database against the tables the code actually declares. `alembic.ini` sets
+# `prepend_sys_path = .`, and `tcg_api` is an editable workspace install, so this
+# import works from the repository root without any path juggling.
+#
+# Autogenerate proposes dropping anything it finds and does not see here, so
+# every future domain table must be declared in a module reachable from it — not
+# created by hand-written DDL alone.
+from tcg_api.catalog.tables import metadata as target_metadata
+
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 DATABASE_URL_ENV_VAR = "TCG_API_DATABASE_URL"
-
-# No models yet, so autogenerate has nothing to compare against and every
-# migration is written by hand. This becomes meaningful in M1, when the first
-# domain tables (cards, analyses, images, market_observations) land: point
-# `target_metadata` at those models' `MetaData` then, or `alembic revision
-# --autogenerate` will cheerfully propose dropping every table it finds.
-target_metadata = None
 
 
 def database_url() -> str:

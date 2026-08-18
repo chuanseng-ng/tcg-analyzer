@@ -249,7 +249,22 @@ values, not secrets; see `infrastructure/local/README.md`. A real credential
 belongs in `.env`, which is not committed.
 
 Migrations are portable, plain PostgreSQL. Nothing may depend on a
-Supabase-specific feature (spec §8).
+Supabase-specific feature (spec §8), and no extension is required.
+
+The schema's source of truth is `services/api/src/tcg_api/catalog/tables.py`,
+which `database/migrations/env.py` reads as `target_metadata`. Declare a new
+table there as well as in its migration, or `alembic revision --autogenerate`
+will propose dropping it.
+
+Once the schema is up, load the hand-authored card catalog fixtures:
+
+```bash
+uv run tcg-seed-catalog
+```
+
+Roughly twenty English and Japanese cards under a `manual` provider, enough to
+search, identify and price against. It is idempotent, so re-run it after editing
+a fixture; see `database/seeds/README.md`.
 
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:

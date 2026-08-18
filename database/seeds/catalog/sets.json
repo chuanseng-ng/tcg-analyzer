@@ -1,0 +1,34 @@
+[
+  {
+    "game": "pokemon",
+    "language": "en",
+    "set_code": "BS",
+    "name": "Base Set",
+    "release_date": "1999-01-09",
+    "metadata": { "total_cards": 102 }
+  },
+  {
+    "game": "pokemon",
+    "language": "en",
+    "set_code": "MEW",
+    "name": "Scarlet & Violet—151",
+    "release_date": "2023-09-22",
+    "metadata": { "total_cards": 165 }
+  },
+  {
+    "game": "pokemon",
+    "language": "ja",
+    "set_code": "SV2a",
+    "name": "ポケモンカード151",
+    "release_date": "2023-06-16",
+    "metadata": { "total_cards": 165 }
+  },
+  {
+    "game": "pokemon",
+    "language": "ja",
+    "set_code": "SV3",
+    "name": "黒炎の支配者",
+    "release_date": "2023-07-28",
+    "metadata": { "total_cards": 108 }
+  }
+]

@@ -1045,6 +1045,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
+    { name = "tcg-domain" },
     { name = "tcg-shared" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1058,6 +1059,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.4" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.52" },
     { name = "structlog", specifier = ">=24.4" },
+    { name = "tcg-domain", editable = "packages/domain" },
     { name = "tcg-shared", editable = "packages/shared" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]

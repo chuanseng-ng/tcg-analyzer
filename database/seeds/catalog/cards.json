@@ -1,0 +1,179 @@
+[
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "4/102",
+    "name": "Charizard",
+    "rarity": "Rare Holo",
+    "variant": "1st-edition-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-4-1st-edition-holo" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "4/102",
+    "name": "Charizard",
+    "rarity": "Rare Holo",
+    "variant": "shadowless-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-4-shadowless-holo" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "4/102",
+    "name": "Charizard",
+    "rarity": "Rare Holo",
+    "variant": "unlimited-holo",
+    "external_ids": [
+      { "provider": "manual", "external_id": "bs-4-unlimited-holo" },
+      {
+        "provider": "example",
+        "external_id": "example-base-charizard",
+        "metadata": {
+          "note": "Fictional. Present only so that the multi-provider property of card_external_ids is exercised by real seed data."
+        }
+      }
+    ]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "2/102",
+    "name": "Blastoise",
+    "rarity": "Rare Holo",
+    "variant": "unlimited-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-2-unlimited-holo" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "15/102",
+    "name": "Venusaur",
+    "rarity": "Rare Holo",
+    "variant": "unlimited-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-15-unlimited-holo" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "16/102",
+    "name": "Zapdos",
+    "rarity": "Rare Holo",
+    "variant": "unlimited-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-16-unlimited-holo" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "58/102",
+    "name": "Pikachu",
+    "rarity": "Common",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-58-unlimited" }]
+  },
+  {
+    "set": "pokemon/en/BS",
+    "card_number": "88/102",
+    "name": "Energy Retrieval",
+    "rarity": "Uncommon",
+    "external_ids": [{ "provider": "manual", "external_id": "bs-88" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "025/165",
+    "name": "Pikachu",
+    "rarity": "Common",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-025-unlimited" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "025/165",
+    "name": "Pikachu",
+    "rarity": "Common",
+    "variant": "reverse-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-025-reverse-holo" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "006/165",
+    "name": "Charizard",
+    "rarity": "Rare",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-006-unlimited" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "006/165",
+    "name": "Charizard",
+    "rarity": "Rare",
+    "variant": "reverse-holo",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-006-reverse-holo" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "001/165",
+    "name": "Bulbasaur",
+    "rarity": "Common",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-001-unlimited" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "151/165",
+    "name": "Mew ex",
+    "rarity": "Double Rare",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-151-unlimited" }]
+  },
+  {
+    "set": "pokemon/en/MEW",
+    "card_number": "199/165",
+    "name": "Charizard ex",
+    "rarity": "Special Illustration Rare",
+    "variant": "unlimited",
+    "external_ids": [{ "provider": "manual", "external_id": "mew-199-unlimited" }]
+  },
+  {
+    "set": "pokemon/ja/SV2a",
+    "card_number": "025/165",
+    "name": "ピカチュウ",
+    "rarity": "C",
+    "external_ids": [{ "provider": "manual", "external_id": "sv2a-025" }]
+  },
+  {
+    "set": "pokemon/ja/SV2a",
+    "card_number": "006/165",
+    "name": "リザードン",
+    "rarity": "R",
+    "external_ids": [{ "provider": "manual", "external_id": "sv2a-006" }]
+  },
+  {
+    "set": "pokemon/ja/SV2a",
+    "card_number": "001/165",
+    "name": "フシギダネ",
+    "rarity": "C",
+    "external_ids": [{ "provider": "manual", "external_id": "sv2a-001" }]
+  },
+  {
+    "set": "pokemon/ja/SV2a",
+    "card_number": "201/165",
+    "name": "リザードンex",
+    "rarity": "SAR",
+    "external_ids": [{ "provider": "manual", "external_id": "sv2a-201" }]
+  },
+  {
+    "set": "pokemon/ja/SV3",
+    "card_number": "010/108",
+    "name": "ヒトカゲ",
+    "rarity": "C",
+    "external_ids": [{ "provider": "manual", "external_id": "sv3-010" }]
+  },
+  {
+    "set": "pokemon/ja/SV3",
+    "card_number": "011/108",
+    "name": "リザード",
+    "rarity": "U",
+    "external_ids": [{ "provider": "manual", "external_id": "sv3-011" }]
+  },
+  {
+    "set": "pokemon/ja/SV3",
+    "card_number": "097/108",
+    "name": "リザードンex",
+    "rarity": "SAR",
+    "external_ids": [{ "provider": "manual", "external_id": "sv3-097" }]
+  }
+]
