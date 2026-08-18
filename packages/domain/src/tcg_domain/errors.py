@@ -10,14 +10,25 @@ These exceptions signal *invalid input* — a caller handed the domain something
 it cannot represent. They are not the mechanism for expressing uncertainty:
 "we do not know" is a legitimate result, not a failure, and is carried by
 :class:`tcg_domain.confidence.InsufficientInformation` instead (spec §2.7).
+
+:class:`CatalogUnavailable` is the one exception to that reading, and it earns
+its place here rather than in an adapter: it is what
+:class:`tcg_domain.repository.CardRepository` promises to raise when the
+catalog cannot be reached, so that swapping one implementation for another
+changes no caller's error handling and no driver exception ever escapes the
+port (the rule ``tcg_shared.storage.errors`` already applies to object storage).
 """
 
 from __future__ import annotations
 
 __all__ = [
+    "CatalogUnavailable",
     "CurrencyMismatch",
     "DomainError",
+    "InvalidCardIdentification",
     "InvalidCardReference",
+    "InvalidCardSearch",
+    "InvalidCatalogRecord",
     "InvalidConfidence",
     "InvalidGrade",
     "InvalidGradeDistribution",
@@ -63,3 +74,38 @@ class InvalidConfidence(DomainError, ValueError):
 
 class InvalidCardReference(DomainError, ValueError):
     """A card reference field is empty or malformed."""
+
+
+class InvalidCatalogRecord(DomainError, ValueError):
+    """A `Set`, `Card` or `CardExternalId` field is empty or malformed.
+
+    One error for the three spec §10 tables rather than three near-identical
+    ones: they are a single family, always built together by the same importer
+    and the same adapter, and a caller that needs to know which record failed
+    reads the message rather than the class.
+    """
+
+
+class InvalidCardIdentification(DomainError, ValueError):
+    """An identification names something other than a card, or an unvalidated
+    confidence. Spec §20 forbids acting on an uncertain match, which only holds
+    if the confidence is a :class:`tcg_domain.confidence.Confidence`."""
+
+
+class InvalidCardSearch(DomainError, ValueError):
+    """A catalog query or the page answering it is not representable.
+
+    Covers both directions of :meth:`tcg_domain.repository.CardRepository.search`:
+    a filter that is empty rather than absent, and a page whose window does not
+    describe the result set it claims.
+    """
+
+
+class CatalogUnavailable(DomainError, ConnectionError):
+    """The card catalog could not be reached.
+
+    Not invalid input — the request was well-formed and the answer is simply
+    not obtainable right now. Also a `ConnectionError`, because that is what it
+    is, and an adapter must translate its driver's failure into this rather
+    than letting it escape.
+    """

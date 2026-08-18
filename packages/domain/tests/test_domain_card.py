@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
-from tcg_domain import ENGLISH, JAPANESE, POKEMON, CardReference, InvalidCardReference
+from tcg_domain import (
+    ENGLISH,
+    JAPANESE,
+    POKEMON,
+    CardReference,
+    Game,
+    InvalidCardReference,
+    Language,
+)
 
 
 def a_card(**overrides: object) -> CardReference:
@@ -118,3 +126,31 @@ def test_card_numbers_keep_their_printed_form() -> None:
 def test_variant_must_be_absent_or_meaningful(variant: str) -> None:
     with pytest.raises(InvalidCardReference):
         a_card(variant=variant)
+
+
+# --------------------------------------------------------------------------
+# `Game` and `Language` name what V1 ships. They are a vocabulary the caller
+# may reach for, not the set of values the field will accept.
+# --------------------------------------------------------------------------
+
+
+def test_the_constants_are_the_enum_members() -> None:
+    assert POKEMON is Game.POKEMON
+    assert ENGLISH is Language.ENGLISH
+    assert JAPANESE is Language.JAPANESE
+
+
+def test_an_enum_member_is_accepted_wherever_a_game_or_language_is() -> None:
+    card = a_card(game=Game.POKEMON, language=Language.JAPANESE)
+    assert card.game == "pokemon"
+    assert card.language == "ja"
+
+
+def test_an_enum_member_is_stored_as_a_plain_string() -> None:
+    """So a repr, a log line and a serialised payload all read `pokemon`."""
+    assert type(a_card(game=Game.POKEMON).game) is str
+
+
+def test_the_enums_do_not_close_the_fields() -> None:
+    """A game or language the enum does not name is still representable."""
+    assert a_card(game="magic-the-gathering", language="fr").game == "magic-the-gathering"

@@ -157,13 +157,21 @@ imports the port, only the adapter module imports the vendor SDK, and a test
 enforces that separation. See
 [ADR 0002](adr/0002-object-storage-behind-a-port.md).
 
+`CardRepository` in [`packages/domain`](../packages/domain) is the same shape
+applied to the catalog, and lives with the domain rather than in `shared`
+because it speaks the domain's language — it returns a `Card`, where object
+storage only moves bytes. It names no `dsn`, `pool` or `session`; the
+PostgreSQL adapter that satisfies it is built outside the package.
+
 TCGplayer API access is neither assumed nor hard-coded. Access is not currently
 granted, and its terms restrict competing commercial products.
 
 The canonical card catalog is sourced from TCGdex under its MIT licence, entered
 through `card_external_ids` so it stays replaceable, and imported without card
-images — see [ADR 0004](adr/0004-the-canonical-card-catalog-source.md). The
-market-price provider is a separate, still-open decision.
+images — see [ADR 0004](adr/0004-the-canonical-card-catalog-source.md). Nothing
+in `packages/domain` names that source: `Card` and `Set` carry facts, and a
+provider key reaches them only as a `CardExternalId`. The market-price provider
+is a separate, still-open decision.
 
 ### Everything is versioned and immutable
 
