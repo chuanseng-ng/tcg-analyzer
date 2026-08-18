@@ -14,6 +14,10 @@ dependencies = [
     "pydantic-settings>=2.4",
     "sqlalchemy[asyncio]>=2.0.52",
     "structlog>=24.4",
+    # The catalog seed loader validates every fixture by constructing the domain
+    # entity, so a malformed record fails with the domain's own message rather
+    # than as a constraint violation mid-transaction.
+    "tcg-domain",
     # The object-storage port and its S3 adapter. Declared rather than left to
     # `uv sync --all-packages`, which installs every member editable and would
     # hide the omission locally: `infrastructure/docker/api.Dockerfile` runs
@@ -23,12 +27,16 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+tcg-domain = { workspace = true }
 tcg-shared = { workspace = true }
 
 # `apps/web` generates its API types from this schema (ADR 0001), so producing
 # it must not require starting a server.
 [project.scripts]
 tcg-api-schema = "tcg_api.schema:main"
+# Loads `database/seeds/catalog/` into the configured database. Idempotent, so
+# it is safe to re-run after editing a fixture. See `database/seeds/README.md`.
+tcg-seed-catalog = "tcg_api.catalog.seed:main"
 
 [build-system]
 requires = ["hatchling"]
