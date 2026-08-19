@@ -64,6 +64,7 @@ def test_the_public_surface_is_explicit() -> None:
     # the __future__ flag every module here imports. Neither is public surface,
     # so neither is listed in __all__.
     incidental = {
+        "analysis",
         "annotations",
         "card",
         "catalog",

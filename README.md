@@ -264,10 +264,13 @@ belongs in `.env`, which is not committed.
 Migrations are portable, plain PostgreSQL. Nothing may depend on a
 Supabase-specific feature (spec §8), and no extension is required.
 
-The schema's source of truth is `services/api/src/tcg_api/catalog/tables.py`,
-which `database/migrations/env.py` reads as `target_metadata`. Declare a new
-table there as well as in its migration, or `alembic revision --autogenerate`
-will propose dropping it.
+The schema's source of truth is the `MetaData` in
+`services/api/src/tcg_api/tables.py`, which `database/migrations/env.py` reads as
+`target_metadata`. The tables themselves are declared per domain — the card
+catalog in `tcg_api/catalog/tables.py`, the analysis spine in
+`tcg_api/analysis/tables.py` — and `env.py` imports each of them. Declare a new
+table in one of those modules as well as in its migration, and add a new domain's
+module to `env.py`, or `alembic revision --autogenerate` will propose dropping it.
 
 Once the schema is up, load the hand-authored card catalog fixtures:
 

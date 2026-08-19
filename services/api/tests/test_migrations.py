@@ -44,6 +44,15 @@ BASELINE = "0255d9f37125"
 # What is under test is that *this* revision reverses.
 CATALOG_REVISION = "0d60d1982d83"
 
+# The version record, and the analysis spine that landed on top of it. Pinned
+# for the reason above: the two tests below were written against `head`, which
+# meant this revision until another one arrived. They are about *these*
+# revisions reversing, so they name them.
+VERSION_RECORD_REVISION = "352eb3d5e889"
+ANALYSIS_REVISION = "29d14fe0fcee"
+
+ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
+
 
 def alembic(*args: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
@@ -118,6 +127,7 @@ def test_the_harness_is_repeatable_on_a_fresh_schema() -> None:
     alembic("upgrade", "head")
 
     assert table_exists("cards")
+    assert table_exists("images")
 
 
 def test_downgrading_the_catalog_revision_restores_the_harness_table() -> None:
@@ -134,14 +144,14 @@ def test_downgrading_the_catalog_revision_restores_the_harness_table() -> None:
     assert not table_exists("cards")
 
 
-def test_downgrading_one_revision_from_head_leaves_the_catalog_standing() -> None:
+def test_downgrading_the_version_record_leaves_the_catalog_standing() -> None:
     """Each revision reverses only itself.
 
     The version record arrived on top of the catalog, so undoing it must not
     take the cards with it — that is the difference between a reversible history
     and one that only reverses all the way to `base`.
     """
-    alembic("upgrade", "head")
+    alembic("upgrade", VERSION_RECORD_REVISION)
 
     alembic("downgrade", "-1")
 
@@ -149,18 +159,34 @@ def test_downgrading_one_revision_from_head_leaves_the_catalog_standing() -> Non
     assert table_exists("cards")
 
 
-def test_downgrading_leaves_no_orphaned_trigger_function() -> None:
+def test_downgrading_the_version_record_leaves_no_orphaned_trigger_function() -> None:
     """A dropped table takes its trigger; the function it called survives.
 
     An orphaned `card_database_versions_are_immutable()` would make the next
     `upgrade` silently reuse a definition nobody reviewed, so `downgrade` names
     it explicitly and this proves it.
     """
-    alembic("upgrade", "head")
+    alembic("upgrade", VERSION_RECORD_REVISION)
 
     alembic("downgrade", "-1")
 
     assert not function_exists("card_database_versions_are_immutable()")
+
+
+def test_downgrading_the_analysis_revision_leaves_the_catalog_standing() -> None:
+    """The analysis spine reverses without touching what it was built on.
+
+    Its only link into the catalog is `analyses.card_id`, and dropping the
+    referencing table must not disturb the referenced one.
+    """
+    alembic("upgrade", ANALYSIS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    for table in ANALYSIS_TABLES:
+        assert not table_exists(table), table
+    assert table_exists("cards")
+    assert table_exists("card_database_versions")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:
