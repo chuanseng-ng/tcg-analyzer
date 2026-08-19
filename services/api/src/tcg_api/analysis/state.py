@@ -80,6 +80,8 @@ async def transition(db: AsyncSession, analysis_id: UUID, *, to: AnalysisStatus)
         .values(**values)
     )
     # `execute` is typed for the reads it was written for; an UPDATE always
-    # produces a `CursorResult`, which is the only kind that counts rows.
-    result = cast("sa.CursorResult[Any]", await execute(db, statement))
+    # produces a `CursorResult`, which is the only kind that counts rows. The
+    # cast target is unquoted deliberately: quoted, `Any` appears nowhere CodeQL
+    # can see it and the import reads as unused (py/unused-import).
+    result = cast(sa.CursorResult[Any], await execute(db, statement))
     return result.rowcount == 1
