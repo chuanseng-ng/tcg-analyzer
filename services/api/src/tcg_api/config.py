@@ -32,6 +32,7 @@ from sqlalchemy.exc import ArgumentError, NoSuchModuleError
 
 __all__ = [
     "DATABASE_URL_ENV_VAR",
+    "REDIS_URL_ENV_VAR",
     "STORAGE_ACCESS_KEY_ID_ENV_VAR",
     "STORAGE_BUCKET_ENV_VAR",
     "STORAGE_ENDPOINT_URL_ENV_VAR",
@@ -41,6 +42,7 @@ __all__ = [
 ]
 
 DATABASE_URL_ENV_VAR = "TCG_API_DATABASE_URL"
+REDIS_URL_ENV_VAR = "TCG_API_REDIS_URL"
 STORAGE_ACCESS_KEY_ID_ENV_VAR = "TCG_API_STORAGE_ACCESS_KEY_ID"
 STORAGE_BUCKET_ENV_VAR = "TCG_API_STORAGE_BUCKET"
 STORAGE_ENDPOINT_URL_ENV_VAR = "TCG_API_STORAGE_ENDPOINT_URL"
@@ -94,6 +96,27 @@ def _require_absolute_url(value: str) -> str:
 
 
 StorageEndpointUrl = Annotated[str, AfterValidator(_require_absolute_url)]
+
+
+def _require_redis_url(value: str) -> str:
+    """Reject a broker URL Celery could never connect to.
+
+    Only the scheme and a host are checked. Whether the *deployment* uses
+    `rediss://` and credentials is a matter for the deployment — local
+    development runs plain http against MinIO and plain TCP against PostgreSQL,
+    and refusing `redis://` here would only mean a second setting to turn the
+    check off.
+    """
+    parsed = urlparse(value)
+    if parsed.scheme not in {"redis", "rediss"} or not parsed.netloc:
+        raise ValueError(
+            "must be a redis:// or rediss:// URL such as "
+            f"redis://:password@localhost:6379/0, got {value!r}"
+        )
+    return value
+
+
+RedisUrl = Annotated[str, AfterValidator(_require_redis_url)]
 
 
 class Settings(BaseSettings):
@@ -156,6 +179,33 @@ class Settings(BaseSettings):
     ``False`` by default because local development is plain http and a `Secure`
     cookie would simply never be sent. Set it wherever https terminates: the
     cookie is a bearer token, and without this a downgrade to http leaks it.
+    """
+
+    # ----------------------------------------------------------------
+    # The job queue — spec §8.
+    #
+    # Named for Redis rather than for Celery deliberately. Redis arrives with
+    # the job runner, and the rate limiter (#98) needs a shared store next; a
+    # `celery_broker_url` would invite a second Redis for the second consumer.
+    # ----------------------------------------------------------------
+
+    redis_url: RedisUrl | None = Field(
+        default=None,
+        validation_alias=REDIS_URL_ENV_VAR,
+        description="Redis URL for the job queue, e.g. redis://:password@localhost:6379/0",
+    )
+    """Where Redis lives. ``None`` means unconfigured, not invalid.
+
+    Absent is allowed on the same terms as an absent ``database_url``: the
+    service starts and ``/health`` answers. Only the endpoints that enqueue work
+    fail, and they fail as 503s naming this variable rather than as a startup
+    crash a deployment without a worker would hit for no reason.
+
+    **Deployment must use ``rediss://`` with credentials.** An unauthenticated
+    broker reachable from anywhere lets an attacker enqueue tasks straight into
+    the worker, which is the best-known Celery attack path after pickle. The
+    local Compose file sets a password for the same reason, even though nothing
+    outside the machine can reach it.
     """
 
     # ----------------------------------------------------------------

@@ -281,10 +281,15 @@ datasets/       schemas, manifests, documentation
 infrastructure/ docker, local, deployment
 ```
 
-These are **logical boundaries, not microservices**. V1 deploys as one API and
-one web application; the tree exists so the seams are in the right places when
-something eventually has to move, not so that everything is separately
-deployable now.
+These are **logical boundaries, not microservices**. V1 deploys as one API, one
+worker and one web application; the tree exists so the seams are in the right
+places when something eventually has to move, not so that everything is
+separately deployable now. The worker is a *process* boundary rather than a
+codebase one: it runs the API's own image with a different command, so the code
+that runs a job cannot drift from the code that enqueued it. Its isolation
+(spec §56) is the container's — no published port, every capability dropped —
+and the image splits from the API's when the first computer-vision stage would
+otherwise put OpenCV into a web server.
 
 The split by language is not decorative either. `apps/*` is a pnpm/TypeScript
 workspace; `packages/*`, `services/*` and `ml/*` are a uv/Python workspace,
@@ -294,8 +299,18 @@ FastAPI OpenAPI schema — see
 [ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md).
 
 Background processing is required rather than optional: ML inference is
-long-running and must never block an HTTP request. An analysis request returns a
-job identifier, and the client polls for status.
+long-running and must never block an HTTP request. `POST /analyses/{id}/run`
+enqueues the work onto Celery over Redis and answers `queued` immediately; the
+client polls `GET /analyses/{id}` for one of spec §65's nine states. `queued` is
+not one of them — it is an acknowledgement, and no analysis row ever holds it.
+
+Delivery is deliberately at-least-once, and safe because a run *claims* its
+analysis with a single conditional `UPDATE` naming the states the move is legal
+from. That one statement refuses an illegal transition, makes a duplicate
+delivery a no-op and settles a race between two workers, which is why the state
+machine is enforced in the database rather than checked in Python beforehand.
+The legal moves themselves live in `packages/domain`, since the API, the worker
+and the schema all have to agree about them.
 
 ## V1 boundary
 

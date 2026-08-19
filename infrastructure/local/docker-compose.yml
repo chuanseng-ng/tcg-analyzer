@@ -42,6 +42,14 @@ x-api-image: &api-image
 x-api-database-url: &api-database-url
   TCG_API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tcg}:${POSTGRES_PASSWORD:-tcg}@postgres:5432/${POSTGRES_DB:-tcg}
 
+# The job queue, reached over the Compose network. A password even locally: the
+# skill this project's worker configuration is based on hardcodes an
+# unauthenticated `redis://localhost:6379`, and an unauthenticated broker is
+# somewhere an attacker enqueues tasks straight into the worker. Deployment uses
+# `rediss://` — see `.env.example`.
+x-api-redis-url: &api-redis-url
+  TCG_API_REDIS_URL: redis://:${REDIS_PASSWORD:-tcglocaldev}@redis:6379/0
+
 # A container that cannot gain privileges it was not started with. Cheap, and
 # the direction spec §56 requires of the ML worker that arrives in M6 — the
 # baseline is established here, while there is nothing to break.
@@ -120,6 +128,37 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  redis:
+    # The broker the analysis job queue runs on (spec §8). Redis rather than a
+    # second PostgreSQL table because #98's rate limiter needs a shared counter
+    # store next, and this is the store it shares — the alternative was two
+    # pieces of infrastructure for two consumers.
+    #
+    # No volume. A broker holds work in flight, not state; losing it locally
+    # costs a queued analysis that can be re-run, and persisting it would mean a
+    # `down` that leaves jobs to be delivered to the next stack.
+    image: redis:8-alpine
+    <<: *hardening
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:-tcglocaldev}
+    environment:
+      # Read by `redis-cli` in the healthcheck below, so the password is not on
+      # a command line every `ps` in the container can see.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-tcglocaldev}
+    ports:
+      # Published so a host-based `uv run pytest -m integration` can reach it,
+      # exactly as PostgreSQL and MinIO are.
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   migrate:
     # Schema first, then the service that depends on it. Running migrations as
     # a separate step rather than from the API's own startup is deliberate:
@@ -160,7 +199,7 @@ services:
       - --reload-dir
       - /app/packages
     environment:
-      <<: *api-database-url
+      <<: [*api-database-url, *api-redis-url]
       # The API reaches MinIO over the Compose network. A signed URL generated
       # against this endpoint is NOT reachable from a browser on the host —
       # ADR 0002 records that, and M2 adds a separate public-endpoint setting
@@ -181,6 +220,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     # The healthcheck is inherited from the image, and it probes `/health`
@@ -199,6 +240,67 @@ services:
           path: ../../packages
           target: /app/packages
         # A dependency change cannot be synced into an existing environment.
+        - action: rebuild
+          path: ../../uv.lock
+
+  worker:
+    # The analysis worker (spec §8, §65). It runs the API's own image with a
+    # different command, exactly as `migrate` does, so the code that processes a
+    # job cannot drift from the code that enqueued it. Spec §56's isolation is
+    # this container's rather than the image's: no published port, every
+    # capability dropped, no new privileges.
+    #
+    # Deliberately NOT `read_only: true` — the watch rules below sync source
+    # into /app, and a read-only root filesystem would break hot reload. When
+    # the image splits (the first CV stage brings OpenCV), that split is the
+    # place to take the filesystem too.
+    <<: [*api-image, *hardening]
+    command:
+      - celery
+      - --app
+      - tcg_api.analysis.worker
+      - worker
+      - --queues
+      - analysis
+      - --concurrency
+      - "2"
+      - --loglevel
+      - ${TCG_API_LOG_LEVEL:-INFO}
+    cap_drop:
+      - ALL
+    # The image's own healthcheck probes /health over HTTP, and there is no
+    # server here — it is inherited from the API and has to be replaced rather
+    # than merely tolerated, or `up --wait` reports the stack as failed. A
+    # worker answers over the broker instead, which also makes the check prove
+    # the one dependency that matters: it is still connected to Redis.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - celery --app tcg_api.analysis.worker inspect ping --destination "celery@$$HOSTNAME"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    environment:
+      <<: [*api-database-url, *api-redis-url]
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+      TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ../../services/api/src
+          target: /app/services/api/src
+        - action: sync
+          path: ../../packages
+          target: /app/packages
         - action: rebuild
           path: ../../uv.lock
 

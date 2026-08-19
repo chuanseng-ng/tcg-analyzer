@@ -47,6 +47,7 @@ __all__ = [
     "AnalysisStoreUnavailable",
     "create_analysis",
     "create_session",
+    "execute",
     "new_session_token",
     "read_analysis",
     "resolve_session",
@@ -121,8 +122,12 @@ def _record(row: sa.Row[Any]) -> AnalysisRecord:
     )
 
 
-async def _execute(db: AsyncSession, statement: Any) -> sa.Result[Any]:
+async def execute(db: AsyncSession, statement: Any) -> sa.Result[Any]:
     """Run `statement`, translating every driver failure into one exception.
+
+    Public because `state.py` performs its transitions through it: there is one
+    analysis store, so there should be one place where its driver's failures
+    stop being the driver's.
 
     `OSError` alongside `SQLAlchemyError` for the reason `catalog/versions.py`
     gives: a refused connection never becomes a SQLAlchemy error at all, since
@@ -156,7 +161,7 @@ async def resolve_session(db: AsyncSession, token: str | None) -> UUID | None:
         analysis_sessions.c.status == SessionStatus.ACTIVE.value,
         analysis_sessions.c.expires_at > sa.func.now(),
     )
-    result = await _execute(db, statement)
+    result = await execute(db, statement)
     return result.scalar_one_or_none()
 
 
@@ -185,7 +190,7 @@ async def create_session(
         expires_at=expires_at,
         application_version=application_version,
     )
-    await _execute(db, statement)
+    await execute(db, statement)
     return session_id, expires_at
 
 
@@ -200,7 +205,7 @@ async def create_analysis(db: AsyncSession, session_id: UUID) -> AnalysisRecord:
     statement = (
         sa.insert(analyses).values(id=uuid4(), session_id=session_id).returning(*_ANALYSIS_COLUMNS)
     )
-    result = await _execute(db, statement)
+    result = await execute(db, statement)
     return _record(result.one())
 
 
@@ -221,6 +226,6 @@ async def read_analysis(
         analyses.c.id == analysis_id,
         analyses.c.session_id == session_id,
     )
-    result = await _execute(db, statement)
+    result = await execute(db, statement)
     row = result.one_or_none()
     return None if row is None else _record(row)

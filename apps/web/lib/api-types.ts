@@ -46,6 +46,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analyses/{analysis_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an analysis
+         * @description Hands the analysis to a background worker and returns immediately (spec §8, §65): image processing and inference take far longer than an HTTP request should. The response says `queued`, which is an acknowledgement rather than a state — poll `GET /analyses/{id}` to see where the analysis has got to.
+         *
+         *     Only an analysis whose images have arrived can be run; spec §18's pipeline begins with them. Running one twice is safe: the worker claims the analysis with a conditional update, so a second job finds nothing to do rather than repeating the first.
+         */
+        post: operations["run_one_analysis_analyses__analysis_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cards/search": {
         parameters: {
             query?: never;
@@ -200,6 +222,29 @@ export interface components {
              * @example created
              */
             status: string;
+        };
+        /**
+         * AnalysisRunResponse
+         * @description The acknowledgement `POST /analyses/{id}/run` answers with — spec §65.
+         *
+         *     §65 names both fields, and names the first `analysis_id` rather than `id`.
+         *     Transcribed rather than tidied: this is the shape a client was told to
+         *     expect, and `AnalysisResponse` is a different message about a different
+         *     thing.
+         */
+        AnalysisRunResponse: {
+            /**
+             * Analysis Id
+             * Format: uuid
+             * @description The analysis that was queued.
+             */
+            analysis_id: string;
+            /**
+             * Status
+             * @description Always `queued`. A transport word meaning 'accepted, not started' — it is not one of spec §65's nine states and no analysis ever holds it. Poll `GET /analyses/{id}` for the state the analysis is in.
+             * @constant
+             */
+            status: "queued";
         };
         /**
          * CardExternalIdResponse
@@ -708,6 +753,70 @@ export interface operations {
                 };
             };
             /** @description The analysis store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    run_one_analysis_analyses__analysis_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisRunResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. The same body `GET /analyses/{id}` answers with, for the same reason. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The analysis is not in a state a run may start from. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store or the job queue could not be reached. */
             503: {
                 headers: {
                     [name: string]: unknown;
