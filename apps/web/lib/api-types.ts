@@ -6,6 +6,46 @@
  */
 
 export interface paths {
+    "/analyses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an analysis
+         * @description Starts an analysis and, if the caller has no live session, opens one. No login and no registration: V1 identifies a user by an anonymous session token only (spec §53), returned in an HTTP-only cookie that every later call to this analysis must carry. A cookie naming a session that has expired or never existed is not an error — a new session is opened. Nothing about the caller is recorded.
+         */
+        post: operations["start_analysis_analyses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analyses/{analysis_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report the state of one analysis
+         * @description Returns the analysis, provided the caller's session cookie is the session that started it. An identifier that names nothing, an analysis belonging to another session, a missing cookie and an expired one all answer 404 with the same body, so this endpoint cannot be used to discover which analyses exist.
+         */
+        get: operations["read_one_analysis_analyses__analysis_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cards/search": {
         parameters: {
             query?: never;
@@ -118,6 +158,49 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AnalysisResponse
+         * @description One analysis, as the API reports it.
+         *
+         *     `apps/web` generates its types from this model (ADR 0001), so the field
+         *     names are a public contract.
+         *
+         *     Deliberately small. `session_id` is absent because it is ours and internal —
+         *     the client holds a token, not a row id — and every §57 reproducibility field
+         *     is absent because nothing writes one yet; a column that is always NULL in a
+         *     response is an invitation to render an empty value. #35 adds the states this
+         *     can hold, #104 fills `card_id`.
+         */
+        AnalysisResponse: {
+            /**
+             * Card Id
+             * @description The card the user confirmed, or null before they have. Unknown until confirmation (spec §20), which is a step in the pipeline rather than a precondition of starting one.
+             */
+            card_id: string | null;
+            /**
+             * Completed At
+             * @description When it reached a terminal state, or null while it has not.
+             */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the analysis was started.
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description This service's identifier for the analysis.
+             */
+            id: string;
+            /**
+             * Status
+             * @description One of spec §65's nine states. `created` until an upload moves it. `queued` is a transport word `POST /analyses/{id}/run` answers with and is never held here.
+             * @example created
+             */
+            status: string;
+        };
         /**
          * CardExternalIdResponse
          * @description One external database's identifier for this card.
@@ -540,6 +623,101 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    start_analysis_analyses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResponse"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_one_analysis_analyses__analysis_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. Outside the spec §66 taxonomy, which has no code meaning 'not found'. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     search_cards_cards_search_get: {
         parameters: {
             query?: {
