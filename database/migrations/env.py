@@ -25,9 +25,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # import works from the repository root without any path juggling.
 #
 # Autogenerate proposes dropping anything it finds and does not see here, so
-# every future domain table must be declared in a module reachable from it — not
-# created by hand-written DDL alone.
-from tcg_api.catalog.tables import metadata as target_metadata
+# every domain table must be declared in a module reachable from it — not created
+# by hand-written DDL alone. That is why this reads `tcg_api.table_registry` and
+# not `tcg_api.tables`: the `MetaData` is empty until every domain's table module
+# has been executed, and importing the registry is what executes them. A new
+# domain is added there, not here.
+from tcg_api.table_registry import metadata as target_metadata
 
 config = context.config
 

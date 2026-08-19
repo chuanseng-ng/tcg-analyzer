@@ -209,6 +209,37 @@ database guarantee rather than a convention: a trigger refuses `UPDATE` and
 `DELETE`, so a re-import publishes a new version instead of editing an old one,
 and the identifier an analysis recorded still finds what it recorded.
 
+`analyses` now carries three more of the seven — `model_bundle_version`,
+`market_snapshot_id` and `economic_configuration_id` — and the session carries
+the application version. All of them are explicit values resolved when the
+analysis ran, never a pointer to whatever is current. The last two,
+`card_database_version` and `grading_rules_version`, arrive with the
+reproducibility record itself.
+
+### Analyses expire by default
+
+V1 has no accounts. An anonymous session is the whole of a user's continuity, and
+the schema is a spine: `analysis_sessions` → `analyses` → `images`, each child
+owned by its parent through `ON DELETE CASCADE`.
+
+Uploaded photographs may contain the user's hands, home and surroundings, so
+expiry is the default and retention the exception that needs a justification.
+`analysis_sessions.expires_at` is `NOT NULL` from the first migration and has no
+column default — the retention period is a policy, and a policy hidden in a
+schema default is one nobody reviews. Deleting an expired session is then a
+single statement that reaches every analysis and every image beneath it.
+
+One thing the cascade does not do: **deleting the row is not deleting the
+object.** The retention job has to read `original_uri` and `normalized_uri` and
+remove the stored files, verified against storage rather than against the
+database. A sweep that only deletes rows leaves every expired photograph in
+object storage forever, which is the failure the policy exists to prevent,
+reached through the mechanism meant to prevent it.
+
+The link into shared reference data points the other way and is `RESTRICT`:
+`analyses.card_id` is nullable until the user confirms an identification, and a
+catalog re-import can never delete a card an analysis names.
+
 ### Uncertainty is a valid output
 
 `insufficient_information` is a legitimate result for a surface analysis and for

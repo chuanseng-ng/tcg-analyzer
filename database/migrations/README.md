@@ -43,15 +43,19 @@ uv run alembic current                   # which revision is applied
   convention to `op.create_table`, so passing the rendered name in a migration
   renders it twice.
 - **Declare every table in code, not only in a migration.** `env.py` reads
-  `target_metadata` from `services/api/src/tcg_api/catalog/tables.py`, so
-  `alembic revision --autogenerate` compares a database against what that module
-  declares — and proposes dropping anything it does not find there. A migration
-  is still written and reviewed by hand; autogenerate is a starting point, not
-  an author.
+  `target_metadata` from `services/api/src/tcg_api/table_registry.py`, which
+  imports each domain's table module — `tcg_api/catalog/tables.py` and
+  `tcg_api/analysis/tables.py`. Importing them is what attaches their tables to
+  the `MetaData` those modules share, so the same `MetaData` read straight from
+  `tcg_api/tables.py` would be empty. `alembic revision --autogenerate` compares a
+  database against what the modules declare and proposes dropping anything it does
+  not find there, so a new domain is registered in the registry — one place, not
+  in every caller that needs the whole schema. A migration is still written and
+  reviewed by hand; autogenerate is a starting point, not an author.
 
 ## Current state
 
-Three revisions.
+Four revisions.
 
 `0255d9f37125` is the baseline: `migration_harness_check`, a single-column table
 whose only job was to prove the harness applies and reverts cleanly against real
@@ -94,5 +98,34 @@ Alembic compares no triggers, so `compare_metadata` will not notice if a trigger
 and `tables.py` drift apart. `services/api/tests/test_catalog_schema.py` asserts
 an `UPDATE` and a `DELETE` are actually refused; that test is the only guard.
 
-The remaining domain tables — `analyses`, `images`, `market_observations` —
-arrive in their own milestones.
+`29d14fe0fcee` adds the analysis spine — spec §12's `analysis_sessions` and
+`analyses`, and §11's `images`. Nothing writes to them yet; the upload endpoint,
+the state machine and the confirmation are separate issues. Four things about it
+are load-bearing:
+
+- **All six `side` values from day one.** V1 writes `front` and `back`; §52's
+  guided photography adds angled and surface-lit captures, and §52 requires that
+  the V1 pipeline already be compatible with them. Admitting them costs a longer
+  CHECK constraint. Adding them later would cost a migration against a table full
+  of user photographs.
+- **A vocabulary is a CHECK, not a `CREATE TYPE`.** PostgreSQL has no
+  `ALTER TYPE ... DROP VALUE`, so a revision that added a state would not be
+  reversible — and `DROP TABLE` leaves a type behind exactly as it leaves a
+  trigger's function behind. A named CHECK reverses with its table and names
+  itself in the `IntegrityError` a caller sees. **Alembic compares a check
+  constraint's name and not its text**, so the drift guard cannot notice an `IN`
+  list that has diverged from `tables.py`; `test_analysis_schema.py` inserts every
+  value of every vocabulary, and that is what closes the gap.
+- **`expires_at` plus `ON DELETE CASCADE` is spec §54's retention mechanism.**
+  Expiry is the default and retention the exception, which only has teeth if the
+  column is `NOT NULL` from the first migration; the cascade then makes expiring
+  a session one statement. **Cascading the rows does not delete the objects** —
+  the retention job must read `original_uri` and `normalized_uri` before the
+  `DELETE`, or every expired photograph is orphaned in object storage.
+- **§12 verbatim, and §57 not pre-empted.** `card_database_version` and
+  `grading_rules_version` are deliberately absent; they belong to the
+  reproducibility-record issue, and must hold an identifier resolved when the
+  analysis ran rather than a pointer to "current".
+
+The remaining domain table — `market_observations` — arrives in its own
+milestone.

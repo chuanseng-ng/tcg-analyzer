@@ -10,6 +10,14 @@ Everything re-exported here is the package's public surface; nothing else is.
 
 from __future__ import annotations
 
+from tcg_domain.analysis import (
+    TERMINAL_STATUSES,
+    V1_SIDES,
+    AnalysisStatus,
+    ImageSide,
+    QualityStatus,
+    SessionStatus,
+)
 from tcg_domain.card import (
     ENGLISH,
     JAPANESE,
@@ -65,7 +73,10 @@ __all__ = [
     "MIN_GRADE",
     "POKEMON",
     "SUM_TOLERANCE",
+    "TERMINAL_STATUSES",
+    "V1_SIDES",
     "VERSION_PATTERN",
+    "AnalysisStatus",
     "Card",
     "CardDatabaseVersion",
     "CardDatabaseVersionRepository",
@@ -85,6 +96,7 @@ __all__ = [
     "Grade",
     "GradeBound",
     "GradeDistribution",
+    "ImageSide",
     "InsufficientInformation",
     "InvalidCardIdentification",
     "InvalidCardReference",
@@ -96,6 +108,8 @@ __all__ = [
     "InvalidMoney",
     "Language",
     "Money",
+    "QualityStatus",
+    "SessionStatus",
     "Set",
     "SetId",
     "Uncertain",
