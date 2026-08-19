@@ -161,13 +161,23 @@ describe("card detail", () => {
     expect(screen.getByText(/only card images this product ever shows/i)).toBeInTheDocument();
   });
 
-  it("offers no path from a card into analysis", async () => {
+  it("offers exactly one forward path, and it is the confirmation gate", async () => {
+    // Browsing gains one way forward (#91) and it goes *into* the gate rather
+    // than around it. Confirming which card is in the user's hand is a
+    // product-integrity gate, and the gate is emphatically not analysis.
     getCardMock.mockResolvedValue(card());
 
-    render(<CardDetail cardId={CARD_ID} />);
+    const { container } = render(<CardDetail cardId={CARD_ID} />);
     await screen.findByRole("heading", { name: "Charizard" });
 
+    expect(screen.getByRole("link", { name: "This is my card" })).toHaveAttribute(
+      "href",
+      `/identify?card_id=${CARD_ID}`,
+    );
+    expect(screen.getByText(/nothing is analysed and nothing is saved yet/i)).toBeInTheDocument();
+
     expect(screen.queryByRole("link", { name: /analy/i })).not.toBeInTheDocument();
+    expect(container.querySelector('a[href^="/analyze"]')).toBeNull();
     expect(
       screen.queryByRole("button", { name: /confirm|analy|use this card/i }),
     ).not.toBeInTheDocument();

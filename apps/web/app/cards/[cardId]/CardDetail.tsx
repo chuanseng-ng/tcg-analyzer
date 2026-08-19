@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { ApiError, getCard, type CardResponse } from "@/lib/api";
+import { getCard, type CardResponse } from "@/lib/api";
 import {
   languageLabel,
   metadataValueLabel,
@@ -11,43 +11,15 @@ import {
   releaseDateLabel,
   variantLabel,
 } from "@/lib/card-display";
+import { classifyCardFailure, type CardFailure } from "@/lib/card-errors";
+import { identifyHref } from "@/lib/identification";
 
 import styles from "./page.module.css";
-
-/**
- * `card_not_identified` is the spec §66 code for an identifier naming no card;
- * `provider_error` is the catalog being unreachable. The route overrides the
- * taxonomy's default status for both, so the code is what to branch on.
- */
-type Failure = "missing" | "unreachable" | "unexpected";
 
 type DetailState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly card: CardResponse }
-  | { readonly status: "failed"; readonly failure: Failure };
-
-function classify(error: unknown): Failure {
-  if (!(error instanceof ApiError)) {
-    return "unexpected";
-  }
-  if (error.code === "card_not_identified") {
-    return "missing";
-  }
-  // A malformed identifier is FastAPI's own request-validation 422, which
-  // carries no §66 code because `errors.py` deliberately leaves transport-level
-  // failures alone. To a reader it is the same situation as an unknown one —
-  // the link does not lead to a card — and it is emphatically not worth a
-  // Retry button, because retrying a bad identifier fails identically forever.
-  if (error.status === 422 && error.code === undefined) {
-    return "missing";
-  }
-  // No status means the request never reached the server, which is the same
-  // fact to a reader as the catalog refusing to answer.
-  if (error.code === "provider_error" || error.status === undefined) {
-    return "unreachable";
-  }
-  return "unexpected";
-}
+  | { readonly status: "failed"; readonly failure: CardFailure };
 
 /**
  * Everything the catalog records about one card.
@@ -57,9 +29,11 @@ function classify(error: unknown): Failure {
  * is a placeholder where the image would be rather than a broken `<img>` — the
  * absence is a decision, and it is stated as one.
  *
- * There is deliberately no way from here into analysis. Confirming that this is
- * the card in the user's hand is a product-integrity gate with its own screen
- * (#91); a "use this card" button here would be a way around it.
+ * There is exactly one way forward from here, and it goes *into* the
+ * confirmation gate (#91) rather than around it. Confirming that this is the
+ * card in the user's hand is a product-integrity gate with its own screen; this
+ * page may link to that screen and to nothing beyond it, and in particular
+ * never to analysis.
  */
 export function CardDetail({ cardId }: { readonly cardId: string }) {
   const [state, setState] = useState<DetailState>({ status: "loading" });
@@ -77,7 +51,7 @@ export function CardDetail({ cardId }: { readonly cardId: string }) {
       })
       .catch((error: unknown) => {
         if (active && !controller.signal.aborted) {
-          setState({ status: "failed", failure: classify(error) });
+          setState({ status: "failed", failure: classifyCardFailure(error) });
         }
       });
 
@@ -104,7 +78,13 @@ export function CardDetail({ cardId }: { readonly cardId: string }) {
   return <Loaded card={state.card} />;
 }
 
-function Failed({ failure, onRetry }: { readonly failure: Failure; readonly onRetry: () => void }) {
+function Failed({
+  failure,
+  onRetry,
+}: {
+  readonly failure: CardFailure;
+  readonly onRetry: () => void;
+}) {
   if (failure === "missing") {
     return (
       <div className={styles.failure} role="alert">
@@ -203,6 +183,24 @@ function Loaded({ card }: { readonly card: CardResponse }) {
           <dd className={styles.value}>{releaseDateLabel(card.set.release_date)}</dd>
         </div>
       </dl>
+
+      {/*
+       * The single forward path out of browsing, placed where it is because the
+       * facts above are what the decision rests on — metadata and provider
+       * identifiers below are reference material, not part of the comparison.
+       *
+       * A link rather than a button: the card id fully determines the
+       * destination, so it survives without JavaScript, middle-clicks, and can
+       * be shared. It leads to the gate, never past it.
+       */}
+      <div className={styles.forward}>
+        <Link className={styles.cta} href={identifyHref(card.id)}>
+          This is my card
+        </Link>
+        <p className={styles.forwardNote}>
+          Takes you to the confirmation step. Nothing is analysed and nothing is saved yet.
+        </p>
+      </div>
 
       {metadata.length > 0 ? (
         <section className={styles.section}>

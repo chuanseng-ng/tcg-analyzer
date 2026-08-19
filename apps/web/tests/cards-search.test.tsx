@@ -171,15 +171,21 @@ describe("card search", () => {
     expect(row).toHaveAttribute("href", "/cards/22222222-2222-2222-2222-222222222222");
   });
 
-  it("offers no path from browsing into analysis", async () => {
+  it("offers no forward action from the results list itself", async () => {
     // Confirming which card is in the user's hand is a product-integrity gate
-    // of its own (#91). Browsing must not become a way around it.
+    // of its own (#91), and it is reached from a card's own page — after the
+    // user has looked at the variant and number closely enough to be sure.
+    // A confirm affordance on a row would let someone commit to a card from a
+    // list, which is exactly what the gate exists to prevent. Nothing here
+    // leads to analysis either.
     resolvesWith(page([summary()]));
 
     render(<CardSearch />);
     await screen.findByRole("link", { name: /Charizard/ });
 
-    expect(screen.queryByRole("link", { name: /analy/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /analy|confirm|this is my card/i }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /confirm|analy/i })).not.toBeInTheDocument();
   });
 

@@ -23,14 +23,15 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path          | Contents                                                                         |
-| ------------- | -------------------------------------------------------------------------------- |
-| `app/`        | App Router routes. `/` is the landing page; `/analyze` is an M2 placeholder      |
-| `app/cards/`  | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface    |
-| `components/` | `Container` and `Stack` layout primitives, and `ApiStatus`                       |
-| `lib/`        | `api.ts` — the client for `services/api`; `card-search.ts` and `card-display.ts` |
-| `styles/`     | `tokens.css` (design tokens) and `globals.css` (reset)                           |
-| `tests/`      | Vitest + React Testing Library, jsdom environment                                |
+| Path            | Contents                                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `app/`          | App Router routes. `/` is the landing page; `/analyze` is an M2 placeholder                                             |
+| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                           |
+| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                                           |
+| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                                              |
+| `lib/`          | `api.ts` — the client for `services/api`; `card-search.ts`, `card-display.ts`, `card-errors.ts` and `identification.ts` |
+| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                                                  |
+| `tests/`        | Vitest + React Testing Library, jsdom environment                                                                       |
 
 ## Styling
 
@@ -72,9 +73,44 @@ record. Four decisions shape both, and none of them is arbitrary:
   holo, reverse holo and 1st edition are economically different cards — and an
   unrecorded variant says so rather than leaving a blank.
 
-Nothing here leads to analysis. Confirming which card is in the user's hand is a
-product-integrity gate with its own screen, and browsing must not become a way
-around it.
+Browsing leads exactly one place: the confirmation gate below. A card's own page
+carries a single **This is my card** link into `/identify`, and nothing — not a
+search row, not the detail page — offers any route past it into analysis.
+
+## The confirmation gate
+
+`/identify?card_id=<uuid>` is where the user says that this is the card in their
+hand. Spec §20 is the whole reason it exists: _the user must confirm the result_,
+and _never silently use an uncertain card identification for economic analysis_.
+It is a product-integrity gate rather than a convenience screen, which is why it
+has a route of its own instead of a button somewhere in the catalog.
+
+- **In M1 the candidate arrives by manual selection**, because nothing produces
+  a detected card until M2's image pipeline. The gate therefore reports the
+  honest state — _Identification confidence: Not measured_ — and says who chose
+  the card. It is deliberately **not** rendered as `0%`: zero is a measurement
+  claiming the card is certainly not this one, and no measurement was taken.
+- **There is no auto-confirm, at any confidence.** The only transition into the
+  confirmed state is the user's tap, written as a functional state update that
+  cannot fire from any other state. A 99% match would still take a tap.
+- **`lib/identification.ts` mirrors the domain's `Uncertain[CardIdentification]`**
+  — either a card with a validated `Confidence`, or a standalone
+  insufficient-information result carrying no card at all. "An identification
+  with insufficient-information confidence" is not representable there and must
+  not become representable here. `manuallySelected` is M1's only producer and
+  `identifiedFromImage` is the seam M2 feeds, so M2 adds a producer rather than a
+  screen. No candidate is ever fabricated in order to reach a layout.
+- **No confidence threshold is invented.** Nothing in the spec or the ADRs
+  calibrates one, and a threshold is not what makes the screen safe — the
+  question in the heading and the required tap are. The only distinction the
+  wording draws is whether a measurement exists at all.
+- **Confirming is not persisted.** It lives in React state on that page, and the
+  screen says so out loud. There is no consumer of a confirmed identification
+  until M2, and inventing a store for a consumer that does not exist would be
+  the wrong shape to inherit.
+- **The gate shows no `metadata` and no provider identifiers.** They are catalog
+  bookkeeping rather than something a person checks against a card in their
+  hand; the full record is one link away.
 
 ## Configuration
 

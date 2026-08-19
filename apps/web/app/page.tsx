@@ -32,8 +32,9 @@ export default function LandingPage() {
                 {/*
                  * Secondary on purpose. Browsing the catalog is not a way into
                  * analysis — confirming which card is in the user's hand is a
-                 * gate of its own (#91) — but the catalog has to be reachable
-                 * by something other than a typed URL.
+                 * gate of its own at `/identify` (#91), reached from a card's
+                 * page — but the catalog has to be reachable by something
+                 * other than a typed URL.
                  */}
                 <Link className={styles.secondary} href="/cards">
                   Browse the card catalog
