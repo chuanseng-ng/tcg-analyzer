@@ -43,15 +43,15 @@ uv run alembic current                   # which revision is applied
   convention to `op.create_table`, so passing the rendered name in a migration
   renders it twice.
 - **Declare every table in code, not only in a migration.** `env.py` reads
-  `target_metadata` from `services/api/src/tcg_api/tables.py` and calls that
-  module's `declared_tables()`, which imports each domain's table module —
-  `tcg_api/catalog/tables.py` and `tcg_api/analysis/tables.py`. Importing them is
-  what puts their tables on the `MetaData`, so a `MetaData` handed to Alembic
-  before that call is empty. `alembic revision --autogenerate` compares a database
-  against what those modules declare and proposes dropping anything it does not
-  find there, so a new domain is registered in `declared_tables()` — one place,
-  not in every caller that needs the whole schema. A migration is still written
-  and reviewed by hand; autogenerate is a starting point, not an author.
+  `target_metadata` from `services/api/src/tcg_api/table_registry.py`, which
+  imports each domain's table module — `tcg_api/catalog/tables.py` and
+  `tcg_api/analysis/tables.py`. Importing them is what attaches their tables to
+  the `MetaData` those modules share, so the same `MetaData` read straight from
+  `tcg_api/tables.py` would be empty. `alembic revision --autogenerate` compares a
+  database against what the modules declare and proposes dropping anything it does
+  not find there, so a new domain is registered in the registry — one place, not
+  in every caller that needs the whole schema. A migration is still written and
+  reviewed by hand; autogenerate is a starting point, not an author.
 
 ## Current state
 

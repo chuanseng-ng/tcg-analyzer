@@ -38,7 +38,7 @@ from tcg_api.catalog.tables import (
     cards,
     sets,
 )
-from tcg_api.tables import declared_tables, metadata
+from tcg_api.table_registry import DECLARED_TABLES, metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -54,11 +54,9 @@ pytestmark = [
 CATALOG_TABLES = ("sets", "cards", "card_external_ids", "card_database_versions")
 HARNESS_TABLE = "migration_harness_check"
 
-# The whole schema, not just the catalog's part of it. The drift guard below is
-# this repository's only check that the table modules and the migrations agree,
-# and it compares whatever is attached to this `MetaData` — which is empty until
-# those modules have been executed. Calling this is what executes them.
-DECLARED_TABLES = declared_tables()
+# `metadata` and `DECLARED_TABLES` come from the registry rather than from
+# `tcg_api.catalog.tables`, because the drift guard below compares whatever is
+# attached to that `MetaData` and must see every domain, not only this one.
 
 
 def alembic(*args: str) -> None:

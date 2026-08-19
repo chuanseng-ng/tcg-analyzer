@@ -26,14 +26,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 #
 # Autogenerate proposes dropping anything it finds and does not see here, so
 # every domain table must be declared in a module reachable from it — not created
-# by hand-written DDL alone.
-from tcg_api.tables import declared_tables
-from tcg_api.tables import metadata as target_metadata
-
-# `metadata` is empty until the table modules have been executed, and this is
-# what executes them. The return value is not needed here; the registration is.
-# A new domain is added to `declared_tables`, not to this file.
-declared_tables()
+# by hand-written DDL alone. That is why this reads `tcg_api.table_registry` and
+# not `tcg_api.tables`: the `MetaData` is empty until every domain's table module
+# has been executed, and importing the registry is what executes them. A new
+# domain is added there, not here.
+from tcg_api.table_registry import metadata as target_metadata
 
 config = context.config
 
