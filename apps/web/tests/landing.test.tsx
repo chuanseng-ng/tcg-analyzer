@@ -69,6 +69,15 @@ describe("landing page", () => {
     );
   });
 
+  it("offers the card catalog as a secondary route, not the primary one", () => {
+    render(<LandingPage />);
+
+    expect(screen.getByRole("link", { name: "Browse the card catalog" })).toHaveAttribute(
+      "href",
+      "/cards",
+    );
+  });
+
   it("exposes the call to action as a focusable interactive element", () => {
     render(<LandingPage />);
     const cta = screen.getByRole("link", { name: "Analyze a card" });
