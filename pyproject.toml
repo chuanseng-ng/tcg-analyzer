@@ -40,6 +40,11 @@ markers = [
     # run in different CI jobs: only a real S3-compatible store can prove that a
     # signature expires, and the migrations job has no MinIO.
     "object_storage: requires a live MinIO (set TCG_API_STORAGE_ENDPOINT_URL)",
+    # Reaches api.tcgdex.net. Deselected everywhere by default: the source has
+    # no SLA and no published rate limit (ADR 0004), so a CI job that depended
+    # on it would fail for reasons that are not this repository's. Run it by
+    # hand after changing `tcg_api.catalog.tcgdex`.
+    "network: reaches a third-party service over the internet",
 ]
 
 # ---------------------------------------------------------------------------

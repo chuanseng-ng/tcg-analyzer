@@ -1,0 +1,84 @@
+{
+  "category": "Pokemon",
+  "id": "SV2a-025",
+  "illustrator": "Naoyo Kimura",
+  "image": "https://assets.tcgdex.net/ja/SV/SV2a/025",
+  "localId": "025",
+  "name": "ピカチュウ",
+  "rarity": "Common",
+  "set": {
+    "cardCount": {
+      "official": 165,
+      "total": 210
+    },
+    "id": "SV2a",
+    "name": "ポケモンカード151"
+  },
+  "variants": {
+    "firstEdition": false,
+    "holo": false,
+    "normal": true,
+    "reverse": true,
+    "wPromo": false
+  },
+  "variants_detailed": [
+    {
+      "type": "normal",
+      "size": "standard",
+      "variantId": "endfynwn4n10gzq"
+    },
+    {
+      "type": "reverse",
+      "size": "standard",
+      "foil": "pokeball",
+      "variantId": "3739bbtj3i910y5ynn9xc6ryf"
+    },
+    {
+      "type": "reverse",
+      "size": "standard",
+      "foil": "masterball",
+      "variantId": "2asus05yghmpd1ud1sdmlq3as4e"
+    }
+  ],
+  "dexId": [
+    25
+  ],
+  "hp": 60,
+  "types": [
+    "Lightning"
+  ],
+  "description": "両頬には 電気を 溜めこむ 袋がある。 怒ると 溜めこんだ 電気を 一気に 放ってくる。",
+  "stage": "Basic",
+  "attacks": [
+    {
+      "cost": [
+        "Lightning"
+      ],
+      "name": "じゅうでん",
+      "effect": "自分の山札から「基本[L]エネルギー」を1枚選び、このポケモンにつける。そして山札を切る。"
+    },
+    {
+      "cost": [
+        "Lightning",
+        "Lightning",
+        "Colorless"
+      ],
+      "name": "ピカパンチ",
+      "damage": 50
+    }
+  ],
+  "weaknesses": [
+    {
+      "type": "Fighting",
+      "value": "x2"
+    }
+  ],
+  "resistances": [],
+  "retreat": 1,
+  "regulationMark": "G",
+  "legal": {
+    "standard": false,
+    "expanded": false
+  },
+  "updated": "2026-08-09T18:07:38.312Z"
+}

@@ -50,9 +50,12 @@ jobs:
         run: uv run mypy packages/domain/src packages/shared/src services/api/src
 
       # Tests needing a live service are deselected here and covered by the jobs
-      # that have one: `migrations` has PostgreSQL, `storage` has MinIO.
+      # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
+      # covers `network`, on purpose — it reaches api.tcgdex.net, which ADR 0004
+      # records as having no SLA and no published rate limit, so a CI job
+      # depending on it would fail for reasons that are not this repository's.
       - name: Tests
-        run: uv run pytest -m "not integration and not object_storage"
+        run: uv run pytest -m "not integration and not object_storage and not network"
 
   web:
     name: Web — lint, format, types, tests, build

@@ -1,0 +1,102 @@
+{
+  "category": "Pokemon",
+  "id": "base1-4",
+  "illustrator": "Mitsuhiro Arita",
+  "image": "https://assets.tcgdex.net/en/base/base1/4",
+  "localId": "4",
+  "name": "Charizard",
+  "rarity": "Rare",
+  "set": {
+    "cardCount": {
+      "official": 102,
+      "total": 102
+    },
+    "id": "base1",
+    "logo": "https://assets.tcgdex.net/en/base/base1/logo",
+    "name": "Base Set"
+  },
+  "variants": {
+    "firstEdition": true,
+    "holo": true,
+    "normal": false,
+    "reverse": false,
+    "wPromo": false
+  },
+  "variants_detailed": [
+    {
+      "type": "holo",
+      "subtype": "unlimited",
+      "size": "standard",
+      "variantId": "4ffrmhcfiaejakhepqdkx7o"
+    },
+    {
+      "type": "holo",
+      "subtype": "shadowless",
+      "size": "standard",
+      "stamp": [
+        "1st-edition"
+      ],
+      "variantId": "mtltux8qtgdu4exu903oasum21juxbvx6lx"
+    },
+    {
+      "type": "holo",
+      "subtype": "shadowless",
+      "size": "standard",
+      "variantId": "3takscxpcqoqcfnxk1ivs2y6"
+    },
+    {
+      "type": "holo",
+      "subtype": "1999-2000-copyright",
+      "size": "standard",
+      "variantId": "zqq5g2u9n0st0gren5bssktmac2ywqaw"
+    }
+  ],
+  "dexId": [
+    6
+  ],
+  "hp": 120,
+  "types": [
+    "Fire"
+  ],
+  "evolveFrom": "Charmeleon",
+  "description": "Spits fire that is hot enough to melt boulders. Known to unintentionally cause forest fires.",
+  "stage": "Stage2",
+  "abilities": [
+    {
+      "type": "Pokemon Power",
+      "name": "Energy Burn",
+      "effect": "As often as you like during your turn (before your attack), you may turn all Energy attached to Charizard into Fire Energy for the rest of the turn. This power can't be used if Charizard is Asleep, Confused, or Paralyzed."
+    }
+  ],
+  "attacks": [
+    {
+      "cost": [
+        "Fire",
+        "Fire",
+        "Fire",
+        "Fire"
+      ],
+      "name": "Fire Spin",
+      "effect": "Discard 2 Energy cards attached to Charizard in order to use this attack.",
+      "damage": 100
+    }
+  ],
+  "weaknesses": [
+    {
+      "type": "Water",
+      "value": "×2"
+    }
+  ],
+  "resistances": [
+    {
+      "type": "Fighting",
+      "value": "-30"
+    }
+  ],
+  "retreat": 3,
+  "legal": {
+    "standard": false,
+    "expanded": false
+  },
+  "updated": "2026-07-11T09:49:03+01:00"
+}

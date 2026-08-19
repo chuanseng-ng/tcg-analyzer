@@ -179,7 +179,16 @@ images — see [ADR 0004](adr/0004-the-canonical-card-catalog-source.md). Nothin
 in `packages/domain` names that source: `Card` and `Set` carry facts, and a
 provider key reaches them only as a `CardExternalId`. Each import's provenance
 lands in the immutable `card_database_version` record; there is no competing
-provenance table. The market-price provider is a separate, still-open decision.
+provenance table.
+
+The import itself is an adapter and nothing on the request path may reach it.
+`tcg_api.catalog.tcgdex` is the only module in the service that binds to an HTTP
+client, `tcg_api.catalog.snapshot` is the provider-neutral format and write path
+it produces, and `services/api/tests/test_import_purity.py` asserts that
+importing the FastAPI app pulls in neither. Dropping the source costs a `DELETE`
+from `card_external_ids` and the deletion of one module.
+
+The market-price provider is a separate, still-open decision.
 
 ### Everything is versioned and immutable
 

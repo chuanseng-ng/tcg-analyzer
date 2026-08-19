@@ -1,0 +1,13 @@
+{
+  "id": "sparse1-1",
+  "localId": "1",
+  "name": "Sparse Card",
+  "category": "Pokemon",
+  "set": {
+    "id": "sparse1",
+    "name": "Sparse Set",
+    "cardCount": {
+      "total": 3
+    }
+  }
+}

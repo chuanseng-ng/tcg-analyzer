@@ -467,7 +467,10 @@ def test_reseeding_changed_fixtures_without_bumping_the_version_is_reported(
         finally:
             await engine.dispose()
 
-    with caplog.at_level("WARNING", logger="tcg_api.catalog.seed"):
+    # The warning is emitted by `tcg_api.catalog.snapshot`, which holds the
+    # single write path both the loader and the import pipeline call. Its advice
+    # is the caller's, so this still asserts the seed loader's own message.
+    with caplog.at_level("WARNING", logger="tcg_api.catalog.snapshot"):
         asyncio.run(reapply())
 
     assert "SEED_CATALOG_VERSION" in caplog.text
