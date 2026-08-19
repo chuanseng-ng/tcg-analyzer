@@ -89,8 +89,21 @@ def seeded() -> None:
     run(load)
 
 
-def reading[T](work: Callable[[PostgresCardRepository], Awaitable[T]]) -> T:
-    async def scenario() -> T:
+#: What `reading` accepts and answers, spelled without a type parameter.
+#:
+#: `test_catalog_versions.py` hit this first: CodeQL reads a PEP 695 type
+#: parameter used inside a *nested* function's annotation as a local used before
+#: assignment (`py/uninitialized-local-variable`), because it does not yet model
+#: PEP 695. `run` above keeps its parameter, since nothing nests inside it.
+#:
+#: That file could stay precise, because both of its port methods answer the
+#: same shape. `get` and `external_ids` do not, so one alias cannot be precise
+#: for both, and these tests assert on the value rather than on its static type.
+Read = Callable[[PostgresCardRepository], Awaitable[Any]]
+
+
+def reading(work: Read) -> Any:
+    async def scenario() -> Any:
         engine = create_async_engine(DATABASE_URL or "")
         try:
             factory = async_sessionmaker(engine, expire_on_commit=False)

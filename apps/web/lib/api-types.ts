@@ -6,6 +6,26 @@
  */
 
 export interface paths {
+    "/cards/{card_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Return the canonical detail for one card
+         * @description Returns everything the catalog records about one card — spec §6's Card block, apart from identification confidence, which belongs to an analysis rather than to a catalog record. No card images: ADR 0004 imports none, so the only card images this product shows are the user's own uploads. No prices: `GET /cards/{id}/market` is M4.
+         */
+        get: operations["read_card_cards__card_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/version": {
         parameters: {
             query?: never;
@@ -78,6 +98,150 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * CardExternalIdResponse
+         * @description One external database's identifier for this card.
+         *
+         *     Included because spec §10's third table is the seam that keeps catalog
+         *     sources replaceable, and a support question about a wrong record is
+         *     unanswerable without it. Several entries may share a `provider`: the index
+         *     behind them is deliberately not unique (#23).
+         */
+        CardExternalIdResponse: {
+            /**
+             * External Id
+             * @description The identifier as that provider issued it, verbatim.
+             * @example bs-4-unlimited-holo
+             */
+            external_id: string;
+            /**
+             * Provider
+             * @description A lowercase slug naming the source — 'manual' or 'tcgdex' in V1.
+             * @example manual
+             */
+            provider: string;
+        };
+        /**
+         * CardResponse
+         * @description The body of a successful `GET /cards/{id}` — spec §6's Card block.
+         *
+         *     `apps/web` generates its types from this model (ADR 0001), so the field
+         *     names are a public contract.
+         *
+         *     Two absences are deliberate. `identification_confidence` belongs to an
+         *     analysis, not to a catalog card, and putting it here would invite a client
+         *     to read a catalog lookup as an identification. `image_front` / `image_back`
+         *     are always NULL in V1 — see the module docstring and ADR 0004.
+         *
+         *     `metadata` is carried even though `CatalogVersionResponse` omitted its own.
+         *     The two are different cases: a version's metadata records how a run went,
+         *     where a card's records facts about the card that have no field yet — the set
+         *     total a "4/102" is read against, for instance — and #29 names it as part of
+         *     the canonical record. It generates as an untyped record, which is the honest
+         *     shape for a free-form field.
+         */
+        CardResponse: {
+            /**
+             * Card Number
+             * @description The number printed on the card, verbatim.
+             * @example 4/102
+             */
+            card_number: string;
+            /**
+             * External Ids
+             * @description Every external database identifier recorded for this card.
+             */
+            external_ids: components["schemas"]["CardExternalIdResponse"][];
+            /**
+             * Game
+             * @description A lowercase slug. 'pokemon' in V1, and a field rather than a constant.
+             * @example pokemon
+             */
+            game: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description This catalog's identifier for the card. Never a provider's.
+             */
+            id: string;
+            /**
+             * Language
+             * @description An ISO 639-1 code, read through the set. Japanese sets are distinct sets with their own numbering, not translations.
+             * @example en
+             */
+            language: string;
+            /**
+             * Metadata
+             * @description Whatever the source carried that has no field of its own.
+             * @example {}
+             */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /**
+             * Name
+             * @description The card's printed name, in its own language.
+             * @example Charizard
+             */
+            name: string;
+            /**
+             * Rarity
+             * @description The printed rarity, where the source records one.
+             * @example Rare Holo
+             */
+            rarity: string | null;
+            set: components["schemas"]["CardSetResponse"];
+            /**
+             * Variant
+             * @description The printing variant. Economically load-bearing: holo, reverse holo and 1st edition trade at very different prices.
+             * @example unlimited-holo
+             */
+            variant: string | null;
+        };
+        /**
+         * CardSetResponse
+         * @description The set a card was printed in, nested rather than linked.
+         *
+         *     Every screen that shows a card shows its set — a card number without one
+         *     identifies nothing — so a second request would be a round trip for data the
+         *     first already had to join against.
+         */
+        CardSetResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description This catalog's identifier for the set. Never a provider's.
+             */
+            id: string;
+            /**
+             * Metadata
+             * @description Whatever the source carried that has no field of its own.
+             * @example {
+             *       "total_cards": 102
+             *     }
+             */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /**
+             * Name
+             * @description The set's printed name, in its own language.
+             * @example Base Set
+             */
+            name: string;
+            /**
+             * Release Date
+             * @description The day the set went on sale, where it is known. A date, never a timestamp.
+             * @example 1999-01-09
+             */
+            release_date: string | null;
+            /**
+             * Set Code
+             * @description The publisher's set identifier, verbatim.
+             * @example BS
+             */
+            set_code: string;
+        };
         /**
          * CatalogVersionResponse
          * @description The body of a successful `GET /catalog/version`.
@@ -158,6 +322,11 @@ export interface components {
              */
             message: string;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /**
          * HealthResponse
          * @description The body of a successful ``GET /health``.
@@ -234,6 +403,19 @@ export interface components {
              */
             sets: number;
         };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -243,6 +425,65 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    read_card_cards__card_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description This catalog's identifier for the card, as returned by a search. */
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardResponse"];
+                };
+            };
+            /** @description No card is recorded under that identifier. `card_not_identified` from the spec §66 taxonomy; `details.card_id` says which. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The card catalog could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_catalog_version_catalog_version_get: {
         parameters: {
             query?: never;
