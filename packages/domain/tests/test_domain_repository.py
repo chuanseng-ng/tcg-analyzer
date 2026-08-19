@@ -95,7 +95,9 @@ class InMemoryCardRepository:
 def _matches(query: CardQuery, card: Card) -> bool:
     return all(
         [
-            query.text is None or query.text in card.name,
+            # Case-insensitive, as the port promises and the PostgreSQL
+            # adapter implements: a user typing 'charizard' means Charizard.
+            query.text is None or query.text.lower() in card.name.lower(),
             query.game is None or query.game == card.game,
             query.language is None or query.language == card.language,
             query.set_code is None or query.set_code == card.set.set_code,
@@ -278,6 +280,22 @@ def test_a_page_cannot_hold_more_cards_than_its_limit() -> None:
 def test_a_page_cannot_reach_past_the_total_it_reports() -> None:
     with pytest.raises(InvalidCardSearch):
         CardPage(cards=(a_card(),), total=1, limit=DEFAULT_SEARCH_LIMIT, offset=1)
+
+
+def test_an_empty_page_may_sit_past_the_end_of_the_result_set() -> None:
+    """Paging past the end is a question, and "nothing here" is its answer.
+
+    A client asking for page 3 of a result set that has since shrunk to one page
+    has done nothing wrong, and the window it describes is not incoherent — it
+    skipped past everything and found nothing, which is exactly what it reports.
+    The check above still guards what it was written to guard: a page holding
+    cards cannot claim to sit beyond the matches it counted.
+    """
+    page = CardPage(cards=(), total=3, limit=DEFAULT_SEARCH_LIMIT, offset=99)
+
+    assert page.cards == ()
+    assert page.total == 3
+    assert page.offset == 99
 
 
 def test_the_search_limits_are_stated_for_the_api_to_enforce() -> None:

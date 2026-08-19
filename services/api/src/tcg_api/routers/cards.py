@@ -1,10 +1,17 @@
-"""The card catalog's per-card HTTP surface — spec §64's `GET /cards/{id}`.
+"""The card catalog's HTTP surface — spec §64's `GET /cards/search` and
+`GET /cards/{id}`.
 
-One endpoint today: the full canonical detail for one card, so a user can
-confirm it is the card in their hand before any analysis proceeds. Spec §6's
-Card block — name, set, card number, language, variant — is what this answers,
-minus identification confidence, which belongs to an analysis rather than to a
-catalog record.
+Two endpoints, and they are the two halves of one flow: a user searches for the
+card in their hand, then confirms the one they picked before any analysis
+proceeds. Spec §6's Card block — name, set, card number, language, variant — is
+what the detail endpoint answers, minus identification confidence, which belongs
+to an analysis rather than to a catalog record. The search returns a smaller
+record: enough to choose between candidates, and `id` to ask for the rest.
+
+**Nothing matching is an empty page, never a 404.** The detail endpoint answers
+404 because a caller named one card and this deployment cannot identify it; a
+search that matches nothing has read the catalog correctly and found it holds no
+such card. The two are different questions and they get different answers.
 
 **No card images.** `docs/adr/0004-the-canonical-card-catalog-source.md` imports
 none: TCGdex's MIT licence covers its compilation, not The Pokémon Company's
@@ -17,10 +24,10 @@ The router holds HTTP and nothing else; the SQL lives in `tcg_api.catalog.cards`
 behind the domain's port, exactly as `routers/catalog.py` delegates to
 `tcg_api.catalog.versions`.
 
-**#28 adds `GET /cards/search` to this module, and must declare it above
-`read_card`.** FastAPI matches routes in declaration order, so a literal path
+**`/cards/search` is declared above `read_card`, and any further literal path
+must be too.** FastAPI matches routes in declaration order, so a literal path
 registered after `/{card_id}` is shadowed by it — and because `card_id` is typed
-`UUID`, the symptom would be a 422 complaining that "search" is not a valid
+`UUID`, the symptom is a 422 complaining that the path segment is not a valid
 UUID rather than an obviously missing route.
 """
 
@@ -29,14 +36,21 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import AfterValidator, BaseModel, Field
+from tcg_domain.card import validated_identifier, validated_language, validated_slug
 from tcg_domain.catalog import Card, CardExternalId, CardId
-from tcg_domain.errors import CatalogUnavailable
-from tcg_domain.repository import CardRepository
+from tcg_domain.errors import CatalogUnavailable, InvalidCardSearch
+from tcg_domain.repository import (
+    DEFAULT_SEARCH_LIMIT,
+    MAX_SEARCH_LIMIT,
+    CardPage,
+    CardQuery,
+    CardRepository,
+)
 
 from tcg_api.catalog.cards import PostgresCardRepository
 from tcg_api.database import get_session_factory
@@ -45,7 +59,9 @@ from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
 __all__ = [
     "CardExternalIdResponse",
     "CardResponse",
+    "CardSearchResponse",
     "CardSetResponse",
+    "CardSummaryResponse",
     "card_repository",
     "router",
 ]
@@ -229,6 +245,249 @@ def _response(card: Card, external_ids: Sequence[CardExternalId]) -> CardRespons
             for external in external_ids
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Search — spec §64's `GET /cards/search`
+#
+# The filter grammar is the domain's, not a second copy of it. Each validator
+# below calls the same function `CardQuery` calls, so a rule cannot hold in one
+# place and not the other. `InvalidCardSearch` is a `ValueError`, which pydantic
+# turns into a request-validation error, so a blank or padded filter arrives as
+# FastAPI's own 422 — the same treatment a malformed path identifier gets, and
+# for the same reason: `tcg_api.errors` leaves request validation alone because
+# a malformed query string is a transport-level failure with no §66 meaning.
+#
+# An omitted parameter never reaches a validator, so none of them needs to
+# handle None; `?text=` — present but empty — does reach one, and is rejected.
+# ---------------------------------------------------------------------------
+def _identifier(field: str) -> AfterValidator:
+    def check(value: str) -> str:
+        return validated_identifier(field, value, error=InvalidCardSearch)
+
+    return AfterValidator(check)
+
+
+def _slug(field: str) -> AfterValidator:
+    def check(value: str) -> str:
+        return validated_slug(field, value, error=InvalidCardSearch)
+
+    return AfterValidator(check)
+
+
+def _language() -> AfterValidator:
+    def check(value: str) -> str:
+        return validated_language(value, error=InvalidCardSearch)
+
+    return AfterValidator(check)
+
+
+#: The most matches a caller may skip. `CardPage` bounds the window's size but
+#: not where it starts, and an unbounded offset is not merely useless — a value
+#: past PostgreSQL's `bigint` overflows in the driver, which would surface as a
+#: 503 blaming the catalog for a number the caller chose. Generous enough that
+#: no real catalog reaches it, small enough to stay a number.
+MAX_SEARCH_OFFSET: Final = 1_000_000
+
+
+class CardSummaryResponse(BaseModel):
+    """One search result — enough to tell it apart from its neighbours.
+
+    Deliberately smaller than `CardResponse`. `variant` is the reason this is
+    not merely a name and a number: holo, reverse holo and 1st edition are
+    different cards economically, and a user who picks the wrong one is given
+    the wrong valuation later. `external_ids` is absent because it would be a
+    query per result for something nobody chooses between cards on, and
+    `metadata` because it generates as an untyped record and belongs to the
+    detail view. No thumbnail: ADR 0004 imports no card images.
+
+    `GET /cards/{id}` is where the rest lives; `id` is how a caller gets there.
+    """
+
+    id: UUID = Field(
+        description="This catalog's identifier for the card. Never a provider's.",
+    )
+    name: str = Field(
+        description="The card's printed name, in its own language.",
+        examples=["Charizard"],
+    )
+    card_number: str = Field(
+        description="The number printed on the card, verbatim.",
+        examples=["4/102"],
+    )
+    game: str = Field(
+        description="A lowercase slug. 'pokemon' in V1, and a field rather than a constant.",
+        examples=["pokemon"],
+    )
+    language: str = Field(
+        description="An ISO 639-1 code, read through the set.",
+        examples=["en"],
+    )
+    rarity: str | None = Field(
+        description="The printed rarity, where the source records one.",
+        examples=["Rare Holo"],
+    )
+    variant: str | None = Field(
+        description=(
+            "The printing variant. Shown in results because it is economically "
+            "load-bearing: holo, reverse holo and 1st edition trade at very "
+            "different prices, so choosing between them is the point of a search."
+        ),
+        examples=["unlimited-holo"],
+    )
+    set: CardSetResponse
+
+
+class CardSearchResponse(BaseModel):
+    """The body of a successful `GET /cards/search`.
+
+    `apps/web` generates its types from this model (ADR 0001), so the field
+    names are a public contract.
+
+    `total` counts every match rather than the page, so a UI can say "1-20 of
+    137" and know when to stop. It is read in the same statement as the rows, so
+    the two always describe one catalog.
+    """
+
+    cards: list[CardSummaryResponse] = Field(
+        description="The matches in this window, in the catalog's total order.",
+    )
+    total: int = Field(
+        description="How many cards matched in full, across every page.",
+        examples=[137],
+    )
+    limit: int = Field(description="The window size that produced `cards`.", examples=[20])
+    offset: int = Field(description="How many matches this window skipped.", examples=[0])
+
+
+def _summary(card: Card) -> CardSummaryResponse:
+    return CardSummaryResponse(
+        id=card.id,
+        name=card.name,
+        card_number=card.card_number,
+        game=card.game,
+        language=card.language,
+        rarity=card.rarity,
+        variant=card.variant,
+        set=CardSetResponse(
+            id=card.set.id,
+            set_code=card.set.set_code,
+            name=card.set.name,
+            release_date=card.set.release_date,
+            metadata=dict(card.set.metadata),
+        ),
+    )
+
+
+def _page_response(page: CardPage) -> CardSearchResponse:
+    return CardSearchResponse(
+        cards=[_summary(card) for card in page.cards],
+        total=page.total,
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+# Declared above `read_card`, and it must stay there. FastAPI matches routes in
+# declaration order, so registering this after `/{card_id}` lets that route —
+# whose parameter is typed `UUID` — swallow it, and the symptom is a 422
+# complaining that "search" is not a valid UUID rather than a missing route.
+@router.get(
+    "/search",
+    response_model=CardSearchResponse,
+    summary="Find cards in the catalog",
+    description=(
+        "Searches the canonical catalog so a user can find the card in their "
+        "hand. Every filter is optional and they are ANDed; an empty query "
+        "browses the catalog. `text` matches a fragment of the printed name "
+        "without regard to case, and works for Japanese. `card_number` matches "
+        "as a prefix of the printed number's numerator, so `25`, `025` and "
+        "`025/165` all find the card printed `025/165`. Results are ordered by "
+        "`(set_code, card_number, variant, id)` — a total order, so paging "
+        "neither drops nor duplicates a row. Nothing matching is an empty page, "
+        "never a 404. No prices, and no images (ADR 0004)."
+    ),
+    responses={
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "The card catalog could not be reached.",
+        },
+    },
+)
+async def search_cards(
+    repository: Annotated[CardRepository, Depends(card_repository)],
+    text: Annotated[
+        str | None,
+        Query(description="A fragment of the card's printed name. Case-insensitive."),
+        _identifier("text"),
+    ] = None,
+    game: Annotated[
+        str | None,
+        Query(description="A lowercase slug — 'pokemon' in V1."),
+        _slug("game"),
+    ] = None,
+    language: Annotated[
+        str | None,
+        Query(description="An ISO 639-1 code — 'en' or 'ja' in V1."),
+        _language(),
+    ] = None,
+    set_code: Annotated[
+        str | None,
+        Query(description="The publisher's set identifier, as printed."),
+        _identifier("set_code"),
+    ] = None,
+    card_number: Annotated[
+        str | None,
+        Query(description="What is printed on the card. Matched as a prefix."),
+        _identifier("card_number"),
+    ] = None,
+    variant: Annotated[
+        str | None,
+        Query(description="A printing variant, e.g. 'reverse-holo'."),
+        _identifier("variant"),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_SEARCH_LIMIT, description="Window size."),
+    ] = DEFAULT_SEARCH_LIMIT,
+    offset: Annotated[
+        int,
+        Query(ge=0, le=MAX_SEARCH_OFFSET, description="How many matches to skip."),
+    ] = 0,
+) -> CardSearchResponse:
+    """Return the cards matching the filters, one window at a time.
+
+    There is no 404 here, and that is not an oversight. `GET /cards/{id}`
+    answers one because a caller named a specific card and this deployment
+    cannot identify it; a search that matches nothing has read the catalog
+    correctly and found it holds no such card. An empty page is the answer,
+    including when `offset` reaches past the last match.
+
+    The filters are validated against the domain's own grammar before they get
+    here, so `CardQuery` cannot reject what FastAPI accepted, and `limit` and
+    `offset` are bounded by the route, so the repository's own range check is
+    unreachable from HTTP — it guards the port's other callers.
+    """
+    query = CardQuery(
+        text=text,
+        game=game,
+        language=language,
+        set_code=set_code,
+        card_number=card_number,
+        variant=variant,
+    )
+    try:
+        page = await repository.search(query, limit=limit, offset=offset)
+    except CatalogUnavailable as error:
+        logger.warning("cards could not be searched", exc_info=True)
+        raise ApiError(
+            ErrorCode.PROVIDER_ERROR,
+            _UNREACHABLE,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            details={"reason": "catalog_unreachable"},
+        ) from error
+
+    return _page_response(page)
 
 
 @router.get(
