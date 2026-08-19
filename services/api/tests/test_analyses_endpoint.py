@@ -1,4 +1,4 @@
-"""`POST /analyses` and `GET /analyses/{id}` — issue #32.
+"""`POST /analyses`, `GET /analyses/{id}` and `POST /analyses/{id}/run` — #32, #35.
 
 These run against real PostgreSQL rather than against a fake, and deliberately
 so. What this endpoint pair has to get right is not a response shape — it is
@@ -33,6 +33,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import create_async_engine
+from tcg_api.analysis import jobs
 from tcg_api.app import create_app
 from tcg_api.config import get_settings
 from tcg_api.database import get_engine, get_session_factory
@@ -363,6 +364,219 @@ def test_an_unknown_token_starts_a_new_session(client: TestClient) -> None:
 
     assert response.status_code == 201
     assert forged not in response.headers["set-cookie"]
+
+
+# ---------------------------------------------------------------------------
+# Running one — issue #35
+#
+# The queue itself is not exercised here; `test_analysis_jobs.py` owns that, and
+# it needs no broker either. What these cover is the endpoint's own contract:
+# who may run an analysis, when, and what the caller is told.
+#
+# Nothing reaches `uploaded` on its own yet — the upload endpoint is a later
+# issue — so the state is written directly, exactly as the expiry tests above
+# write an elapsed `expires_at`.
+# ---------------------------------------------------------------------------
+
+
+def uploaded(analysis_id: str) -> None:
+    """Put an analysis where a run may start from."""
+    executing("UPDATE analyses SET status = 'uploaded' WHERE id = :id", id=uuid.UUID(analysis_id))
+
+
+@pytest.fixture
+def enqueued(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
+    """What the endpoint handed to the queue, in place of a broker.
+
+    Patched on the router's own name rather than on `jobs`, because that is the
+    reference the endpoint actually calls — patching the definition would leave
+    the imported alias pointing at the original.
+    """
+    handed: list[uuid.UUID] = []
+
+    def record(analysis_id: uuid.UUID) -> str:
+        handed.append(analysis_id)
+        return "job-1"
+
+    monkeypatch.setattr("tcg_api.routers.analyses.enqueue_analysis", record)
+    return handed
+
+
+def worked(analysis_id: str) -> None:
+    """Run the job the way a worker would, without a worker.
+
+    The task's function, with a request pushed so `self.request` is populated —
+    the same seam `test_analysis_jobs.py` uses. No broker, no eager mode, and no
+    `asyncio.run` nested inside the test client's event loop.
+    """
+    jobs.run_analysis.push_request(retries=0, id="job-1", called_directly=False)
+    try:
+        jobs.run_analysis.run(analysis_id)
+    finally:
+        jobs.run_analysis.pop_request()
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_running_an_analysis_answers_at_once(client: TestClient, enqueued: list[uuid.UUID]) -> None:
+    """Spec §65's response, verbatim: `analysis_id` and `queued`."""
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+
+    response = client.post(f"/analyses/{created['id']}/run")
+
+    assert response.status_code == 202
+    assert response.json() == {"analysis_id": created["id"], "status": "queued"}
+    assert enqueued == [uuid.UUID(created["id"])]
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_queueing_does_not_move_the_analysis(client: TestClient, enqueued: list[uuid.UUID]) -> None:
+    """`queued` is a transport word; no row ever holds it, and none is advanced by it.
+
+    Marking the row here would mean a broker that swallowed the message left an
+    analysis in a state nothing would move it out of. The worker's own claim is
+    the only thing that advances one.
+    """
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+
+    client.post(f"/analyses/{created['id']}/run")
+
+    assert client.get(f"/analyses/{created['id']}").json()["status"] == "uploaded"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_analysis_with_no_images_is_not_run(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """Spec §18's pipeline starts with images, so there is nothing to analyse."""
+    created = client.post("/analyses").json()
+
+    response = client.post(f"/analyses/{created['id']}/run")
+
+    assert response.status_code == 409
+    assert enqueued == []
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_another_sessions_analysis_cannot_be_run(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """The same answer as reading it, so running is not a way to discover one exists."""
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.cookies.clear()
+    client.post("/analyses")
+
+    response = client.post(f"/analyses/{created['id']}/run")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == NOT_FOUND
+    assert enqueued == []
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_unknown_analysis_cannot_be_run(client: TestClient, enqueued: list[uuid.UUID]) -> None:
+    client.post("/analyses")
+
+    response = client.post(f"/analyses/{uuid.uuid4()}/run")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == NOT_FOUND
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_running_a_malformed_identifier_is_a_validation_error(client: TestClient) -> None:
+    client.post("/analyses")
+
+    assert client.post("/analyses/not-a-uuid/run").status_code == 422
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_run_reaches_the_confirmation_gate_and_stops(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """Where an analysis rests, and deliberately not `completed`.
+
+    Spec §20 forbids acting on an identification the user has not confirmed, and
+    nothing in this milestone produces a candidate — so the honest end of this
+    pipeline is the gate. Advancing further would report a finished analysis
+    whose every result column is NULL.
+    """
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+
+    worked(created["id"])
+
+    polled = client.get(f"/analyses/{created['id']}").json()
+    assert polled["status"] == "awaiting_confirmation"
+    assert polled["completed_at"] is None
+    assert polled["card_id"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_analysis_already_running_is_not_queued_again(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """At-least-once delivery is safe; asking for it twice is still a conflict."""
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+    worked(created["id"])
+
+    response = client.post(f"/analyses/{created['id']}/run")
+
+    assert response.status_code == 409
+    assert enqueued == [uuid.UUID(created["id"])]
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_duplicate_delivery_does_not_re_run_the_analysis(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """The other half: two deliveries of one job leave the analysis where one did."""
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+
+    worked(created["id"])
+    worked(created["id"])
+
+    assert client.get(f"/analyses/{created['id']}").json()["status"] == "awaiting_confirmation"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_unreachable_queue_is_a_503(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broker that is down is `provider_error`, with its own reason.
+
+    Distinct from the store's, because an operator reading the log should not
+    have to work out which of the two dependencies is missing.
+    """
+
+    def refuse(analysis_id: uuid.UUID) -> str:
+        raise jobs.JobQueueUnavailable("nope")
+
+    monkeypatch.setattr("tcg_api.routers.analyses.enqueue_analysis", refuse)
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+
+    response = client.post(f"/analyses/{created['id']}/run")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == ErrorCode.PROVIDER_ERROR.value
+    assert body["details"]["reason"] == "job_queue_unreachable"
 
 
 # ---------------------------------------------------------------------------

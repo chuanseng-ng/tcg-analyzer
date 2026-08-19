@@ -23,23 +23,31 @@ transport-level failures alone, and none of §66's eight codes means "not found"
 genuinely describes a card this deployment cannot identify, and nothing in the
 taxonomy describes an analysis that is not yours.
 
+**Running is asynchronous, and `queued` is not a state.** Spec §65 has
+`POST /analyses/{id}/run` answer `queued` and then lists nine states without it,
+so the row is left exactly where it was and the worker moves it. The transport
+word and the record deliberately do not agree, because they are answering
+different questions: "did you accept this?" and "where has it got to?".
+
 **No rate limiting here.** Spec §55 names analysis endpoints, and #98 owns both
-the limiter and the question of what a 429 body says. This endpoint is unlimited
-until it lands.
+the limiter and the question of what a 429 body says. These endpoints are
+unlimited until it lands.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from tcg_domain.analysis import AnalysisStatus
 
+from tcg_api.analysis.jobs import JobQueueUnavailable, enqueue_analysis
 from tcg_api.analysis.sessions import (
     AnalysisRecord,
     AnalysisStoreUnavailable,
@@ -54,7 +62,13 @@ from tcg_api.database import get_session_factory
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
 from tcg_api.version import application_version
 
-__all__ = ["SESSION_COOKIE", "AnalysisResponse", "analysis_session", "router"]
+__all__ = [
+    "SESSION_COOKIE",
+    "AnalysisResponse",
+    "AnalysisRunResponse",
+    "analysis_session",
+    "router",
+]
 
 logger = structlog.get_logger(__name__)
 
@@ -68,8 +82,19 @@ SESSION_COOKIE: Final = "tcg_session"
 #: on the same terms `GET /cards/{id}` reports an unreachable catalog.
 _UNREACHABLE = "The analysis store could not be reached."
 
+#: The job queue could not be reached, or was never configured. A different
+#: dependency from the store, so a different `details.reason` — an operator
+#: reading the log should not have to guess which of the two is down.
+_QUEUE_UNREACHABLE = "The analysis could not be queued."
+
 #: One message for four different misses. See the module docstring.
 _NOT_FOUND = "No analysis is recorded under that identifier."
+
+#: The one state a run may start from. Spec §18's pipeline begins with images,
+#: so an analysis that has none has nothing to analyse. The upload endpoint that
+#: puts an analysis here is its own issue; until it lands this is reached only
+#: by a test writing the row.
+_RUNNABLE: Final = AnalysisStatus.UPLOADED
 
 
 class AnalysisResponse(BaseModel):
@@ -107,6 +132,25 @@ class AnalysisResponse(BaseModel):
     )
 
 
+class AnalysisRunResponse(BaseModel):
+    """The acknowledgement `POST /analyses/{id}/run` answers with — spec §65.
+
+    §65 names both fields, and names the first `analysis_id` rather than `id`.
+    Transcribed rather than tidied: this is the shape a client was told to
+    expect, and `AnalysisResponse` is a different message about a different
+    thing.
+    """
+
+    analysis_id: UUID = Field(description="The analysis that was queued.")
+    status: Literal["queued"] = Field(
+        description=(
+            "Always `queued`. A transport word meaning 'accepted, not started' — "
+            "it is not one of spec §65's nine states and no analysis ever holds "
+            "it. Poll `GET /analyses/{id}` for the state the analysis is in."
+        ),
+    )
+
+
 def _response(record: AnalysisRecord) -> AnalysisResponse:
     return AnalysisResponse(
         id=record.id,
@@ -124,6 +168,22 @@ def _unreachable() -> ApiError:
         _UNREACHABLE,
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         details={"reason": "analysis_store_unreachable"},
+    )
+
+
+def _queue_unreachable() -> ApiError:
+    """The 503 for a broker that is down or unconfigured.
+
+    `provider_error` on the same terms as the store's, because it is the same
+    kind of failure: the request was well-formed and this deployment cannot
+    currently act on it. §66 has no code for "the queue is down", and inventing
+    a ninth is a specification change.
+    """
+    return ApiError(
+        ErrorCode.PROVIDER_ERROR,
+        _QUEUE_UNREACHABLE,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        details={"reason": "job_queue_unreachable"},
     )
 
 
@@ -259,3 +319,87 @@ async def read_one_analysis(
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
 
     return _response(record)
+
+
+@router.post(
+    "/{analysis_id}/run",
+    response_model=AnalysisRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run an analysis",
+    description=(
+        "Hands the analysis to a background worker and returns immediately "
+        "(spec §8, §65): image processing and inference take far longer than an "
+        "HTTP request should. The response says `queued`, which is an "
+        "acknowledgement rather than a state — poll `GET /analyses/{id}` to see "
+        "where the analysis has got to.\n\n"
+        "Only an analysis whose images have arrived can be run; spec §18's "
+        "pipeline begins with them. Running one twice is safe: the worker "
+        "claims the analysis with a conditional update, so a second job finds "
+        "nothing to do rather than repeating the first."
+    ),
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "No analysis is recorded under that identifier — for this "
+                "caller. The same body `GET /analyses/{id}` answers with, for "
+                "the same reason."
+            ),
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "The analysis is not in a state a run may start from. Outside "
+                "the spec §66 taxonomy, which has no code meaning 'conflict'."
+            ),
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "The analysis store or the job queue could not be reached.",
+        },
+    },
+)
+async def run_one_analysis(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(analysis_session)],
+    analysis_id: Annotated[
+        UUID,
+        Path(description="The identifier `POST /analyses` answered with."),
+    ],
+) -> AnalysisRunResponse:
+    """Queue the analysis, having established that it is the caller's and ready.
+
+    Ownership comes from `read_analysis`, so it is the same `WHERE` clause the
+    read uses and the same 404 body — a caller who cannot read an analysis must
+    not be able to learn it exists by trying to run it.
+
+    The row is deliberately left in `uploaded`. Marking it before the worker had
+    it would mean a broker that swallowed the message left an analysis in a
+    state nothing would ever move it out of; the worker's own claim is the only
+    thing that advances it, and that claim is what makes a duplicate delivery
+    harmless.
+    """
+    try:
+        session_id = await resolve_session(db, request.cookies.get(SESSION_COOKIE))
+        record = None if session_id is None else await read_analysis(db, analysis_id, session_id)
+    except AnalysisStoreUnavailable as error:
+        logger.warning("analysis.could_not_be_read", exc_info=True)
+        raise _unreachable() from error
+
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
+
+    if record.status != _RUNNABLE:
+        # Saying which state it is in is safe here — ownership is already
+        # established, and a client polling this analysis can see it anyway.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An analysis is run once its images have arrived, and this one is {record.status}.",
+        )
+
+    try:
+        job_id = enqueue_analysis(record.id)
+    except JobQueueUnavailable as error:
+        logger.warning("analysis.could_not_be_queued", exc_info=True)
+        raise _queue_unreachable() from error
+
+    logger.info("analysis.queued", analysis_id=str(record.id), job_id=job_id)
+    return AnalysisRunResponse(analysis_id=record.id, status="queued")

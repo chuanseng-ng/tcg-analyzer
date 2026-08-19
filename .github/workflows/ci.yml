@@ -258,6 +258,15 @@ jobs:
           test "$(echo "$readiness" | jq -r '.checks.database')" = ok
           test "$(echo "$readiness" | jq -r '.checks.storage')" = ok
 
+      # The worker has no port to probe and no healthcheck to wait on — nothing
+      # calls a Celery worker — so the honest assertion is that it is still up
+      # after connecting to Redis and PostgreSQL rather than crash-looping.
+      - name: The analysis worker is running
+        run: |
+          $COMPOSE ps worker
+          test "$($COMPOSE ps -q worker | xargs docker inspect -f '{{.State.Status}}')" = running
+          $COMPOSE logs worker | grep -q "celery@"
+
       - name: The web application serves
         run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3000
 

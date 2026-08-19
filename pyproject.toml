@@ -122,3 +122,17 @@ disallow_untyped_decorators = false
 # Alembic generates these without annotations.
 module = ["migrations.*", "versions.*"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Celery ships no `py.typed`, so every symbol it exports is `Any`. Narrowed to
+# the package rather than turned off globally: the code that *uses* celery is
+# still checked, it simply cannot be told what celery's own types are.
+module = ["celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# A consequence of the above: `@shared_task` is untyped, so mypy considers the
+# function it decorates untyped too. Scoped to the single module that declares a
+# task rather than relaxed service-wide.
+module = ["tcg_api.analysis.jobs"]
+disallow_untyped_decorators = false

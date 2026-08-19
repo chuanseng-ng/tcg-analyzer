@@ -6,6 +6,12 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.13",
     "asyncpg>=0.29",
+    # The job queue (spec §8). `[redis]` brings the broker transport; there is
+    # deliberately no result backend, since status is polled from PostgreSQL.
+    # The worker runs from this same image, so this is a runtime dependency of
+    # `tcg-api` rather than of a package of its own — see
+    # `tcg_api/analysis/jobs.py` for why the worker is not its own image yet.
+    "celery[redis]>=5.4",
     "fastapi>=0.115",
     # The TCGdex catalog import (ADR 0004) is the only outbound HTTP this
     # service makes, and `tcg_api.catalog.tcgdex` is the only module that

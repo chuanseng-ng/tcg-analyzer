@@ -6,9 +6,14 @@ shaped. The split is the same one the catalog makes, and for the same reason:
 the domain package imports nothing but the standard library, so it can be
 imported by every ML module without dragging a database driver along.
 
-Nothing here runs an analysis. The state machine, the job queue and the upload
-endpoint are separate issues; what exists at this point is the record they will
-write to.
+`sessions.py` starts and reads an analysis, `state.py` moves it, and `jobs.py`
+is the queue a move actually happens on — `worker.py` is what a worker process
+is pointed at. The upload endpoint and every pipeline stage are separate issues;
+what exists at this point is a record, and a harness that can carry it from one
+state to the next.
+
+The package deliberately exports only the tables. Importing `jobs` pulls in
+Celery, and the only thing that should pay for that is code that enqueues.
 """
 
 from __future__ import annotations

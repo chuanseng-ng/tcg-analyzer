@@ -100,9 +100,9 @@ Two workspaces, split by language — see
 docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 ```
 
-That is the entire setup from a fresh clone. It starts PostgreSQL and MinIO,
-runs the migrations, then starts the API and the web application in dependency
-order.
+That is the entire setup from a fresh clone. It starts PostgreSQL, MinIO and
+Redis, runs the migrations, then starts the API, the analysis worker and the web
+application in dependency order.
 
 | | |
 | --- | --- |
@@ -392,6 +392,39 @@ because the two need different services:
 ```bash
 uv run pytest -m object_storage   # requires MinIO to be running
 ```
+
+#### Background jobs
+
+Analysis is asynchronous: `POST /analyses/{id}/run` hands the work to a Celery
+worker over Redis and answers `queued` at once, because inference takes far
+longer than an HTTP request should (spec §8). Progress is polled through
+`GET /analyses/{id}`, which reports one of spec §65's nine states — `queued` is
+an acknowledgement rather than a state, and no analysis ever holds it.
+
+The same `up` starts Redis and the worker. The worker runs the API's own image
+with a different command, so the code that runs a job cannot drift from the code
+that enqueued it:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml logs -f worker
+```
+
+Four properties are load-bearing rather than incidental, and each has a test:
+
+- **The worker accepts JSON and nothing else.** A Celery worker willing to
+  deserialize pickle from a broker an attacker can write to is arbitrary code
+  execution. `task_serializer`, `result_serializer` and `accept_content` are all
+  pinned, and none of them may ever gain `pickle`.
+- **The broker is authenticated, even locally.** There is no default
+  `TCG_API_REDIS_URL`; a deployment sets `rediss://` with credentials.
+- **A repeat delivery is a no-op.** Delivery is at-least-once, and a run claims
+  its analysis with a conditional `UPDATE` whose `WHERE` clause names the states
+  the move is legal from — so a duplicate job finds nothing to do, and two
+  workers cannot both claim one analysis.
+- **A dead-lettered job records the job id, the error and the attempt count —
+  and nothing else.** Analysis payloads reference photographs of somebody's card
+  and their surroundings; keeping one indefinitely so a job nobody re-drives
+  could be re-driven is not a trade this project makes (spec §54).
 
 ## Contributing
 

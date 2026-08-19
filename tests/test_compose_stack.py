@@ -30,15 +30,16 @@ COMPOSE_FILE = REPO_ROOT / "infrastructure" / "local" / "docker-compose.yml"
 #: Every service a developer expects after one `up`. `migrate` is deliberately
 #: included: it is not a service in the running sense, but its absence would
 #: mean the database is never migrated, which is the failure this list guards.
-EXPECTED_SERVICES = frozenset({"postgres", "minio", "migrate", "api", "web"})
+EXPECTED_SERVICES = frozenset({"postgres", "minio", "redis", "migrate", "api", "worker", "web"})
 
 #: The services whose images this repository builds, and which are therefore
 #: the ones it can hold to the non-root, least-privilege baseline. The
 #: PostgreSQL image drops to its own `postgres` user internally; the MinIO
 #: image runs as root and pinning `user:` would fight its named volume's
-#: ownership on first start. Both are upstream images, and neither is something
-#: this file can honestly claim to have hardened.
-BUILT_SERVICES = frozenset({"migrate", "api", "web"})
+#: ownership on first start; the Redis image drops to `redis`. All three are
+#: upstream images, and none is something this file can honestly claim to have
+#: hardened.
+BUILT_SERVICES = frozenset({"migrate", "api", "worker", "web"})
 
 
 def compose() -> dict[str, Any]:
@@ -97,6 +98,30 @@ def test_migrations_wait_for_the_database_to_be_healthy(services: dict[str, Any]
 
 def test_the_web_app_waits_for_the_api_to_be_healthy(services: dict[str, Any]) -> None:
     assert services["web"]["depends_on"]["api"]["condition"] == "service_healthy"
+
+
+@pytest.mark.parametrize("dependency", ["postgres", "redis"])
+def test_the_worker_waits_for_its_dependencies_to_be_healthy(
+    services: dict[str, Any], dependency: str
+) -> None:
+    assert services["worker"]["depends_on"][dependency]["condition"] == "service_healthy"
+
+
+def test_the_worker_waits_for_migrations_too(services: dict[str, Any]) -> None:
+    """It writes to `analyses` on every job, so it needs the schema as much as the API does."""
+    assert (
+        services["worker"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
+    )
+
+
+def test_the_worker_runs_from_the_api_image(services: dict[str, Any]) -> None:
+    """So the code that runs a job cannot drift from the code that enqueued it.
+
+    The same reasoning as `migrate`, and the reason there is no worker
+    Dockerfile yet: isolation here is the container's, not the image's.
+    """
+    assert services["worker"]["image"] == services["api"]["image"]
+    assert services["worker"]["build"] == services["api"]["build"]
 
 
 def test_the_migration_service_does_not_restart(services: dict[str, Any]) -> None:
@@ -161,6 +186,40 @@ def test_no_container_can_gain_new_privileges(services: dict[str, Any], service:
     assert "no-new-privileges:true" in services[service]["security_opt"]
 
 
+def test_the_worker_drops_every_capability(services: dict[str, Any]) -> None:
+    """Spec §56: the process that will handle untrusted images gets the least of everything.
+
+    It listens on nothing, binds nothing and owns no files, so there is no
+    capability it can lose. Asserted rather than described because the cost of
+    getting it wrong is invisible until it matters.
+    """
+    assert services["worker"]["cap_drop"] == ["ALL"]
+
+
+def test_the_worker_publishes_no_port(services: dict[str, Any]) -> None:
+    """Nothing calls a Celery worker. It reaches out to Redis and to PostgreSQL."""
+    assert "ports" not in services["worker"]
+
+
+def test_the_broker_requires_a_password(services: dict[str, Any]) -> None:
+    """The insecure default this configuration exists to avoid.
+
+    The `python-background-jobs` skill's example hardcodes an unauthenticated
+    `redis://localhost:6379`. An open broker is somewhere an attacker enqueues
+    tasks directly into the worker, so even the local one is authenticated —
+    and both the server and every client URL are written from the same variable,
+    so they cannot drift apart.
+    """
+    command = " ".join(services["redis"]["command"])
+
+    assert "--requirepass" in command
+    assert "${REDIS_PASSWORD:-tcglocaldev}" in command
+
+    for service in ("api", "worker"):
+        url = services[service]["environment"]["TCG_API_REDIS_URL"]
+        assert url.startswith("redis://:${REDIS_PASSWORD:-tcglocaldev}@redis:6379"), url
+
+
 @pytest.mark.parametrize("service", sorted(BUILT_SERVICES))
 def test_every_image_this_repository_builds_runs_unprivileged(service: str) -> None:
     """Asserted against the Dockerfile, because Compose cannot show a `USER`.
@@ -179,7 +238,7 @@ def test_every_image_this_repository_builds_runs_unprivileged(service: str) -> N
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("service", ["api", "web"])
+@pytest.mark.parametrize("service", ["api", "worker", "web"])
 def test_source_changes_are_synced_into_the_running_container(
     services: dict[str, Any], service: str
 ) -> None:
@@ -188,7 +247,10 @@ def test_source_changes_are_synced_into_the_running_container(
     assert "sync" in actions
 
 
-@pytest.mark.parametrize(("service", "lockfile"), [("api", "uv.lock"), ("web", "pnpm-lock.yaml")])
+@pytest.mark.parametrize(
+    ("service", "lockfile"),
+    [("api", "uv.lock"), ("worker", "uv.lock"), ("web", "pnpm-lock.yaml")],
+)
 def test_a_dependency_change_rebuilds_rather_than_syncs(
     services: dict[str, Any], service: str, lockfile: str
 ) -> None:
