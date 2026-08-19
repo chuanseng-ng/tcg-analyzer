@@ -61,6 +61,18 @@ def test_openapi_documents_the_catalog_version_path() -> None:
     assert "get" in schema["paths"]["/catalog/version"]
 
 
+def test_openapi_documents_the_card_detail_path() -> None:
+    """Spec §64 names `GET /cards/{id}`; #29 serves it.
+
+    The path is templated in the schema, so it appears under the parameter's
+    name rather than the spec's `{id}`.
+    """
+    schema = create_app().openapi()
+
+    assert "/cards/{card_id}" in schema["paths"]
+    assert "get" in schema["paths"]["/cards/{card_id}"]
+
+
 # ---------------------------------------------------------------------------
 # The error taxonomy — spec §66
 # ---------------------------------------------------------------------------

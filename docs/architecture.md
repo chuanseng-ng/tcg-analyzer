@@ -160,8 +160,11 @@ enforces that separation. See
 `CardRepository` in [`packages/domain`](../packages/domain) is the same shape
 applied to the catalog, and lives with the domain rather than in `shared`
 because it speaks the domain's language — it returns a `Card`, where object
-storage only moves bytes. It names no `dsn`, `pool` or `session`; the
-PostgreSQL adapter that satisfies it is built outside the package.
+storage only moves bytes. It names no `dsn`, `pool` or `session`; the PostgreSQL
+adapter that satisfies it lives in
+[`services/api`](../services/api/src/tcg_api/catalog/cards.py), outside the
+package, and translates every driver failure into the port's own
+`CatalogUnavailable` so no route handler ever sees an asyncpg exception.
 
 TCGplayer API access is neither assumed nor hard-coded. Access is not currently
 granted, and its terms restrict competing commercial products.
