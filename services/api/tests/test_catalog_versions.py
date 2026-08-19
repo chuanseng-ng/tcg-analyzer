@@ -129,8 +129,15 @@ def published(*records: CardDatabaseVersion) -> None:
     run(scenario)
 
 
-def reading[T](work: Callable[[PostgresCardDatabaseVersionRepository], Awaitable[T]]) -> T:
-    async def scenario() -> T:
+#: Both port methods answer the same shape, so this is concrete rather than
+#: generic. It also keeps `T` out of a nested function's annotations, which
+#: CodeQL reads as a local used before assignment — PEP 695 type parameters are
+#: not yet modelled, and the alert would be noise on every future helper.
+Read = Callable[[PostgresCardDatabaseVersionRepository], Awaitable[CardDatabaseVersion | None]]
+
+
+def reading(work: Read) -> CardDatabaseVersion | None:
+    async def scenario() -> CardDatabaseVersion | None:
         engine = create_async_engine(DATABASE_URL or "")
         try:
             factory = async_sessionmaker(engine, expire_on_commit=False)
