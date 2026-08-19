@@ -133,7 +133,9 @@ class CardPage:
         InvalidCardSearch: If the window does not describe the result set it
             claims — a negative bound, a limit outside
             ``[1, MAX_SEARCH_LIMIT]``, more cards than the limit allows, or a
-            window reaching past `total`.
+            *non-empty* window reaching past `total`. An empty page is legal at
+            any offset: it says the caller skipped past every match, which is an
+            answer rather than a contradiction.
     """
 
     cards: Sequence[Card]
@@ -156,7 +158,14 @@ class CardPage:
             raise InvalidCardSearch(
                 f"a page of limit {self.limit} cannot hold {len(self.cards)} cards"
             )
-        if self.offset + len(self.cards) > self.total:
+        # Only when the page holds something. An *empty* page at any offset is a
+        # truthful answer — the caller skipped past everything and found nothing
+        # — and a client paging through a result set that has since shrunk
+        # reaches one legitimately. Rejecting that would make an ordinary
+        # request unrepresentable while guarding nothing: what this check exists
+        # to deny is a page claiming cards that lie beyond the matches it
+        # counted, and a page with no cards claims none.
+        if self.cards and self.offset + len(self.cards) > self.total:
             raise InvalidCardSearch(
                 f"a page of {len(self.cards)} cards at offset {self.offset} reaches past "
                 f"the {self.total} matches it reports"
@@ -224,6 +233,9 @@ class CardRepository(Protocol):
 
         `text` matches a name fragment and must work for Japanese; `card_number`
         matches as a prefix. Those two are the search's real index requirements.
+
+        An `offset` past the last match is an empty page rather than an error:
+        the caller asked what lies beyond the end and the answer is nothing.
 
         Args:
             query: The filters to apply. An empty query browses the catalog.
