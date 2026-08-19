@@ -38,6 +38,12 @@ HARNESS_TABLE = "migration_harness_check"
 # alongside the tables that replaced it.
 BASELINE = "0255d9f37125"
 
+# The revision that drops the harness table. Pinned rather than reached with
+# `downgrade -1` from `head`, because "-1 from head" means "the newest
+# revision", which stopped being this one the moment another landed on top.
+# What is under test is that *this* revision reverses.
+CATALOG_REVISION = "0d60d1982d83"
+
 
 def alembic(*args: str) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
@@ -59,6 +65,22 @@ def table_exists(name: str) -> bool:
                 found = await connection.scalar(
                     text("SELECT to_regclass(:qualified) IS NOT NULL"),
                     {"qualified": f"public.{name}"},
+                )
+            return bool(found)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(query())
+
+
+def function_exists(signature: str) -> bool:
+    async def query() -> bool:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.connect() as connection:
+                found = await connection.scalar(
+                    text("SELECT to_regprocedure(:signature) IS NOT NULL"),
+                    {"signature": signature},
                 )
             return bool(found)
         finally:
@@ -98,18 +120,47 @@ def test_the_harness_is_repeatable_on_a_fresh_schema() -> None:
     assert table_exists("cards")
 
 
-def test_downgrading_one_revision_restores_the_harness_table() -> None:
+def test_downgrading_the_catalog_revision_restores_the_harness_table() -> None:
     """`downgrade` is a real inverse, not a declaration.
 
     The revision that drops the harness table must put it back, or the history
     stops being reversible at exactly the point the first domain table arrives.
     """
-    alembic("upgrade", "head")
+    alembic("upgrade", CATALOG_REVISION)
 
     alembic("downgrade", "-1")
 
     assert table_exists(HARNESS_TABLE)
     assert not table_exists("cards")
+
+
+def test_downgrading_one_revision_from_head_leaves_the_catalog_standing() -> None:
+    """Each revision reverses only itself.
+
+    The version record arrived on top of the catalog, so undoing it must not
+    take the cards with it — that is the difference between a reversible history
+    and one that only reverses all the way to `base`.
+    """
+    alembic("upgrade", "head")
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("card_database_versions")
+    assert table_exists("cards")
+
+
+def test_downgrading_leaves_no_orphaned_trigger_function() -> None:
+    """A dropped table takes its trigger; the function it called survives.
+
+    An orphaned `card_database_versions_are_immutable()` would make the next
+    `upgrade` silently reuse a definition nobody reviewed, so `downgrade` names
+    it explicitly and this proves it.
+    """
+    alembic("upgrade", "head")
+
+    alembic("downgrade", "-1")
+
+    assert not function_exists("card_database_versions_are_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:

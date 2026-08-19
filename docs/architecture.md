@@ -170,8 +170,9 @@ The canonical card catalog is sourced from TCGdex under its MIT licence, entered
 through `card_external_ids` so it stays replaceable, and imported without card
 images — see [ADR 0004](adr/0004-the-canonical-card-catalog-source.md). Nothing
 in `packages/domain` names that source: `Card` and `Set` carry facts, and a
-provider key reaches them only as a `CardExternalId`. The market-price provider
-is a separate, still-open decision.
+provider key reaches them only as a `CardExternalId`. Each import's provenance
+lands in the immutable `card_database_version` record; there is no competing
+provenance table. The market-price provider is a separate, still-open decision.
 
 ### Everything is versioned and immutable
 
@@ -183,6 +184,14 @@ explicit version — `grading-psa-v0.2.0` — never by `/latest/`.
 Every analysis records: application version, model bundle version, card database
 version, grading rules version, market snapshot ID, economic configuration, and
 the input image hashes.
+
+The card database version is the first of those seven to become a real table.
+`card_database_versions` holds one row per import run — identifier, source,
+licence, upstream revision, when the data was made, and how much of it there was
+— and `GET /catalog/version` reports the current one. Immutability there is a
+database guarantee rather than a convention: a trigger refuses `UPDATE` and
+`DELETE`, so a re-import publishes a new version instead of editing an old one,
+and the identifier an analysis recorded still finds what it recorded.
 
 ### Uncertainty is a valid output
 

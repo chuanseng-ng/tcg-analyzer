@@ -23,14 +23,18 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from tcg_api.catalog.seed import (
     DEFAULT_SEEDS_DIR,
+    SEED_CATALOG_GENERATED_AT,
+    SEED_CATALOG_SOURCE,
+    SEED_CATALOG_VERSION,
     SeedCatalog,
     SeedError,
     apply_seed_catalog,
     load_seed_catalog,
     seed_card_id,
+    seed_catalog_version,
     seed_set_id,
 )
-from tcg_api.catalog.tables import card_external_ids, cards, sets
+from tcg_api.catalog.tables import card_database_versions, card_external_ids, cards, sets
 from tcg_domain.errors import InvalidCatalogRecord
 
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -266,7 +270,13 @@ def empty_catalog_tables():
         try:
             async with engine.begin() as connection:
                 await connection.execute(
-                    sa.text("TRUNCATE card_external_ids, cards, sets RESTART IDENTITY CASCADE")
+                    # `card_database_versions` joins the list because the
+                    # loader now publishes one, and TRUNCATE is the only way
+                    # to empty it: its trigger refuses DELETE.
+                    sa.text(
+                        "TRUNCATE card_external_ids, cards, sets, card_database_versions "
+                        "RESTART IDENTITY CASCADE"
+                    )
                 )
         finally:
             await engine.dispose()
@@ -338,3 +348,129 @@ def test_a_japanese_name_round_trips_through_the_database() -> None:
 
     names = asyncio.run(lookup())
     assert names == ["リザードンex", "リザードンex"]
+
+
+# ---------------------------------------------------------------------------
+# The catalog version the fixtures publish (#27)
+# ---------------------------------------------------------------------------
+def test_the_seed_publishes_an_explicit_ordered_version(catalog: SeedCatalog) -> None:
+    """Constructing the entity is the assertion: the grammar lives in the domain.
+
+    Spec §31 forbids a version that names a moving target, and the identifier
+    an analysis records has to survive being looked up years later.
+    """
+    published = seed_catalog_version(catalog)
+
+    assert published.version == "pokemon-catalog-seed-v0.0.0"
+    assert published.source == SEED_CATALOG_SOURCE == "manual"
+
+
+def test_the_seed_version_counts_come_from_the_fixtures(catalog: SeedCatalog) -> None:
+    """Not from `count(*)`, which would also count rows another version wrote."""
+    published = seed_catalog_version(catalog)
+
+    assert published.set_count == len(catalog.sets)
+    assert published.card_count == len(catalog.cards)
+    assert published.external_id_count == len(catalog.external_ids)
+
+
+def test_the_seed_version_carries_no_upstream_licence(catalog: SeedCatalog) -> None:
+    """The fixtures are this project's own text; a licence there would be a lie."""
+    published = seed_catalog_version(catalog)
+
+    assert published.source_license is None
+    assert published.source_revision is None
+
+
+def test_the_seed_version_is_generated_at_a_fixed_instant(catalog: SeedCatalog) -> None:
+    """`now()` would make two fresh databases disagree about one immutable version."""
+    assert seed_catalog_version(catalog).generated_at == SEED_CATALOG_GENERATED_AT
+    assert SEED_CATALOG_GENERATED_AT.tzinfo is not None
+
+
+def _published_versions() -> list[dict[str, object]]:
+    async def scenario() -> list[dict[str, object]]:
+        engine = _engine()
+        try:
+            async with engine.connect() as connection:
+                rows = await connection.execute(
+                    sa.select(card_database_versions).order_by(card_database_versions.c.ordinal)
+                )
+                return [dict(row) for row in rows.mappings()]
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(scenario())
+
+
+@pytest.mark.integration
+@requires_postgres
+@pytest.mark.usefixtures("empty_catalog_tables")
+def test_seeding_registers_the_catalog_version() -> None:
+    _apply_and_count(1)
+    catalog = load_seed_catalog()
+
+    published = _published_versions()
+
+    assert len(published) == 1
+    assert published[0]["version"] == SEED_CATALOG_VERSION
+    assert published[0]["source"] == "manual"
+    assert published[0]["source_license"] is None
+    assert published[0]["set_count"] == len(catalog.sets)
+    assert published[0]["card_count"] == len(catalog.cards)
+    assert published[0]["external_id_count"] == len(catalog.external_ids)
+
+
+@pytest.mark.integration
+@requires_postgres
+@pytest.mark.usefixtures("empty_catalog_tables")
+def test_seeding_twice_leaves_one_immutable_version() -> None:
+    """`ON CONFLICT DO NOTHING`, reversing the upsert policy the loader uses
+    for catalog content. A published version is never rewritten — and the
+    table's trigger would refuse the UPDATE `DO UPDATE` implies anyway."""
+    _apply_and_count(2)
+
+    published = _published_versions()
+
+    assert len(published) == 1
+    assert published[0]["ordinal"] == 1
+
+
+@pytest.mark.integration
+@requires_postgres
+@pytest.mark.usefixtures("empty_catalog_tables")
+def test_reseeding_changed_fixtures_without_bumping_the_version_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The hole `ON CONFLICT DO NOTHING` opens, and the warning that closes it.
+
+    The catalog rows converge on the fixtures while the version record keeps
+    describing the ones it was published with. Only the operator can say whether
+    that is a correction or a new version, so the loader says so rather than
+    guessing.
+    """
+    catalog = load_seed_catalog()
+    _apply_and_count(1)
+
+    shortened = SeedCatalog(
+        sets=catalog.sets,
+        cards=catalog.cards[:-1],
+        external_ids=[
+            record for record in catalog.external_ids if record.card_id != catalog.cards[-1].id
+        ],
+    )
+
+    async def reapply() -> None:
+        engine = _engine()
+        try:
+            await apply_seed_catalog(shortened, engine)
+        finally:
+            await engine.dispose()
+
+    with caplog.at_level("WARNING", logger="tcg_api.catalog.seed"):
+        asyncio.run(reapply())
+
+    assert "SEED_CATALOG_VERSION" in caplog.text
+    assert SEED_CATALOG_VERSION in caplog.text
+    # The published record is untouched: it still describes what it described.
+    assert _published_versions()[0]["card_count"] == len(catalog.cards)

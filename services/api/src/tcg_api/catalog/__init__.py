@@ -13,6 +13,12 @@ not be tied to a particular external provider" — is enforced by
 
 from __future__ import annotations
 
-from tcg_api.catalog.tables import card_external_ids, cards, metadata, sets
+from tcg_api.catalog.tables import (
+    card_database_versions,
+    card_external_ids,
+    cards,
+    metadata,
+    sets,
+)
 
-__all__ = ["card_external_ids", "cards", "metadata", "sets"]
+__all__ = ["card_database_versions", "card_external_ids", "cards", "metadata", "sets"]

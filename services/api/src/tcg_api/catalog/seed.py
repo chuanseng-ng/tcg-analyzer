@@ -38,28 +38,34 @@ import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from tcg_domain.catalog import Card, CardExternalId, CardId, Set, SetId
+from tcg_domain.catalog_version import CardDatabaseVersion
 from tcg_domain.errors import InvalidCatalogRecord
 
-from tcg_api.catalog.tables import card_external_ids, cards, sets
+from tcg_api.catalog.tables import card_database_versions, card_external_ids, cards, sets
+from tcg_api.catalog.versions import register_version
 from tcg_api.config import get_settings
 from tcg_api.database import create_engine
 from tcg_api.logging import configure_logging
 
 __all__ = [
     "NAMESPACE",
+    "SEED_CATALOG_GENERATED_AT",
+    "SEED_CATALOG_SOURCE",
+    "SEED_CATALOG_VERSION",
     "SeedCatalog",
     "apply_seed_catalog",
     "load_seed_catalog",
     "main",
     "seed_card_id",
+    "seed_catalog_version",
     "seed_set_id",
 ]
 
@@ -77,6 +83,25 @@ DEFAULT_SEEDS_DIR: Final = Path(__file__).resolve().parents[5] / "database" / "s
 
 _SETS_FILE: Final = "sets.json"
 _CARDS_FILE: Final = "cards.json"
+
+#: The catalog version these fixtures publish. Explicit and ordered, never a
+#: moving pointer (spec §31).
+#:
+#: **Bump it when the fixtures change materially.** A published version is
+#: immutable — the loader writes it with `ON CONFLICT DO NOTHING` and the table
+#: refuses an UPDATE outright — so adding or removing a fixture without bumping
+#: this leaves a version record describing content it no longer matches. The
+#: loader says so in a warning rather than guessing which of the two was meant.
+SEED_CATALOG_VERSION: Final = "pokemon-catalog-seed-v0.0.0"
+
+#: The fixtures' provider key, and the source their version names.
+SEED_CATALOG_SOURCE: Final = "manual"
+
+#: Fixed, and deliberately not `now()`. A seed that stamped the clock would make
+#: two fresh databases disagree about the same immutable version, and no test
+#: could assert what it holds. This is the day the fixtures were written; move it
+#: with `SEED_CATALOG_VERSION`, never on its own.
+SEED_CATALOG_GENERATED_AT: Final = datetime(2026, 8, 18, tzinfo=UTC)
 
 
 def seed_set_id(game: str, language: str, set_code: str) -> SetId:
@@ -309,6 +334,60 @@ def _external_id_rows(catalog: SeedCatalog) -> list[dict[str, Any]]:
     ]
 
 
+def seed_catalog_version(catalog: SeedCatalog) -> CardDatabaseVersion:
+    """The version record these fixtures publish, built without a database.
+
+    The counts come from the parsed fixtures rather than from `count(*)`: they
+    describe what *this* run wrote, where a query would also count rows some
+    other version wrote. #26 faces the same choice and should answer it the
+    same way.
+
+    `source_license` is None — the fixtures are this project's own text, and
+    writing a licence there would be a lie. `source_revision` likewise: nothing
+    was fetched, so there is no upstream revision to repeat.
+    """
+    return CardDatabaseVersion(
+        version=SEED_CATALOG_VERSION,
+        source=SEED_CATALOG_SOURCE,
+        generated_at=SEED_CATALOG_GENERATED_AT,
+        set_count=len(catalog.sets),
+        card_count=len(catalog.cards),
+        external_id_count=len(catalog.external_ids),
+    )
+
+
+async def _warn_if_the_published_version_no_longer_describes(
+    connection: AsyncConnection, catalog: SeedCatalog
+) -> None:
+    """Say so when the fixtures have moved on and the identifier has not.
+
+    `ON CONFLICT DO NOTHING` is what makes re-running safe; it is also what
+    makes it silent. The catalog rows converge on the fixtures while the version
+    record keeps describing the ones it was published with, and the operator is
+    the only one who can decide whether that is a correction or a new version.
+    """
+    published = (
+        await connection.execute(
+            sa.select(
+                card_database_versions.c.set_count,
+                card_database_versions.c.card_count,
+                card_database_versions.c.external_id_count,
+            ).where(card_database_versions.c.version == SEED_CATALOG_VERSION)
+        )
+    ).one()
+
+    loaded = (len(catalog.sets), len(catalog.cards), len(catalog.external_ids))
+    if tuple(published) != loaded:
+        logger.warning(
+            "%s was published describing %s (sets, cards, external ids) but the "
+            "fixtures now hold %s. A published version is never rewritten — bump "
+            "SEED_CATALOG_VERSION.",
+            SEED_CATALOG_VERSION,
+            tuple(published),
+            loaded,
+        )
+
+
 async def apply_seed_catalog(catalog: SeedCatalog, engine: AsyncEngine) -> None:
     """Write `catalog` to the database, in one transaction, idempotently.
 
@@ -316,8 +395,10 @@ async def apply_seed_catalog(catalog: SeedCatalog, engine: AsyncEngine) -> None:
     re-running should converge on the fixture, not leave the old value in place
     behind a silently skipped insert.
 
-    Ordering is sets, then cards, then external ids — the order the foreign keys
-    require. One transaction, so a failure halfway leaves nothing behind.
+    Ordering is sets, then cards, then external ids, then the version record —
+    the first three because the foreign keys require it, the version last
+    because it counts what the others wrote. One transaction, so a failure
+    halfway leaves nothing behind.
     """
     async with engine.begin() as connection:
         set_statement = insert(sets)
@@ -357,6 +438,9 @@ async def apply_seed_catalog(catalog: SeedCatalog, engine: AsyncEngine) -> None:
             _external_id_rows(catalog),
         )
 
+        await register_version(connection, seed_catalog_version(catalog))
+        await _warn_if_the_published_version_no_longer_describes(connection, catalog)
+
 
 async def seed(directory: Path | None = None) -> SeedCatalog:
     """Load the fixtures and apply them to the configured database."""
@@ -389,7 +473,8 @@ def main() -> int:
         return 1
 
     logger.info(
-        "catalog seeded: %d sets, %d cards, %d external ids",
+        "catalog seeded as %s: %d sets, %d cards, %d external ids",
+        SEED_CATALOG_VERSION,
         len(catalog.sets),
         len(catalog.cards),
         len(catalog.external_ids),

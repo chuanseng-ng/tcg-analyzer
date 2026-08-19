@@ -9,8 +9,9 @@ grade distribution is invalid (spec §63).
 ## What exists today
 
 Bootstrapped in M0 (#13): the application factory, configuration, structured
-logging and the health endpoint. M1 added the card catalog's PostgreSQL side.
-There are still no domain endpoints and no authentication.
+logging and the health endpoint. M1 added the card catalog's PostgreSQL side
+and the immutable version record spec §57's reproducibility field needs.
+There are still no analysis endpoints and no authentication.
 
 | Path | Responsibility |
 | --- | --- |
@@ -20,9 +21,11 @@ There are still no domain endpoints and no authentication.
 | `src/tcg_api/logging.py` | structlog configuration, uvicorn's loggers included |
 | `src/tcg_api/version.py` | `application_version()` — the sole source of the version |
 | `src/tcg_api/database.py` | the async engine, session factory and connectivity probe |
-| `src/tcg_api/catalog/tables.py` | spec §10's `sets`, `cards`, `card_external_ids` |
+| `src/tcg_api/catalog/tables.py` | spec §10's `sets`, `cards`, `card_external_ids`, and `card_database_versions` |
 | `src/tcg_api/catalog/seed.py` | `tcg-seed-catalog` — loads `database/seeds/catalog/` |
+| `src/tcg_api/catalog/versions.py` | reads and publishes the catalog version |
 | `src/tcg_api/routers/health.py` | `GET /health` |
+| `src/tcg_api/routers/catalog.py` | `GET /catalog/version` |
 
 ### The card catalog
 
@@ -37,6 +40,12 @@ It lives here rather than in `packages/domain` because the domain package
 imports nothing but the standard library, which is what lets every ML module
 import it.
 
+`card_database_versions` joins the three §10 tables on the same `MetaData`. It
+is provenance rather than catalog content — one immutable row per import run —
+and it is declared alongside them because `env.py` compares the whole `MetaData`
+against the database, so a table declared where autogenerate cannot see it is a
+table the next generated revision proposes dropping.
+
 ### `GET /health`
 
 ```json
@@ -50,6 +59,38 @@ belong to a separate readiness endpoint (#15).
 `application_version` is read from the installed `tcg-api` distribution
 metadata, which is the single source of truth spec §57 requires — every
 analysis records the version that produced it, so it must not be duplicated.
+
+### `GET /catalog/version`
+
+```json
+{
+  "version": "pokemon-catalog-seed-v0.0.0",
+  "source": "manual",
+  "source_license": null,
+  "source_revision": null,
+  "generated_at": "2026-08-18T00:00:00Z",
+  "record_counts": { "sets": 4, "cards": 22, "external_ids": 23 }
+}
+```
+
+Which card catalog this deployment is serving — spec §57's
+`card_database_version`, and the provenance ADR 0004 requires travel with every
+import. **Deliberately not part of `GET /health`**, which reads the database for
+nothing and must keep answering while PostgreSQL is down. Spec §64's endpoint
+list is conceptual and names no catalog endpoint; this is an addition to it
+rather than a deviation from it.
+
+Two things can go wrong, and both answer `503` with the spec §66 envelope under
+`provider_error`, distinguished by `details.reason`:
+
+| `reason` | Meaning |
+| --- | --- |
+| `catalog_unreachable` | The database is unreachable, or none is configured |
+| `no_catalog_version_registered` | The schema is migrated but nothing has been seeded or imported |
+
+Neither is a `404`. The taxonomy has eight codes and no `not_found`, and adding
+a ninth is a specification change — but a 404 would be wrong anyway: nothing is
+missing that a different request would find. The deployment has no catalog.
 
 ### Configuration
 

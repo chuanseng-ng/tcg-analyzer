@@ -77,12 +77,19 @@ class InvalidCardReference(DomainError, ValueError):
 
 
 class InvalidCatalogRecord(DomainError, ValueError):
-    """A `Set`, `Card` or `CardExternalId` field is empty or malformed.
+    """A `Set`, `Card`, `CardExternalId` or `CardDatabaseVersion` field is
+    empty or malformed.
 
     One error for the three spec §10 tables rather than three near-identical
     ones: they are a single family, always built together by the same importer
     and the same adapter, and a caller that needs to know which record failed
     reads the message rather than the class.
+
+    :class:`tcg_domain.catalog_version.CardDatabaseVersion` joins that family on
+    the same reasoning. It is not a §10 record — it is the provenance of the run
+    that wrote them — but it is built by that same importer, in the same
+    transaction, and a caller that would handle the two differently does not
+    exist.
     """
 
 

@@ -49,6 +49,18 @@ def test_openapi_reports_the_application_version() -> None:
     assert schema["info"]["version"] == version("tcg-api")
 
 
+def test_openapi_documents_the_catalog_version_path() -> None:
+    """Spec §64's endpoint list is conceptual; this is an addition to it (#27).
+
+    `apps/web` generates its types from this schema, so an endpoint that is
+    served but undocumented is a contract the frontend cannot compile against.
+    """
+    schema = create_app().openapi()
+
+    assert "/catalog/version" in schema["paths"]
+    assert "get" in schema["paths"]["/catalog/version"]
+
+
 # ---------------------------------------------------------------------------
 # The error taxonomy — spec §66
 # ---------------------------------------------------------------------------

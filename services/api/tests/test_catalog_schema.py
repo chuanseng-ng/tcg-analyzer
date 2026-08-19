@@ -21,6 +21,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,9 +30,15 @@ import sqlalchemy as sa
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy.engine import Connection
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import create_async_engine
-from tcg_api.catalog.tables import card_external_ids, cards, metadata, sets
+from tcg_api.catalog.tables import (
+    card_database_versions,
+    card_external_ids,
+    cards,
+    metadata,
+    sets,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -44,7 +51,7 @@ pytestmark = [
     ),
 ]
 
-CATALOG_TABLES = ("sets", "cards", "card_external_ids")
+CATALOG_TABLES = ("sets", "cards", "card_external_ids", "card_database_versions")
 HARNESS_TABLE = "migration_harness_check"
 
 
@@ -105,8 +112,15 @@ def migrated() -> None:
 def empty_tables():
     def truncate(connection: Connection) -> None:
         with connection.begin():
+            # TRUNCATE bypasses row-level triggers, which is the only reason
+            # `card_database_versions` can be emptied at all: its trigger
+            # refuses DELETE. RESTART IDENTITY also resets `ordinal`, so each
+            # test reasons about publication order from 1.
             connection.execute(
-                sa.text("TRUNCATE card_external_ids, cards, sets RESTART IDENTITY CASCADE")
+                sa.text(
+                    "TRUNCATE card_external_ids, cards, sets, card_database_versions "
+                    "RESTART IDENTITY CASCADE"
+                )
             )
 
     run_sync(truncate)
@@ -444,3 +458,120 @@ def test_the_card_number_prefix_index_can_serve_a_like_query() -> None:
     assert "ix_cards_game_language_card_number_key" in plan, plan
     # A range, not a post-filter: this is the property the collation buys.
     assert "card_number_key >=" in plan, plan
+
+
+# ---------------------------------------------------------------------------
+# Spec §57 — the version record is ordered and immutable (#27)
+# ---------------------------------------------------------------------------
+def version_values(version: str, **overrides: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "version": version,
+        "source": "manual",
+        "generated_at": datetime(2026, 8, 18, tzinfo=UTC),
+        "set_count": 4,
+        "card_count": 22,
+        "external_id_count": 23,
+    }
+    values.update(overrides)
+    return values
+
+
+def publish(version: str, **overrides: Any) -> None:
+    write([(sa.insert(card_database_versions), version_values(version, **overrides))])
+
+
+def test_publication_order_is_assigned_in_the_order_rows_arrive() -> None:
+    publish("pokemon-catalog-v0.2.0")
+    publish("pokemon-catalog-v0.10.0")
+
+    ordered = query(
+        sa.select(card_database_versions.c.version).order_by(card_database_versions.c.ordinal)
+    )
+
+    assert [row[0] for row in ordered] == ["pokemon-catalog-v0.2.0", "pokemon-catalog-v0.10.0"]
+
+
+def test_the_identifier_is_not_the_order() -> None:
+    """This is why `ordinal` exists, and the reason is easy to forget.
+
+    Under `COLLATE "C"` 'pokemon-catalog-v0.10.0' sorts *before* 'v0.2.0', so a
+    "current version" resolved by ordering on the identifier would answer with
+    the older catalog the moment a minor version reached double digits. The
+    wrong answer is asserted explicitly, because that is what makes this test
+    worth having.
+    """
+    publish("pokemon-catalog-v0.2.0")
+    publish("pokemon-catalog-v0.10.0")
+
+    by_ordinal = query(
+        sa.select(card_database_versions.c.version)
+        .order_by(card_database_versions.c.ordinal.desc())
+        .limit(1)
+    )
+    by_identifier = query(
+        sa.select(card_database_versions.c.version)
+        .order_by(card_database_versions.c.version.desc())
+        .limit(1)
+    )
+
+    assert by_ordinal[0][0] == "pokemon-catalog-v0.10.0"
+    assert by_identifier[0][0] == "pokemon-catalog-v0.2.0"
+
+
+def test_a_writer_cannot_place_itself_in_the_order() -> None:
+    """GENERATED ALWAYS: supplying an ordinal takes OVERRIDING SYSTEM VALUE."""
+    with pytest.raises(ProgrammingError, match="ordinal"):
+        publish("pokemon-catalog-v0.2.0", ordinal=99)
+
+
+def test_a_published_version_cannot_be_rewritten() -> None:
+    publish("pokemon-catalog-v0.2.0")
+
+    with pytest.raises(IntegrityError, match="immutable"):
+        write([(sa.text("UPDATE card_database_versions SET source = 'tcgdex'"), None)])
+
+
+def test_a_published_version_cannot_be_deleted() -> None:
+    publish("pokemon-catalog-v0.2.0")
+
+    with pytest.raises(IntegrityError, match="immutable"):
+        write([(sa.text("DELETE FROM card_database_versions"), None)])
+
+
+def test_the_same_identifier_cannot_be_published_twice() -> None:
+    """A second run publishes a new version; it never re-publishes an old one."""
+    publish("pokemon-catalog-v0.2.0")
+
+    with pytest.raises(IntegrityError, match="uq_card_database_versions_version"):
+        publish("pokemon-catalog-v0.2.0")
+
+
+def test_a_negative_record_count_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="counts_are_not_negative"):
+        publish("pokemon-catalog-v0.2.0", card_count=-1)
+
+
+def test_when_the_row_was_written_is_assigned_by_the_server() -> None:
+    publish("pokemon-catalog-v0.2.0")
+
+    written = query(sa.select(card_database_versions.c.created_at))
+
+    assert written[0][0] is not None
+
+
+def test_a_version_outlives_the_cards_it_counted() -> None:
+    """No foreign key into `cards`, demonstrated rather than asserted.
+
+    A historical analysis needs the version it recorded to still be there after
+    the catalog has been replaced under it — which is exactly what a foreign key
+    would have prevented.
+    """
+    insert_set(BASE_SET_ID)
+    insert_card()
+    publish("pokemon-catalog-v0.2.0")
+
+    write([(sa.text("DELETE FROM cards"), None)])
+
+    surviving = query(sa.select(card_database_versions.c.version))
+    assert [row[0] for row in surviving] == ["pokemon-catalog-v0.2.0"]

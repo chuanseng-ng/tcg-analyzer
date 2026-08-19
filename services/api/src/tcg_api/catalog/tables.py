@@ -1,9 +1,16 @@
-"""Spec §10's three catalog tables, as SQLAlchemy Core.
+"""The card catalog's schema, as SQLAlchemy Core.
+
+Four tables: spec §10's `sets`, `cards` and `card_external_ids`, and
+`card_database_versions`, which is spec §57's `card_database_version` field
+given somewhere to live.
 
 This module is the schema's source of truth. `database/migrations/env.py` points
 `target_metadata` here, so `alembic revision --autogenerate` compares a database
 against these definitions, and the migration that created the tables is checked
-against them by `services/api/tests/test_catalog_tables.py`.
+against them by `services/api/tests/test_catalog_tables.py`. That is also why the
+fourth table is declared here rather than in a module of its own: autogenerate
+sees exactly what this module declares, so a table living somewhere unreachable
+from it is a table the next generated revision proposes dropping.
 
 **Core, not ORM.** The domain entities already exist in `tcg_domain.catalog` and
 they are frozen dataclasses that validate on construction. Mapping them with the
@@ -35,6 +42,9 @@ collation would mean index ordering — and whether a `LIKE 'x%'` index is usabl
 at all — differed between the two. Declaring it per column makes the total order
 `CardRepository.search` promises mean the same thing everywhere. Japanese is
 unaffected: it has neither case nor locale-dependent folding.
+
+`card_database_versions` is append-only, and says so in the database rather than
+in a comment — see the trigger at the foot of this module.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ from sqlalchemy.dialects import postgresql
 
 __all__ = [
     "CARD_NUMBER_KEY_EXPRESSION",
+    "card_database_versions",
     "card_external_ids",
     "cards",
     "metadata",
@@ -316,4 +327,214 @@ card_external_ids = sa.Table(
         "card. This table is also the seam that keeps them replaceable — dropping "
         "a source costs a DELETE here and nothing else."
     ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Spec §57 — which catalog an analysis was computed against
+# ---------------------------------------------------------------------------
+card_database_versions = sa.Table(
+    "card_database_versions",
+    metadata,
+    sa.Column(
+        "id",
+        sa.Uuid(),
+        primary_key=True,
+        comment="A surrogate key. The record's identity is `version`.",
+    ),
+    sa.Column(
+        "ordinal",
+        sa.BigInteger(),
+        sa.Identity(always=True, start=1),
+        nullable=False,
+        comment=(
+            "Publication order, assigned by the database. GENERATED ALWAYS so no "
+            "writer can place a run out of sequence. The current version is the "
+            "highest ordinal — a query, never a mutable /latest/ pointer (spec §31)."
+        ),
+    ),
+    sa.Column(
+        "version",
+        _PRINTED,
+        nullable=False,
+        comment="An explicit, ordered identifier — 'pokemon-catalog-v0.3.0'. Never a pointer.",
+    ),
+    sa.Column(
+        "source",
+        sa.Text(),
+        nullable=False,
+        comment="A lowercase slug naming where the data came from — 'tcgdex' or 'manual'.",
+    ),
+    sa.Column(
+        "source_license",
+        _PRINTED,
+        nullable=True,
+        comment=(
+            "The licence the source data arrived under — 'MIT' for TCGdex, which "
+            "ADR 0004 requires travel with every import. NULL where the data is "
+            "this project's own and no upstream licence applies."
+        ),
+    ),
+    sa.Column(
+        "source_revision",
+        _PRINTED,
+        nullable=True,
+        comment=(
+            "The upstream revision imported — a git commit for TCGdex — so the "
+            "import can be repeated exactly. NULL where the source has no revision."
+        ),
+    ),
+    sa.Column(
+        "generated_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        comment=(
+            "When the source data was produced or retrieved. Distinct from "
+            "created_at: an import of last week's snapshot that runs today has "
+            "the two a week apart, and only this one describes the data."
+        ),
+    ),
+    sa.Column(
+        "set_count",
+        sa.Integer(),
+        nullable=False,
+        comment="How many sets the run wrote.",
+    ),
+    sa.Column(
+        "card_count",
+        sa.Integer(),
+        nullable=False,
+        comment="How many cards the run wrote.",
+    ),
+    sa.Column(
+        "external_id_count",
+        sa.Integer(),
+        nullable=False,
+        comment="How many provider identifiers the run wrote.",
+    ),
+    sa.Column(
+        "metadata",
+        postgresql.JSONB(),
+        nullable=False,
+        server_default=_NO_METADATA,
+        comment="Whatever the run recorded that has no column of its own.",
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        comment="When this row was written. See generated_at for when the data was made.",
+    ),
+    sa.UniqueConstraint("version", name="uq_card_database_versions_version"),
+    # An identity column hands out distinct values; it does not promise them —
+    # a sequence can be restarted. This constraint is the promise, and it is
+    # also the index `ORDER BY ordinal DESC LIMIT 1` uses to resolve the current
+    # version, so the ordering guarantee and the index serving it are one line.
+    sa.UniqueConstraint("ordinal", name="uq_card_database_versions_ordinal"),
+    # Named to the convention's `ck_%(table_name)s_%(constraint_name)s` shape,
+    # which supplies the prefix.
+    sa.CheckConstraint(
+        "set_count >= 0 AND card_count >= 0 AND external_id_count >= 0",
+        name="counts_are_not_negative",
+    ),
+    # No foreign key into `cards`. A version describes a run, not a set of rows,
+    # and stamping every card with the run that wrote it is the import
+    # pipeline's own question (#26) rather than this table's.
+    comment=(
+        "One import run, recorded once and never rewritten — spec §57's "
+        "card_database_version. Append-only, enforced by "
+        "trg_card_database_versions_immutable."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Immutability, as a database guarantee rather than a promise
+# ---------------------------------------------------------------------------
+# A published version is never rewritten: a historical analysis that recorded
+# one has to find the same record it recorded, or the reproducibility record
+# spec §57 requires is worth nothing. Convention cannot deliver that — the next
+# importer to reach for an UPDATE would break it silently — so the database
+# refuses.
+#
+# Three things about this are worth knowing before changing it:
+#
+# * `plpgsql` is not an extension this schema installs. It ships enabled in
+#   every stock PostgreSQL and in Supabase, and no CREATE EXTENSION is issued,
+#   so `database/migrations/README.md`'s "plain PostgreSQL only" still holds.
+# * TRUNCATE bypasses row-level triggers, deliberately. That is what lets the
+#   integration fixtures reset between tests; the trigger guards the mutation
+#   path application code can actually reach.
+# * Alembic's `compare_metadata` does not compare triggers, so nothing will warn
+#   if this and the migration drift apart. `test_catalog_schema.py` asserts an
+#   UPDATE and a DELETE are refused against a real database; that test is the
+#   only guard there is.
+# `RAISE USING MESSAGE = ...`, concatenated, rather than `RAISE EXCEPTION 'x %',
+# arg`: `sa.DDL` runs its statement through Python's `%` interpolation, so a
+# format specifier in the body fails at compile time rather than at runtime.
+# Do not "simplify" this back into the printf form.
+def _ddl(statement: str) -> sa.DDL:
+    """`sa.DDL` is unannotated in SQLAlchemy's own types, and mypy runs strict here.
+
+    One ignore in one place rather than four scattered through the statements
+    below, where they would read as though something about each was doubtful.
+    """
+    return sa.DDL(statement)  # type: ignore[no-untyped-call]
+
+
+_IMMUTABLE_FUNCTION: Final = _ddl(
+    """
+    CREATE OR REPLACE FUNCTION card_database_versions_are_immutable()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        RAISE USING
+            ERRCODE = 'restrict_violation',
+            MESSAGE = 'card_database_versions is immutable: '
+                      || TG_OP || ' on ' || OLD.version || ' was refused',
+            HINT    = 'Publish a new version rather than rewriting one.';
+    END;
+    $$;
+    """
+)
+
+_IMMUTABLE_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_card_database_versions_immutable
+    BEFORE UPDATE OR DELETE ON card_database_versions
+    FOR EACH ROW EXECUTE FUNCTION card_database_versions_are_immutable();
+    """
+)
+
+# Two statements, two DDL objects: the asyncpg driver prepares each statement it
+# is handed, and a prepared statement may not contain more than one.
+_DROP_IMMUTABLE_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_card_database_versions_immutable ON card_database_versions"
+)
+
+_DROP_IMMUTABLE_FUNCTION: Final = _ddl(
+    "DROP FUNCTION IF EXISTS card_database_versions_are_immutable()"
+)
+
+sa.event.listen(
+    card_database_versions,
+    "after_create",
+    _IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    card_database_versions,
+    "after_create",
+    _IMMUTABLE_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    card_database_versions,
+    "before_drop",
+    _DROP_IMMUTABLE_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    card_database_versions,
+    "before_drop",
+    _DROP_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
 )
