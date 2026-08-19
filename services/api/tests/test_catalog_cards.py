@@ -62,12 +62,18 @@ def run[T](scenario: Callable[[], Awaitable[T]]) -> T:
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded() -> None:
-    """Migrate and seed once for the module.
+    """Migrate, empty the catalog, and seed once for the module.
 
     `test_migrations.py` leaves the database at `base`, and pytest promises no
-    ordering between files, so neither step can be assumed. The loader is
-    idempotent, so running it again over an already-seeded database is a no-op
-    rather than a conflict.
+    ordering between files, so neither step can be assumed.
+
+    The catalog is emptied first because these tests assert on totals, ordering
+    and offsets — statements about *the* catalog that are only true when the
+    catalog is the fixtures. Seeding alone was enough while the fixtures were
+    the only thing that could be in there; `uv run tcg-import-catalog` means a
+    developer's database may now hold fifty thousand real cards, against which
+    "searching for Charizard finds three" is simply false. TRUNCATE, because
+    `card_database_versions` has a trigger that refuses DELETE.
     """
     if not DATABASE_URL:
         return
@@ -84,6 +90,13 @@ def seeded() -> None:
     async def load() -> None:
         engine = create_async_engine(DATABASE_URL or "")
         try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text(
+                        "TRUNCATE card_external_ids, cards, sets, card_database_versions "
+                        "RESTART IDENTITY CASCADE"
+                    )
+                )
             await apply_seed_catalog(load_seed_catalog(), engine)
         finally:
             await engine.dispose()

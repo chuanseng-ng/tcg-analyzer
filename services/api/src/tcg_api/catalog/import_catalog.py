@@ -123,18 +123,24 @@ async def take_snapshot(
             "languages": list(languages),
             "sets": list(sets) if sets else None,
             "skipped_cards": fetched.skipped,
+            # What was left out and why, so the record describes the catalog it
+            # actually wrote rather than the source in general.
+            "excluded_series": sorted(tcgdex.EXCLUDED_SERIES),
+            "excluded_sets": fetched.excluded,
             DIGEST_KEY: records_digest(directory),
         },
     )
     write_manifest(manifest, directory)
 
     logger.info(
-        "snapshot written to %s: %d sets, %d cards, %d external ids, %d skipped",
+        "snapshot written to %s: %d sets, %d cards, %d external ids, "
+        "%d cards skipped, %d sets excluded as non-physical",
         directory,
         set_count,
         card_count,
         external_id_count,
         fetched.skipped,
+        fetched.excluded,
     )
     return manifest
 

@@ -55,6 +55,7 @@ __all__ = [
     "CACHEABLE",
     "DEFAULT_API_BASE_URL",
     "DEFAULT_CONCURRENCY",
+    "EXCLUDED_SERIES",
     "GAME",
     "LICENSE",
     "PROVIDER",
@@ -88,6 +89,20 @@ DEFAULT_API_BASE_URL: Final = "https://api.tcgdex.net/v2"
 UPSTREAM_REPOSITORY: Final = "https://github.com/tcgdex/cards-database"
 
 _REVISION_URL: Final = "https://api.github.com/repos/tcgdex/cards-database/commits/master"
+
+#: Series whose "cards" are not physical objects.
+#:
+#: `tcgp` is Pokémon TCG Pocket, a mobile game. Its cards are digital: there is
+#: nothing to photograph, nothing to assess for centering or edge wear, and no
+#: grading company that will slab one. Importing them would put 2,600 records
+#: into a catalog whose entire purpose is the economics of grading a physical
+#: card, and `/cards/search` would offer them as candidates for analysis.
+#:
+#: It is also what forced the rule: TCG Pocket's `B2` (Fantastical Parade, 2026)
+#: has no published abbreviation, so it keys to its own id — which is already
+#: Base Set 2's printed code. Excluding the serie removes both problems, and the
+#: right one is removed for the right reason.
+EXCLUDED_SERIES: Final = frozenset({"tcgp"})
 
 #: Polite by default. The source publishes no rate limit, has no SLA, and is run
 #: for free; eight in flight finishes a full import in a reasonable time without
@@ -161,6 +176,10 @@ class Fetched:
     #: than raised: ADR 0004 warns that per-card completeness varies, and one
     #: gap must not cost the other twenty-three thousand.
     skipped: int
+    #: Sets left out because their serie is in :data:`EXCLUDED_SERIES`. Counted
+    #: so that the version record can say what it left out — provenance that
+    #: silently drops a tenth of the source describes something else.
+    excluded: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +520,7 @@ async def fetch(
     all_external_ids: list[CardExternalId] = []
     found: set[str] = set()
     skipped = 0
+    excluded = 0
 
     for language in languages:
         for tcgdex_id in await _set_ids(source, language, requested):
@@ -509,6 +529,14 @@ async def fetch(
                 logger.debug("no %s set %s", language, tcgdex_id)
                 continue
             found.add(tcgdex_id)
+
+            if (serie := (payload.get("serie") or {}).get("id")) in EXCLUDED_SERIES:
+                logger.info(
+                    "skipping %s/%s: serie %s is not physical cards", language, tcgdex_id, serie
+                )
+                excluded += 1
+                continue
+
             record = set_record(payload, language)
             all_sets.append(record)
 
@@ -541,13 +569,37 @@ async def fetch(
             "belongs to one language — `base1` is English, `SV2a` is Japanese."
         )
 
+    _reject_colliding_set_codes(all_sets)
     reject_duplicate_cards(all_cards)
     return Fetched(
         records=CatalogRecords(
             sets=tuple(all_sets), cards=tuple(all_cards), external_ids=tuple(all_external_ids)
         ),
         skipped=skipped,
+        excluded=excluded,
     )
+
+
+def _reject_colliding_set_codes(records: Sequence[Set]) -> None:
+    """Two sets keying to one `set_code` is a data question, not a constraint violation.
+
+    `uq_sets_game_language_set_code` would catch it, and so would the derived
+    primary key — the two would silently become one row. Neither says *which*
+    sets, and by then an hour of fetching has already happened. Fail here, and
+    name both, so whoever reads it can decide which rule is wrong.
+    """
+    claimed: dict[tuple[str, str, str], Set] = {}
+    for record in records:
+        key = (record.game, record.language, record.set_code)
+        if (rival := claimed.get(key)) is not None:
+            raise CatalogImportError(
+                f"two {record.language} sets both key to set_code {record.set_code!r}: "
+                f"{rival.metadata.get('tcgdex_id')} ({rival.name}) and "
+                f"{record.metadata.get('tcgdex_id')} ({record.name}). A set_code is unique "
+                "per game and language. If either is not a physical card set, add its "
+                "serie to EXCLUDED_SERIES."
+            )
+        claimed[key] = record
 
 
 async def _set_ids(

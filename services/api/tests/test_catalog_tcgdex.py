@@ -418,6 +418,47 @@ def test_a_set_found_in_no_language_is_named_rather_than_silently_skipped() -> N
         run(scenario)
 
 
+def test_a_digital_only_serie_is_not_imported() -> None:
+    """Pokémon TCG Pocket cards cannot be photographed, assessed or slabbed."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sets/B2"):
+            digital = payload("set-en-base1.json") | {
+                "id": "B2",
+                "name": "Fantastical Parade",
+                "abbreviation": None,
+                "serie": {"id": "tcgp", "name": "Pokémon TCG Pocket"},
+            }
+            return httpx.Response(200, json=digital)
+        return route(request)
+
+    async def scenario() -> tcgdex.Fetched:
+        async with stub(handler) as client:
+            return await tcgdex.fetch(client, ["en"], sets=["base1", "B2"], retries=FAST)
+
+    fetched = run(scenario)
+
+    assert [record.set_code for record in fetched.records.sets] == ["BS"]
+    assert fetched.excluded == 1
+
+
+def test_two_sets_claiming_one_set_code_name_each_other() -> None:
+    """`uq_sets_game_language_set_code` would catch it, but only after an hour of fetching."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/sets/base4"):
+            rival = payload("set-en-base1.json") | {"id": "base4", "name": "Base Set 2"}
+            return httpx.Response(200, json=rival)
+        return route(request)
+
+    async def scenario() -> None:
+        async with stub(handler) as client:
+            await tcgdex.fetch(client, ["en"], sets=["base1", "base4"], retries=FAST)
+
+    with pytest.raises(tcgdex.CatalogImportError, match="Base Set 2"):
+        run(scenario)
+
+
 def test_the_set_listing_is_not_cached() -> None:
     """Which cards a set holds is what changes upstream; caching it would pin the run to a stale list."""
     assert tcgdex.CACHEABLE == ("cards",)
