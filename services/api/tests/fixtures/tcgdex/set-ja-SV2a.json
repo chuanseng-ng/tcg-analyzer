@@ -1,0 +1,41 @@
+{
+  "cardCount": {
+    "firstEd": 0,
+    "holo": 82,
+    "normal": 128,
+    "official": 165,
+    "reverse": 306,
+    "total": 210
+  },
+  "cards": [
+    {
+      "id": "SV2a-001",
+      "image": "https://assets.tcgdex.net/ja/SV/SV2a/001",
+      "localId": "001",
+      "name": "フシギダネ"
+    },
+    {
+      "id": "SV2a-002",
+      "image": "https://assets.tcgdex.net/ja/SV/SV2a/002",
+      "localId": "002",
+      "name": "フシギソウ"
+    },
+    {
+      "id": "SV2a-003",
+      "image": "https://assets.tcgdex.net/ja/SV/SV2a/003",
+      "localId": "003",
+      "name": "フシギバナex"
+    }
+  ],
+  "id": "SV2a",
+  "legal": {
+    "expanded": false,
+    "standard": false
+  },
+  "name": "ポケモンカード151",
+  "releaseDate": "2023-06-16",
+  "serie": {
+    "id": "SV",
+    "name": "ポケモンカードゲーム スカーレット&バイオレット"
+  }
+}

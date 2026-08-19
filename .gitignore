@@ -247,6 +247,15 @@ QODER.md
 spec/
 
 # ---------------------------------------------------------------------------
+# Catalog import snapshots
+#   `uv run tcg-import-catalog` writes tens of megabytes of a third party's
+#   compilation here, plus its raw-response cache. `database/seeds/catalog/`
+#   stays the catalog this repository commits — see ADR 0004 and
+#   `database/seeds/README.md`.
+# ---------------------------------------------------------------------------
+.catalog-snapshots/
+
+# ---------------------------------------------------------------------------
 # Node / TypeScript
 # ---------------------------------------------------------------------------
 node_modules/

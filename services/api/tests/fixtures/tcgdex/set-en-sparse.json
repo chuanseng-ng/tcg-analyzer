@@ -1,0 +1,14 @@
+{
+  "id": "sparse1",
+  "name": "Sparse Set",
+  "cardCount": {
+    "total": 3
+  },
+  "cards": [
+    {
+      "id": "sparse1-1",
+      "localId": "1",
+      "name": "Sparse Card"
+    }
+  ]
+}

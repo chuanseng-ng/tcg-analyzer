@@ -1,0 +1,108 @@
+{
+  "category": "Pokemon",
+  "id": "base1-58",
+  "illustrator": "Mitsuhiro Arita",
+  "image": "https://assets.tcgdex.net/en/base/base1/58",
+  "localId": "58",
+  "name": "Pikachu",
+  "rarity": "Common",
+  "set": {
+    "cardCount": {
+      "official": 102,
+      "total": 102
+    },
+    "id": "base1",
+    "logo": "https://assets.tcgdex.net/en/base/base1/logo",
+    "name": "Base Set"
+  },
+  "variants": {
+    "firstEdition": true,
+    "holo": false,
+    "normal": true,
+    "reverse": false,
+    "wPromo": false
+  },
+  "variants_detailed": [
+    {
+      "type": "normal",
+      "subtype": "unlimited",
+      "size": "standard",
+      "variantId": "3a83wf50tz7q114spsx7dw6v5"
+    },
+    {
+      "type": "normal",
+      "subtype": "shadowless",
+      "size": "standard",
+      "stamp": [
+        "1st-edition"
+      ],
+      "variantId": "gx8bq2hefwadd3utcibq3oc56sjf4jqdz709e"
+    },
+    {
+      "type": "normal",
+      "subtype": "shadowless",
+      "size": "standard",
+      "variantId": "2tszcx1bpt4e79y5us0p570b9n"
+    },
+    {
+      "type": "normal",
+      "subtype": "shadowless-red-cheek",
+      "size": "standard",
+      "variantId": "mtltux8qussk4naabf2sjstrcyez6fa4nvy"
+    },
+    {
+      "type": "normal",
+      "subtype": "shadowless-red-cheek",
+      "size": "standard",
+      "stamp": [
+        "1st-edition"
+      ],
+      "variantId": "3skqdujv9jyo7ijcqeiufs8ut5ygkjq1y1bpa3mn9q4bbjp"
+    },
+    {
+      "type": "normal",
+      "subtype": "1999-2000-copyright",
+      "size": "standard",
+      "variantId": "qi4g3e7tzbkcyhfflvx7zmvunxwjcq3pvp"
+    }
+  ],
+  "dexId": [
+    25
+  ],
+  "hp": 40,
+  "types": [
+    "Lightning"
+  ],
+  "description": "When several of these Pokémon gather, their electricity can cause lightning storms.",
+  "stage": "Basic",
+  "attacks": [
+    {
+      "cost": [
+        "Colorless"
+      ],
+      "name": "Gnaw",
+      "damage": 10
+    },
+    {
+      "cost": [
+        "Lightning",
+        "Colorless"
+      ],
+      "name": "Thunder Jolt",
+      "effect": "Flip a coin. If tails, Pikachu does 10 damage to itself.",
+      "damage": 30
+    }
+  ],
+  "weaknesses": [
+    {
+      "type": "Fighting",
+      "value": "×2"
+    }
+  ],
+  "retreat": 1,
+  "legal": {
+    "standard": false,
+    "expanded": false
+  },
+  "updated": "2026-07-11T09:49:03+01:00"
+}

@@ -1,0 +1,70 @@
+{
+  "category": "Pokemon",
+  "id": "S12a-001",
+  "illustrator": "Mizue",
+  "image": "https://assets.tcgdex.net/ja/S/S12a/001",
+  "localId": "001",
+  "name": "パラス",
+  "rarity": "None",
+  "set": {
+    "cardCount": {
+      "official": 172,
+      "total": 258
+    },
+    "id": "S12a",
+    "name": "VSTARユニバース"
+  },
+  "variants": {
+    "firstEdition": false,
+    "holo": false,
+    "normal": true,
+    "reverse": true,
+    "wPromo": false
+  },
+  "variants_detailed": [
+    {
+      "type": "normal",
+      "size": "standard",
+      "variantId": "endfynwn4n10gzq"
+    },
+    {
+      "type": "reverse",
+      "size": "standard",
+      "variantId": "cm4kqul3x1bwlz1f"
+    }
+  ],
+  "dexId": [
+    46
+  ],
+  "hp": 70,
+  "types": [
+    "Grass"
+  ],
+  "description": "冬虫夏草と いう キノコが 虫を 操っているのだ。 虫の 意思は 無視される。",
+  "stage": "Basic",
+  "attacks": [
+    {
+      "cost": [
+        "Grass",
+        "Colorless"
+      ],
+      "name": "すいとる",
+      "effect": "このポケモンのHPを「10」回復する。",
+      "damage": 20
+    }
+  ],
+  "weaknesses": [
+    {
+      "type": "Fire",
+      "value": "x2"
+    }
+  ],
+  "resistances": [],
+  "retreat": 1,
+  "regulationMark": "F",
+  "legal": {
+    "standard": false,
+    "expanded": false
+  },
+  "updated": "2026-08-09T18:07:33.956Z"
+}

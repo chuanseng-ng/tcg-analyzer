@@ -276,16 +276,49 @@ uv run tcg-seed-catalog
 ```
 
 Roughly twenty English and Japanese cards under a `manual` provider, enough to
-search, identify and price against, and what `GET /cards/search` and
-`GET /cards/{id}` read until the import pipeline replaces them. It is idempotent, so re-run it after editing a
-fixture; see `database/seeds/README.md`.
+search, identify and price against. It is idempotent, so re-run it after editing
+a fixture; see `database/seeds/README.md`. These fixtures are the catalog a
+developer gets without a network, and
+[ADR 0004](docs/adr/0004-the-canonical-card-catalog-source.md) keeps them as the
+floor if the TCGdex position ever has to be withdrawn.
 
-The catalog is versioned. Every run that writes it — the loader above, and the
-import pipeline that will replace it — publishes an immutable
-`card_database_version` recording the identifier, the source, the licence relied
-upon, the upstream revision and the record counts. That is one of the seven
-fields spec §57 requires an analysis to keep so it can be re-derived rather than
-re-guessed, and `GET /catalog/version` is how a client reads it.
+For a real catalog, import one from TCGdex:
+
+```bash
+uv run tcg-import-catalog --version pokemon-catalog-tcgdex-v0.1.0 --language en --language ja
+```
+
+Two phases in one command. It fetches the source into a *snapshot* — three
+JSON files under `.catalog-snapshots/tcgdex`, gitignored — and then loads that
+snapshot into the database in a single transaction. The split is not
+decoration: rarity and printing variants come only from TCGdex's per-card
+endpoint, so a full English-and-Japanese import is roughly 36,000 requests. A
+snapshot is a reviewable artifact, it carries a `sha256` digest that a later
+load verifies, and it can be replayed exactly.
+
+```bash
+uv run tcg-import-catalog --version pokemon-catalog-tcgdex-v0.1.0 --language en --set base1
+uv run tcg-import-catalog --from-snapshot .catalog-snapshots/tcgdex
+```
+
+The first narrows the run to one set, which is how to check a change in seconds
+rather than an hour. The second loads an existing snapshot and uses no network
+at all. `--cache-dir` keeps raw card payloads so an interrupted full run resumes
+instead of starting over, and `--fetch-only` writes the snapshot without
+touching a database. A TCGdex set id belongs to one language — `base1` is
+English, `SV2a` is Japanese — so `--set` imports from whichever `--language` has
+it, and a set found in none of them is an error rather than a silent no-op.
+
+`--version` is required and is never reused. Two imports are two versions: the
+rows they write converge, the records of the runs accumulate.
+
+The catalog is versioned. Every run that writes it — the seed loader and the
+import above — publishes an immutable `card_database_version` recording the
+identifier, the source, the licence relied upon, the upstream revision and the
+record counts. That is one of the seven fields spec §57 requires an analysis to
+keep so it can be re-derived rather than re-guessed, and `GET /catalog/version`
+is how a client reads it. No card images are imported: TCGdex's MIT licence
+covers its compilation, not The Pokémon Company's artwork.
 
 Published versions are never rewritten: a database trigger refuses `UPDATE` and
 `DELETE` outright, and a re-import publishes a new version rather than editing an
@@ -298,6 +331,15 @@ Tests that need a live database are marked `integration` and skip when
 ```bash
 uv run pytest -m integration   # requires PostgreSQL to be running
 uv run pytest -m "not integration"
+```
+
+The catalog import is tested against recorded payloads, so it needs no network
+either. One test does reach `api.tcgdex.net`, to notice when the source changes
+shape; it is marked `network`, deselected in CI, and run by hand after changing
+`services/api/src/tcg_api/catalog/tcgdex.py`:
+
+```bash
+uv run pytest -m network
 ```
 
 #### Object storage

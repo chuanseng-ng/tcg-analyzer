@@ -1,0 +1,61 @@
+"""The request path must not reach the catalog source.
+
+ADR 0004: "no import-time dependency anywhere the request path can reach". The
+import pipeline is an adapter run from a console script; the FastAPI app serves
+what that adapter already wrote. Nothing about serving a card should require an
+HTTP client, and an accidental re-export in `tcg_api.catalog.__init__` is all it
+would take to acquire one — at which point the boundary is decorative.
+
+The same shape as `packages/shared/tests/test_storage_purity.py`, and for the
+same reason: the only honest place to check what an import drags in is a real
+import in a fresh interpreter.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import textwrap
+
+PROBE = textwrap.dedent(
+    """
+    import json
+    import sys
+
+    import {module}  # noqa: F401
+    print(json.dumps(sorted(name for name in sys.modules if name.startswith("{prefix}"))))
+    """
+)
+
+
+def _modules_matching(prefix: str, *, after_importing: str) -> list[str]:
+    result = subprocess.run(
+        [sys.executable, "-c", PROBE.format(module=after_importing, prefix=prefix)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # `tcg_api.main` configures logging and announces startup on import, so the
+    # probe's answer is the last line rather than the whole of stdout.
+    found: list[str] = json.loads(result.stdout.strip().splitlines()[-1])
+    return found
+
+
+def test_serving_the_api_pulls_in_neither_the_source_adapter_nor_an_http_client() -> None:
+    pulled = _modules_matching("httpx", after_importing="tcg_api.main")
+    adapter = _modules_matching("tcg_api.catalog.tcgdex", after_importing="tcg_api.main")
+
+    assert pulled == [], (
+        f"importing tcg_api.main pulled in {pulled}. The request path serves what "
+        "the import pipeline already wrote; it must never acquire a client for "
+        "the catalog source (ADR 0004)."
+    )
+    assert adapter == []
+
+
+def test_the_tcgdex_adapter_is_the_module_that_binds_to_the_http_client() -> None:
+    """Guard the guard: without this, deleting the adapter would 'fix' the test above."""
+    pulled = _modules_matching("httpx", after_importing="tcg_api.catalog.tcgdex")
+
+    assert "httpx" in pulled

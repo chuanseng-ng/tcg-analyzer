@@ -7,6 +7,11 @@ dependencies = [
     "alembic>=1.13",
     "asyncpg>=0.29",
     "fastapi>=0.115",
+    # The TCGdex catalog import (ADR 0004) is the only outbound HTTP this
+    # service makes, and `tcg_api.catalog.tcgdex` is the only module that
+    # imports this. Declared here rather than left to the dev group: the
+    # console script below has to work from `uv sync --package tcg-api`.
+    "httpx>=0.27",
     # Imported directly by database.py and routers/readiness.py, so it is
     # declared directly. Arriving transitively via fastapi/pydantic-settings
     # would let either package's pin silently break those modules.
@@ -37,6 +42,9 @@ tcg-api-schema = "tcg_api.schema:main"
 # Loads `database/seeds/catalog/` into the configured database. Idempotent, so
 # it is safe to re-run after editing a fixture. See `database/seeds/README.md`.
 tcg-seed-catalog = "tcg_api.catalog.seed:main"
+# Fetches the canonical catalog from TCGdex into a snapshot and loads it,
+# publishing an immutable card_database_version per run. See ADR 0004.
+tcg-import-catalog = "tcg_api.catalog.import_catalog:main"
 
 [build-system]
 requires = ["hatchling"]

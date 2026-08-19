@@ -17,12 +17,29 @@ uv run tcg-seed-catalog
 English and Japanese Pokémon cards under the provider key `manual`. The loader
 is `services/api/src/tcg_api/catalog/seed.py`.
 
-They exist so the rest of M1 — the repository adapter, the search endpoint, the
-identification UI — has something real to run against while the import pipeline
-is still ahead of us. **They are not an authoritative card database.** The
-canonical source is TCGdex, per
-`docs/adr/0004-the-canonical-card-catalog-source.md`; these rows are written by
-hand and are wrong in whatever ways hand-written data is wrong.
+They are the catalog a developer gets without a network, and ADR 0004 keeps
+them as the floor if the TCGdex position ever has to be withdrawn. **They are
+not an authoritative card database.** The canonical source is TCGdex, per
+`docs/adr/0004-the-canonical-card-catalog-source.md`, and
+`uv run tcg-import-catalog` is what reads it; these rows are written by hand and
+are wrong in whatever ways hand-written data is wrong.
+
+### These fixtures and an import are alternatives, not layers
+
+A directory holding `sets.json` and `cards.json` is a *snapshot*, and the
+importer writes one in this same shape plus a `catalog.json` manifest carrying
+its provenance. `services/api/src/tcg_api/catalog/snapshot.py` is the format,
+the derived identifiers and the only path that writes a catalog; `seed.py` and
+`import_catalog.py` are both callers of it.
+
+Because identifiers are derived from `(game, language, set_code, card_number,
+variant)`, the two sources merge wherever they agree — TCGdex's Base Set
+Charizard `4/102` `unlimited-holo` lands on the same row as the `manual`
+fixture, carrying both providers' identifiers. Where they disagree they do not:
+TCGdex names the plain Base Set Pikachu printing `unlimited-normal` where these
+fixtures call it `unlimited`, so loading both leaves two rows for one card.
+That is cosmetic rather than incorrect, but a database is normally seeded *or*
+imported into, not both.
 
 ### What the fixtures deliberately contain
 
@@ -55,8 +72,8 @@ A set's id is `uuid5` over `game/language/set_code`; a card's over
   "4/102", "1st-edition-holo")` is a fact about these files, computable without
   a database.
 
-Changing the namespace UUID in `seed.py` re-keys everything and orphans every
-row a previous run wrote. Don't.
+Changing the namespace UUID in `snapshot.py` re-keys everything and orphans
+every row a previous run wrote. Don't.
 
 ### The catalog version
 
