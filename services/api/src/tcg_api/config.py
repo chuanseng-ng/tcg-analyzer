@@ -131,6 +131,34 @@ class Settings(BaseSettings):
     """Where PostgreSQL lives. ``None`` means unconfigured, not invalid."""
 
     # ----------------------------------------------------------------
+    # Anonymous sessions — spec §53, §54.
+    #
+    # V1 has no accounts, so a session is the whole of a user's continuity and
+    # it is the only thing separating one anonymous user's photographs from
+    # another's. Both settings below are policy rather than plumbing, which is
+    # why they are configuration a reviewer can see rather than constants.
+    # ----------------------------------------------------------------
+
+    session_ttl_seconds: int = Field(default=604_800, gt=0)
+    """How long an anonymous session, and everything hanging off it, is kept.
+
+    Seven days. Spec §54 makes expiry the default and retention the exception,
+    and `analysis_sessions.expires_at` is deliberately `NOT NULL` with no server
+    default so the period lands somewhere it can be reviewed. Long enough that a
+    user who photographs a card and comes back tomorrow still has their
+    analysis; short enough to be a defensible answer to "why are you still
+    holding a picture of my living room".
+    """
+
+    session_cookie_secure: bool = False
+    """Whether the session cookie is marked `Secure`.
+
+    ``False`` by default because local development is plain http and a `Secure`
+    cookie would simply never be sent. Set it wherever https terminates: the
+    cookie is a bearer token, and without this a downgrade to http leaks it.
+    """
+
+    # ----------------------------------------------------------------
     # Object storage — the S3-compatible adapter in tcg_shared.storage.s3.
     #
     # These name S3 concepts because an adapter's configuration legitimately

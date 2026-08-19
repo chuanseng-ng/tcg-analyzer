@@ -85,6 +85,19 @@ def test_openapi_documents_the_card_search_path() -> None:
     assert "get" in schema["paths"]["/cards/search"]
 
 
+def test_openapi_documents_the_analysis_paths() -> None:
+    """Spec §64 names `POST /analyses` and `GET /analyses/{id}`; #32 serves them.
+
+    The session cookie is deliberately *not* in the schema as a parameter: it is
+    set and read by the browser, and declaring it would invite a generated
+    client to try to send one itself.
+    """
+    schema = create_app().openapi()
+
+    assert "post" in schema["paths"]["/analyses"]
+    assert "get" in schema["paths"]["/analyses/{analysis_id}"]
+
+
 # ---------------------------------------------------------------------------
 # The error taxonomy — spec §66
 # ---------------------------------------------------------------------------

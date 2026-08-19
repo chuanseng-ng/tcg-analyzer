@@ -210,7 +210,16 @@ carries no prices and no card images.
 and works for Japanese; `card_number` matches as a prefix, so `25`, `025` and
 `025/165` all find the card printed `025/165`. Results are ordered by
 `(set_code, card_number, variant, id)` — a total order, so paging neither drops
-nor duplicates a row. Nothing matching is an empty page, never a 404. The OpenAPI schema is at `/openapi.json`
+nor duplicates a row. Nothing matching is an empty page, never a 404.
+
+`POST /analyses` starts an analysis. There is no login and no registration:
+V1 identifies a user by an anonymous session token only (spec §53), returned in
+an HTTP-only cookie that every later call must carry. `GET /analyses/{id}`
+reports the state of one, but only to the session that started it — an unknown
+identifier, another session's analysis, a missing cookie and an expired one all
+answer 404 with the same body, so the endpoint cannot be used to discover which
+analyses exist. Sessions expire after `TCG_API_SESSION_TTL_SECONDS`; nothing
+about the caller is recorded. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](#configuration).
 
