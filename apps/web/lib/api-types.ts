@@ -6,6 +6,26 @@
  */
 
 export interface paths {
+    "/cards/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find cards in the catalog
+         * @description Searches the canonical catalog so a user can find the card in their hand. Every filter is optional and they are ANDed; an empty query browses the catalog. `text` matches a fragment of the printed name without regard to case, and works for Japanese. `card_number` matches as a prefix of the printed number's numerator, so `25`, `025` and `025/165` all find the card printed `025/165`. Results are ordered by `(set_code, card_number, variant, id)` — a total order, so paging neither drops nor duplicates a row. Nothing matching is an empty page, never a 404. No prices, and no images (ADR 0004).
+         */
+        get: operations["search_cards_cards_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cards/{card_id}": {
         parameters: {
             query?: never;
@@ -199,6 +219,42 @@ export interface components {
             variant: string | null;
         };
         /**
+         * CardSearchResponse
+         * @description The body of a successful `GET /cards/search`.
+         *
+         *     `apps/web` generates its types from this model (ADR 0001), so the field
+         *     names are a public contract.
+         *
+         *     `total` counts every match rather than the page, so a UI can say "1-20 of
+         *     137" and know when to stop. It is read in the same statement as the rows, so
+         *     the two always describe one catalog.
+         */
+        CardSearchResponse: {
+            /**
+             * Cards
+             * @description The matches in this window, in the catalog's total order.
+             */
+            cards: components["schemas"]["CardSummaryResponse"][];
+            /**
+             * Limit
+             * @description The window size that produced `cards`.
+             * @example 20
+             */
+            limit: number;
+            /**
+             * Offset
+             * @description How many matches this window skipped.
+             * @example 0
+             */
+            offset: number;
+            /**
+             * Total
+             * @description How many cards matched in full, across every page.
+             * @example 137
+             */
+            total: number;
+        };
+        /**
          * CardSetResponse
          * @description The set a card was printed in, nested rather than linked.
          *
@@ -241,6 +297,65 @@ export interface components {
              * @example BS
              */
             set_code: string;
+        };
+        /**
+         * CardSummaryResponse
+         * @description One search result — enough to tell it apart from its neighbours.
+         *
+         *     Deliberately smaller than `CardResponse`. `variant` is the reason this is
+         *     not merely a name and a number: holo, reverse holo and 1st edition are
+         *     different cards economically, and a user who picks the wrong one is given
+         *     the wrong valuation later. `external_ids` is absent because it would be a
+         *     query per result for something nobody chooses between cards on, and
+         *     `metadata` because it generates as an untyped record and belongs to the
+         *     detail view. No thumbnail: ADR 0004 imports no card images.
+         *
+         *     `GET /cards/{id}` is where the rest lives; `id` is how a caller gets there.
+         */
+        CardSummaryResponse: {
+            /**
+             * Card Number
+             * @description The number printed on the card, verbatim.
+             * @example 4/102
+             */
+            card_number: string;
+            /**
+             * Game
+             * @description A lowercase slug. 'pokemon' in V1, and a field rather than a constant.
+             * @example pokemon
+             */
+            game: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description This catalog's identifier for the card. Never a provider's.
+             */
+            id: string;
+            /**
+             * Language
+             * @description An ISO 639-1 code, read through the set.
+             * @example en
+             */
+            language: string;
+            /**
+             * Name
+             * @description The card's printed name, in its own language.
+             * @example Charizard
+             */
+            name: string;
+            /**
+             * Rarity
+             * @description The printed rarity, where the source records one.
+             * @example Rare Holo
+             */
+            rarity: string | null;
+            set: components["schemas"]["CardSetResponse"];
+            /**
+             * Variant
+             * @description The printing variant. Shown in results because it is economically load-bearing: holo, reverse holo and 1st edition trade at very different prices, so choosing between them is the point of a search.
+             * @example unlimited-holo
+             */
+            variant: string | null;
         };
         /**
          * CatalogVersionResponse
@@ -425,6 +540,70 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    search_cards_cards_search_get: {
+        parameters: {
+            query?: {
+                /** @description A fragment of the card's printed name. Case-insensitive. */
+                text?: string | null;
+                /** @description A lowercase slug — 'pokemon' in V1. */
+                game?: string | null;
+                /** @description An ISO 639-1 code — 'en' or 'ja' in V1. */
+                language?: string | null;
+                /** @description The publisher's set identifier, as printed. */
+                set_code?: string | null;
+                /** @description What is printed on the card. Matched as a prefix. */
+                card_number?: string | null;
+                /** @description A printing variant, e.g. 'reverse-holo'. */
+                variant?: string | null;
+                /** @description Window size. */
+                limit?: number;
+                /** @description How many matches to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The card catalog could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     read_card_cards__card_id__get: {
         parameters: {
             query?: never;
