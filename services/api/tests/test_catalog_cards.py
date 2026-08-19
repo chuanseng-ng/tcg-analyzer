@@ -1,8 +1,10 @@
-"""The PostgreSQL side of `CardRepository` — issue #29.
+"""The PostgreSQL side of `CardRepository` — issues #29 and #28.
 
 `test_card_endpoint.py` proves the HTTP surface against a fake; this is the
 piece under it: rows become validated domain entities, absence is an answer
-rather than a failure, and no driver exception escapes the port.
+rather than a failure, and no driver exception escapes the port. The search
+tests are here rather than there for the same reason — the collation, the
+generated key and the total order are things only a real PostgreSQL can prove.
 
 The fixtures are loaded through the real seed loader rather than hand-written
 rows, so this suite tests the catalog the product actually ships with, and card
@@ -32,8 +34,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tcg_api.catalog.cards import PostgresCardRepository
 from tcg_api.catalog.seed import apply_seed_catalog, load_seed_catalog, seed_card_id, seed_set_id
 from tcg_domain.catalog import CardId
-from tcg_domain.errors import CatalogUnavailable, InvalidCatalogRecord
-from tcg_domain.repository import CardQuery
+from tcg_domain.errors import CatalogUnavailable, InvalidCardSearch, InvalidCatalogRecord
+from tcg_domain.repository import MAX_SEARCH_LIMIT, CardQuery
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -283,6 +285,8 @@ def test_a_driver_failure_becomes_the_ports_own_error() -> None:
                     await repository.get(UNKNOWN)
                 with pytest.raises(CatalogUnavailable):
                     await repository.external_ids(UNKNOWN)
+                with pytest.raises(CatalogUnavailable):
+                    await repository.search(CardQuery())
         finally:
             await engine.dispose()
 
@@ -290,23 +294,212 @@ def test_a_driver_failure_becomes_the_ports_own_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# What this adapter deliberately does not do yet
+# Search — the filters
 # ---------------------------------------------------------------------------
-def test_search_is_issue_28_and_says_so() -> None:
-    """Raising, not returning an empty page.
+def searching(query: CardQuery, **window: int) -> Any:
+    return reading(lambda repository: repository.search(query, **window))
 
-    An empty page is a valid answer meaning "nothing matched"; answering it here
-    would make a missing implementation indistinguishable from a real miss.
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_name_fragment_finds_every_printing_of_that_card() -> None:
+    page = searching(CardQuery(text="Charizard", language="en"))
+
+    assert page.total == 6
+    assert {card.name for card in page.cards} == {"Charizard", "Charizard ex"}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_name_search_ignores_case() -> None:
+    """A search box is typed into in lower case. "charizard" must mean Charizard.
+
+    Not a detail: matching bytes would answer nothing at all for the way people
+    actually type, and an empty result is indistinguishable from a card this
+    catalog does not hold.
     """
+    lowered = searching(CardQuery(text="charizard", language="en"))
+    printed = searching(CardQuery(text="Charizard", language="en"))
 
-    async def scenario() -> None:
-        engine = create_async_engine("postgresql+asyncpg://tcg:tcg@127.0.0.1:1/tcg")
-        try:
-            factory = async_sessionmaker(engine, expire_on_commit=False)
-            async with factory() as session:
-                with pytest.raises(NotImplementedError, match="#28"):
-                    await PostgresCardRepository(session).search(CardQuery())
-        finally:
-            await engine.dispose()
+    assert lowered.total == printed.total == 6
+    assert [card.id for card in lowered.cards] == [card.id for card in printed.cards]
 
-    run(scenario)
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_japanese_fragment_matches_japanese_cards() -> None:
+    """V1 ships Japanese, which has no case and no ASCII fold to fall back on.
+
+    The fragment is a prefix of two different names across two different sets,
+    so this also proves the match is a substring rather than an equality.
+    """
+    page = searching(CardQuery(text="リザード"))
+
+    assert page.total == 4
+    assert {card.set.set_code for card in page.cards} == {"SV2a", "SV3"}
+    assert all(card.language == "ja" for card in page.cards)
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_partial_card_number_finds_the_printed_one() -> None:
+    """The promise #23 built `card_number_key` for.
+
+    A user reads "025/165" off the card and types "25". No prefix of "025/165"
+    is "25", so the match runs against the normalised form — and the input is
+    normalised the same way, which is what makes all three spellings agree.
+    """
+    typed = searching(CardQuery(card_number="25", game="pokemon", language="en"))
+    padded = searching(CardQuery(card_number="025", game="pokemon", language="en"))
+    printed = searching(CardQuery(card_number="025/165", game="pokemon", language="en"))
+
+    assert typed.total == padded.total == printed.total == 2
+    assert {card.card_number for card in typed.cards} == {"025/165"}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_card_number_matches_as_a_prefix_and_not_as_an_equality() -> None:
+    """Pinned so nobody later "fixes" the prefix into an exact match.
+
+    `4/102` keys as `4`, which matches every numerator beginning with 4 — here
+    only the Charizards, in a fuller catalog also 40 through 49. That is what
+    the port promises, and it is the cost of finding "025/165" from "25".
+    """
+    page = searching(CardQuery(card_number="4/102", set_code="BS"))
+
+    assert page.total == 3
+    assert {card.card_number for card in page.cards} == {"4/102"}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_card_number_of_only_zeros_matches_nothing() -> None:
+    """It normalises to the empty string, whose prefix is the whole catalog.
+
+    Matching everything is the opposite of the answer, and `tables.py` already
+    says such a card does not exist. Not an error either: the domain accepted
+    "0" as a well-formed filter.
+    """
+    assert searching(CardQuery(card_number="0")).total == 0
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_card_number_wildcard_is_not_a_wildcard() -> None:
+    """`%` survives normalisation intact, and unescaped it would match the lot."""
+    assert searching(CardQuery(card_number="%")).total == 0
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_variant_filter_separates_printings_that_price_differently() -> None:
+    """Holo, reverse holo and 1st edition are different cards economically."""
+    page = searching(CardQuery(variant="reverse-holo"))
+
+    assert page.total == 2
+    assert all(card.variant == "reverse-holo" for card in page.cards)
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_filters_are_anded() -> None:
+    """Each filter narrows; none of them widens."""
+    one_set = searching(CardQuery(set_code="BS"))
+    narrowed = searching(CardQuery(set_code="BS", text="Charizard"))
+
+    assert one_set.total == 8
+    assert narrowed.total == 3
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_empty_query_browses_the_catalog() -> None:
+    assert searching(CardQuery()).total == 22
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_query_matching_nothing_is_an_empty_page_and_not_a_failure() -> None:
+    page = searching(CardQuery(text="Nidoking"))
+
+    assert page.cards == ()
+    assert page.total == 0
+
+
+# ---------------------------------------------------------------------------
+# Search — the window
+# ---------------------------------------------------------------------------
+@pytest.mark.integration
+@requires_postgres
+def test_results_arrive_in_the_orders_the_port_promises() -> None:
+    """`(set_code, card_number, variant, id)`, and `card_number` is COLLATE "C".
+
+    So "15/102" sorts before "2/102". That is lexicographic rather than numeric
+    and it is the documented contract, pinned here because it looks like a bug
+    to anyone meeting it for the first time. What it buys is a total order that
+    means the same thing on every machine, which is what paging needs.
+    """
+    page = searching(CardQuery(set_code="BS"))
+
+    assert [card.card_number for card in page.cards] == [
+        "15/102",
+        "16/102",
+        "2/102",
+        "4/102",
+        "4/102",
+        "4/102",
+        "58/102",
+        "88/102",
+    ]
+    charizards = [card.variant for card in page.cards if card.card_number == "4/102"]
+    assert charizards == ["1st-edition-holo", "shadowless-holo", "unlimited-holo"]
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_paging_neither_drops_nor_duplicates_a_row() -> None:
+    """The whole point of a total order. Walked in windows of three."""
+    seen: list[Any] = []
+    for offset in range(0, 24, 3):
+        seen.extend(card.id for card in searching(CardQuery(), limit=3, offset=offset).cards)
+
+    assert len(seen) == 22
+    assert len(set(seen)) == 22
+    assert seen == [card.id for card in searching(CardQuery(), limit=100, offset=0).cards]
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_page_counts_every_match_and_not_just_its_own_rows() -> None:
+    """`total` is what lets a UI say "1-3 of 22" and know when to stop."""
+    page = searching(CardQuery(), limit=3, offset=0)
+
+    assert len(page.cards) == 3
+    assert page.total == 22
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_offset_past_the_end_is_an_empty_page_with_a_truthful_total() -> None:
+    """A client paging through a result set that shrank reaches here legitimately."""
+    page = searching(CardQuery(), offset=1000)
+
+    assert page.cards == ()
+    assert page.total == 22
+    assert page.offset == 1000
+
+
+@pytest.mark.integration
+@requires_postgres
+@pytest.mark.parametrize(("limit", "offset"), [(0, 0), (MAX_SEARCH_LIMIT + 1, 0), (20, -1)])
+def test_the_port_refuses_a_window_it_could_not_answer(limit: int, offset: int) -> None:
+    """Checked before a statement is built, and that ordering matters.
+
+    PostgreSQL reads `LIMIT -1` as "no limit", so an unchecked negative window
+    would quietly fetch the whole catalog; a negative `OFFSET` raises a driver
+    error, which the adapter would report as an unreachable catalog. Neither is
+    a failure this port should be able to produce.
+    """
+    with pytest.raises(InvalidCardSearch):
+        searching(CardQuery(), limit=limit, offset=offset)

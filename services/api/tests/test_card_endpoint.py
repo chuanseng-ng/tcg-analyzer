@@ -26,6 +26,7 @@ from tcg_api.routers.cards import card_repository
 from tcg_api.storage import get_object_storage
 from tcg_domain.catalog import Card, CardExternalId, CardId, Set, SetId
 from tcg_domain.errors import CatalogUnavailable
+from tcg_domain.repository import DEFAULT_SEARCH_LIMIT, CardPage, CardQuery
 
 CACHES = (get_settings, get_engine, get_session_factory, get_object_storage)
 
@@ -60,7 +61,7 @@ UNKNOWN = UUID("33333333-3333-5333-8333-333333333333")
 
 
 class StubRepository:
-    """Answers with whatever the test put in it. `search` is #28's, so it is absent."""
+    """Answers with whatever the test put in it."""
 
     def __init__(
         self,
@@ -76,6 +77,24 @@ class StubRepository:
     async def external_ids(self, card_id: CardId) -> Sequence[CardExternalId]:
         return [external for external in self._external_ids if external.card_id == card_id]
 
+    async def search(
+        self,
+        query: CardQuery,
+        *,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        offset: int = 0,
+    ) -> CardPage:
+        matches = [self._card] if self._card is not None and _matches(query, self._card) else []
+        window = matches[offset : offset + limit]
+        return CardPage(cards=tuple(window), total=len(matches), limit=limit, offset=offset)
+
+
+def _matches(query: CardQuery, card: Card) -> bool:
+    """Only as clever as these tests need. The real matching is proved against
+    PostgreSQL in `test_catalog_cards.py`; here it exists so the endpoint has
+    something to shape into a response."""
+    return query.text is None or query.text.lower() in card.name.lower()
+
 
 class UnreachableRepository:
     """The adapter's promise when the driver fails: `CatalogUnavailable`, never asyncpg."""
@@ -84,6 +103,15 @@ class UnreachableRepository:
         raise CatalogUnavailable("The card catalog could not be reached.")
 
     async def external_ids(self, card_id: CardId) -> Sequence[CardExternalId]:
+        raise CatalogUnavailable("The card catalog could not be reached.")
+
+    async def search(
+        self,
+        query: CardQuery,
+        *,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        offset: int = 0,
+    ) -> CardPage:
         raise CatalogUnavailable("The card catalog could not be reached.")
 
 
@@ -313,6 +341,213 @@ def test_the_failure_responses_are_documented() -> None:
     operation = create_app().openapi()["paths"]["/cards/{card_id}"]["get"]
 
     for status_code in ("404", "503", "500"):
+        reference = operation["responses"][status_code]["content"]["application/json"]["schema"][
+            "$ref"
+        ]
+        assert reference.endswith("/ErrorResponse"), status_code
+
+
+# ---------------------------------------------------------------------------
+# `GET /cards/search` — issue #28
+#
+# What matching means is proved against real PostgreSQL in
+# `test_catalog_cards.py`; these are the things only the HTTP layer decides.
+# ---------------------------------------------------------------------------
+def test_the_search_route_is_not_shadowed_by_the_card_detail_route() -> None:
+    """The failure this ordering exists to prevent.
+
+    FastAPI matches in declaration order, so `/cards/search` registered after
+    `/cards/{card_id}` is swallowed by it — and because `card_id` is typed
+    `UUID`, the symptom is a 422 about "search" not being a UUID rather than an
+    obviously missing route. That is a confusing enough failure to be worth a
+    test of its own.
+    """
+    with TestClient(seeded()) as client:
+        response = client.get("/cards/search")
+
+    assert response.status_code == 200
+
+
+def test_a_search_returns_a_page_and_the_count_behind_it() -> None:
+    with TestClient(seeded()) as client:
+        body = client.get("/cards/search?text=charizard").json()
+
+    assert body["total"] == 1
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    assert [card["name"] for card in body["cards"]] == ["Charizard"]
+
+
+def test_a_result_carries_enough_to_tell_two_printings_apart() -> None:
+    """`variant` is the load-bearing field: holo, reverse holo and 1st edition
+    price differently, so a user who picks the wrong one is valued wrongly."""
+    with TestClient(seeded()) as client:
+        card = client.get("/cards/search?text=charizard").json()["cards"][0]
+
+    assert card == {
+        "id": "22222222-2222-5222-8222-222222222222",
+        "name": "Charizard",
+        "card_number": "4/102",
+        "game": "pokemon",
+        "language": "en",
+        "rarity": "Rare Holo",
+        "variant": "unlimited-holo",
+        "set": {
+            "id": "11111111-1111-5111-8111-111111111111",
+            "set_code": "BS",
+            "name": "Base Set",
+            "release_date": "1999-01-09",
+            "metadata": {"total_cards": 102},
+        },
+    }
+
+
+def test_a_result_does_not_carry_the_detail_endpoints_payload() -> None:
+    """A search is for choosing between cards, not for reading one.
+
+    `external_ids` would be a query per result for something nobody chooses on,
+    and `metadata` generates as an untyped record. `id` is how a caller asks
+    for the rest.
+    """
+    with TestClient(seeded()) as client:
+        card = client.get("/cards/search?text=charizard").json()["cards"][0]
+
+    assert "external_ids" not in card
+    assert "metadata" not in card
+    assert "image_front" not in card
+    assert "id" in card
+
+
+def test_matching_nothing_is_an_empty_page_and_never_a_404() -> None:
+    """The difference from `GET /cards/{id}`.
+
+    There a caller named one card and this deployment could not identify it.
+    Here the catalog was read correctly and holds no such card, which is a
+    result rather than a failure.
+    """
+    with TestClient(seeded()) as client:
+        response = client.get("/cards/search?text=nidoking")
+
+    assert response.status_code == 200
+    assert response.json() == {"cards": [], "total": 0, "limit": 20, "offset": 0}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "text=",
+        "text=%20padded",
+        "game=Pokemon",
+        "language=english",
+        "set_code=",
+        "card_number=",
+        "variant=%20holo",
+    ],
+)
+def test_a_filter_that_breaks_the_domains_grammar_is_a_422(query: str) -> None:
+    """FastAPI's own 422, not an `ErrorResponse`.
+
+    The same decision as a malformed path identifier: `tcg_api.errors` leaves
+    request validation alone because a malformed query string is a
+    transport-level failure with no §66 meaning, and forcing one into a taxonomy
+    code would be a lie in the single field callers are meant to trust.
+    """
+    with TestClient(seeded()) as client:
+        assert client.get(f"/cards/search?{query}").status_code == 422
+
+
+def test_the_grammar_is_the_domains_and_not_a_second_copy_of_it() -> None:
+    """The message comes from `tcg_domain`, so the two cannot drift apart."""
+    with TestClient(seeded()) as client:
+        detail = client.get("/cards/search?game=Pokemon").json()["detail"][0]
+
+    assert detail["loc"] == ["query", "game"]
+    assert "lowercase slug" in detail["msg"]
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1", "limit=abc"])
+def test_a_window_outside_the_ports_bounds_is_a_422(query: str) -> None:
+    with TestClient(seeded()) as client:
+        assert client.get(f"/cards/search?{query}").status_code == 422
+
+
+def test_an_enormous_offset_is_a_422_and_not_a_503() -> None:
+    """Without an upper bound this overflows int64 in the driver, and the
+    adapter would report it as an unreachable catalog — blaming the database
+    for a number the caller chose."""
+    with TestClient(seeded()) as client:
+        response = client.get("/cards/search?offset=100000000000000000000")
+
+    assert response.status_code == 422
+
+
+def test_an_unreachable_catalog_is_the_same_503_the_detail_endpoint_answers() -> None:
+    """One condition, one vocabulary. A client should not learn two."""
+    with TestClient(app_with(UnreachableRepository())) as client:
+        response = client.get("/cards/search?text=charizard")
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "provider_error"
+    assert response.json()["details"] == {"reason": "catalog_unreachable"}
+
+
+def test_the_search_endpoint_needs_a_database(app_without_a_database) -> None:
+    with TestClient(app_without_a_database) as client:
+        response = client.get("/cards/search")
+
+    assert response.status_code == 503
+    assert response.json()["details"] == {"reason": "catalog_unreachable"}
+
+
+# ---------------------------------------------------------------------------
+# The contract apps/web generates from
+# ---------------------------------------------------------------------------
+def test_the_search_endpoint_is_documented_with_a_response_model() -> None:
+    schema = create_app().openapi()
+    operation = schema["paths"]["/cards/search"]["get"]
+
+    reference = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    model = schema["components"]["schemas"][reference.rsplit("/", 1)[-1]]
+
+    assert set(model["properties"]) == {"cards", "total", "limit", "offset"}
+
+
+def test_the_search_result_is_documented_as_its_own_model() -> None:
+    """Typed rather than an untyped object, and distinct from `CardResponse`."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    assert set(schemas["CardSummaryResponse"]["properties"]) == {
+        "id",
+        "name",
+        "card_number",
+        "game",
+        "language",
+        "rarity",
+        "variant",
+        "set",
+    }
+
+
+def test_every_filter_reaches_the_schema() -> None:
+    """A parameter apps/web cannot see is a parameter it cannot send."""
+    operation = create_app().openapi()["paths"]["/cards/search"]["get"]
+
+    assert {parameter["name"] for parameter in operation["parameters"]} == {
+        "text",
+        "game",
+        "language",
+        "set_code",
+        "card_number",
+        "variant",
+        "limit",
+        "offset",
+    }
+
+
+def test_the_searchs_failure_responses_are_documented() -> None:
+    operation = create_app().openapi()["paths"]["/cards/search"]["get"]
+
+    for status_code in ("503", "500"):
         reference = operation["responses"][status_code]["content"]["application/json"]["schema"][
             "$ref"
         ]

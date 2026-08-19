@@ -164,7 +164,11 @@ storage only moves bytes. It names no `dsn`, `pool` or `session`; the PostgreSQL
 adapter that satisfies it lives in
 [`services/api`](../services/api/src/tcg_api/catalog/cards.py), outside the
 package, and translates every driver failure into the port's own
-`CatalogUnavailable` so no route handler ever sees an asyncpg exception.
+`CatalogUnavailable` so no route handler ever sees an asyncpg exception. The
+port also fixes what a search means — a case-insensitive name fragment that
+works for Japanese, a card number matched as a prefix, and a total order over
+`(set_code, card_number, variant, id)` — so the guarantee belongs to the domain
+rather than to whichever database happens to be answering.
 
 TCGplayer API access is neither assumed nor hard-coded. Access is not currently
 granted, and its terms restrict competing commercial products.

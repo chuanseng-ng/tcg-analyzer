@@ -95,7 +95,9 @@ class InMemoryCardRepository:
 def _matches(query: CardQuery, card: Card) -> bool:
     return all(
         [
-            query.text is None or query.text in card.name,
+            # Case-insensitive, as the port promises and the PostgreSQL
+            # adapter implements: a user typing 'charizard' means Charizard.
+            query.text is None or query.text.lower() in card.name.lower(),
             query.game is None or query.game == card.game,
             query.language is None or query.language == card.language,
             query.set_code is None or query.set_code == card.set.set_code,

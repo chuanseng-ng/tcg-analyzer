@@ -231,7 +231,8 @@ class CardRepository(Protocol):
         addition, because a ranking that varies between queries is not a
         stable sort.
 
-        `text` matches a name fragment and must work for Japanese; `card_number`
+        `text` matches a name fragment without regard to case, and must work for
+        Japanese, so no implementation may lean on ASCII folding; `card_number`
         matches as a prefix. Those two are the search's real index requirements.
 
         An `offset` past the last match is an empty page rather than an error:

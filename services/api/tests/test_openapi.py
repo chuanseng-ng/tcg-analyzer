@@ -73,6 +73,18 @@ def test_openapi_documents_the_card_detail_path() -> None:
     assert "get" in schema["paths"]["/cards/{card_id}"]
 
 
+def test_openapi_documents_the_card_search_path() -> None:
+    """Spec §64 names `GET /cards/search`; #28 serves it.
+
+    A literal path, so it appears verbatim — and it has to be declared before
+    `/cards/{card_id}` or that route swallows it. See `routers/cards.py`.
+    """
+    schema = create_app().openapi()
+
+    assert "/cards/search" in schema["paths"]
+    assert "get" in schema["paths"]["/cards/search"]
+
+
 # ---------------------------------------------------------------------------
 # The error taxonomy — spec §66
 # ---------------------------------------------------------------------------

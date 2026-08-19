@@ -197,11 +197,20 @@ uv run uvicorn tcg_api.main:app --reload   # API on http://localhost:8000
 ```
 
 `GET /health` reports the service status and the application version,
-`GET /catalog/version` reports which card catalog the deployment is serving, and
+`GET /catalog/version` reports which card catalog the deployment is serving,
+`GET /cards/search` finds cards in it, and
 `GET /cards/{id}` returns the canonical detail for one card — its name, set, card
 number, language, rarity, variant and the external database identifiers recorded
 for it. An identifier naming no card answers 404 under the spec §66 taxonomy; it
-carries no prices and no card images. The OpenAPI schema is at `/openapi.json`
+carries no prices and no card images.
+
+`GET /cards/search` filters on `text`, `game`, `language`, `set_code`,
+`card_number` and `variant`, all optional and ANDed, and pages with `limit` and
+`offset`. `text` matches a fragment of the printed name without regard to case
+and works for Japanese; `card_number` matches as a prefix, so `25`, `025` and
+`025/165` all find the card printed `025/165`. Results are ordered by
+`(set_code, card_number, variant, id)` — a total order, so paging neither drops
+nor duplicates a row. Nothing matching is an empty page, never a 404. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](#configuration).
 
@@ -267,8 +276,8 @@ uv run tcg-seed-catalog
 ```
 
 Roughly twenty English and Japanese cards under a `manual` provider, enough to
-search, identify and price against, and what `GET /cards/{id}` reads until the
-import pipeline replaces them. It is idempotent, so re-run it after editing a
+search, identify and price against, and what `GET /cards/search` and
+`GET /cards/{id}` read until the import pipeline replaces them. It is idempotent, so re-run it after editing a
 fixture; see `database/seeds/README.md`.
 
 The catalog is versioned. Every run that writes it — the loader above, and the
