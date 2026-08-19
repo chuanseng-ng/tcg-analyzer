@@ -53,8 +53,8 @@ function classify(error: unknown): Failure {
  *
  * The URL is the state. Submitting the form navigates rather than setting
  * component state, so a search survives a reload, answers the back button, and
- * can be sent to somebody else — and #91's "Change" action has a plain link to
- * come back to.
+ * can be sent to somebody else — and the confirmation gate's "Change" action
+ * (#91) has a plain link to come back to.
  *
  * The form is uncontrolled and read from `FormData` on submit. That is the
  * shape the decision to require an explicit submit implies: Japanese input goes

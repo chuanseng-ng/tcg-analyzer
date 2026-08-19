@@ -1,0 +1,305 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--space-5) var(--space-6);
+}
+
+.brand {
+  padding-block-start: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.brandLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.brandLink:hover {
+  color: var(--color-accent);
+}
+
+.pending,
+.status {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.heading {
+  max-width: var(--measure);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
+}
+
+.heading:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: var(--space-2);
+}
+
+.body {
+  max-width: var(--measure);
+  line-height: var(--leading-normal);
+}
+
+/*
+ * What the system knows, said before the card rather than after it.
+ *
+ * `data-certainty="unknown"` is the M1 state and the only one reachable until
+ * M2 supplies a producer: nothing has identified the card, and the panel is
+ * warning-weighted so that reads as a caution rather than as a detail.
+ */
+.certainty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: var(--measure);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-inline-start: var(--space-1) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.certainty[data-certainty="unknown"] {
+  border-inline-start-color: var(--color-warning);
+}
+
+.certainty[data-certainty="measured"] {
+  border-inline-start-color: var(--color-accent);
+}
+
+.certaintyLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+
+.certaintyTerm {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.certaintyValue {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.certaintyFraming {
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.name {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: var(--color-muted);
+}
+
+/*
+ * Where a picture would be. ADR 0004 imports no catalog artwork, so this is a
+ * stated absence rather than a slot waiting to be filled.
+ */
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 5 / 7;
+  max-inline-size: 12rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.placeholderLabel {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.placeholderNote {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+/* Set, number, variant and rarity are what the comparison rests on. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+}
+
+.term {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.value {
+  margin: 0;
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.value[data-recorded="false"] {
+  font-weight: var(--weight-regular);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.record {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+
+/*
+ * Confirm first in the DOM, always. Emphasis is the only thing that moves:
+ * while nothing has identified the card, Change is filled as well, so the
+ * screen leads with search instead of nudging the user through a gate it has
+ * no evidence for.
+ */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background-color: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.confirm:hover {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.change {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  color: var(--color-accent);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.actions[data-certainty="unknown"] .change {
+  background-color: var(--color-surface);
+}
+
+.footnote {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ------------------------------------------------------------- failures */
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-inline-start: var(--space-1) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.failureHeading {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+}
+
+.failureBody {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.failureActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.retry {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--color-accent);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}

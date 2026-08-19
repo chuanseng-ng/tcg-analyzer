@@ -24,9 +24,12 @@ export const metadata: Metadata = {
  * calling `useSearchParams` with no boundary above it fails `next build` during
  * prerender. Do not remove it.
  *
- * Nothing here leads to analysis. Confirming which card the user is holding is
- * a product-integrity gate with its own screen (#91); browsing the catalog must
- * not become a way around it.
+ * Nothing in this list leads forward. Confirming which card the user is holding
+ * is a product-integrity gate with its own screen (`/identify`, #91), and it is
+ * reached from a card's own page rather than from a row here — a confirm
+ * affordance on a search result would let someone commit to a card without ever
+ * having looked at its variant and number, which is the mistake the gate exists
+ * to prevent.
  */
 export default function CardsPage() {
   return (

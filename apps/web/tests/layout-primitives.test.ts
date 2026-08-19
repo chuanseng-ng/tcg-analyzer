@@ -26,6 +26,11 @@ const MODULES = [
   "app/cards/CardSearch.module.css",
   "app/cards/CardResults.module.css",
   "app/cards/[cardId]/page.module.css",
+  // The M2 placeholder now carries a real action into the catalog.
+  "app/analyze/page.module.css",
+  // The identification-confirmation gate (#91). It carries the M1 acceptance
+  // criterion, so it is the last screen that may be unusable on a phone.
+  "app/identify/page.module.css",
 ] as const;
 
 // Vitest runs with `apps/web` as its root.
@@ -69,4 +74,19 @@ describe("app/cards/CardResults.module.css", () => {
       /min-block-size\s*:\s*var\(--tap-target\)/,
     );
   });
+});
+
+describe("app/identify/page.module.css", () => {
+  // Every control on the confirmation gate is one a thumb has to hit, and the
+  // two that matter are a decision the user cannot take back by mistake.
+  it.each(["confirm", "change", "retry", "record"])(
+    "gives .%s a comfortable touch target",
+    (name) => {
+      const rule = new RegExp(
+        String.raw`\.${name}\s*\{[^}]*min-block-size\s*:\s*var\(--tap-target\)`,
+      );
+
+      expect(readModule("app/identify/page.module.css")).toMatch(rule);
+    },
+  );
 });
