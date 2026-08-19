@@ -221,6 +221,22 @@ __marimo__/
 .claude
 CLAUDE.md
 
+# Other coding agents and editors
+#   Per-tool configuration and generated context files. Each developer brings
+#   their own; none of them is this project's, so none is shared.
+.code-review-graph
+.gemini
+.kiro/
+.qoder/
+.vscode/
+.cursorrules
+.mcp.json
+.opencode.json
+.windsurfrules
+AGENTS.md
+GEMINI.md
+QODER.md
+
 # Agent skills
 #   Vendored third-party skill content — reinstall from skills-lock.json instead.
 #   skills-lock.json is deliberately NOT ignored: it pins the source and content
