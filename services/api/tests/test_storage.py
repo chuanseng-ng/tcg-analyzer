@@ -58,8 +58,15 @@ def test_storage_settings_are_read_from_the_environment(monkeypatch: pytest.Monk
     assert settings.storage_bucket == "cards"
 
 
+@pytest.mark.usefixtures("unconfigured_environment")
 def test_storage_is_absent_rather_than_fatal_when_unconfigured() -> None:
-    """A service with no bucket is unready, not crashing."""
+    """A service with no bucket is unready, not crashing.
+
+    `unconfigured_environment` clears the real `TCG_API_STORAGE_*` variables:
+    `_env_file=None` suppresses the file and nothing else, so a shell set up to
+    run `pytest -m object_storage` would otherwise configure the storage this
+    test is asserting the absence of.
+    """
     settings = Settings(_env_file=None)
 
     assert settings.storage_bucket is None
@@ -140,7 +147,9 @@ def test_unconfigured_storage_raises_a_message_naming_the_variable(
     assert ".env.example" in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("unconfigured_environment")
 def test_every_missing_variable_is_named_at_once() -> None:
+    """Missing, and therefore only missing once the environment says so."""
     with pytest.raises(RuntimeError) as excinfo:
         create_object_storage(Settings(_env_file=None))
 

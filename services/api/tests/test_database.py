@@ -31,8 +31,16 @@ def test_create_engine_uses_the_configured_url_and_pre_ping() -> None:
     assert engine.pool._pre_ping is True
 
 
+@pytest.mark.usefixtures("unconfigured_environment")
 def test_create_engine_without_configuration_names_the_variable() -> None:
-    """The readiness probe turns this into a 503, so the message reaches a log."""
+    """The readiness probe turns this into a 503, so the message reaches a log.
+
+    `unconfigured_environment` is what makes "without configuration" true.
+    `_env_file=None` suppresses the file alone, so a shell that exported
+    `TCG_API_DATABASE_URL` — which is exactly what CLAUDE.md tells a developer
+    to do before running the integration tests — would otherwise supply the
+    setting this test is asserting the absence of.
+    """
     with pytest.raises(RuntimeError, match=DATABASE_URL_ENV_VAR):
         database.create_engine(Settings(_env_file=None))
 

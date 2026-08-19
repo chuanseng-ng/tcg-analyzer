@@ -73,12 +73,30 @@ def test_database_url_is_read_from_the_environment(monkeypatch: pytest.MonkeyPat
     assert get_settings().database_url == ASYNC_URL
 
 
-def test_database_url_is_absent_rather_than_fatal_when_unconfigured(
+def test_suppressing_the_env_file_does_not_suppress_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unconfigured database is an unready service, not a crashing one."""
-    monkeypatch.delenv(DATABASE_URL_ENV_VAR, raising=False)
+    """The trap the root `conftest.py`'s `unconfigured_environment` exists for.
 
+    `_env_file=None` is easy to read as "ignore configuration", and it is not:
+    it ignores the *file*. A test asserting absent-setting behaviour that stops
+    there passes on a bare machine and fails in the shell CLAUDE.md tells a
+    developer to set up, while claiming to describe the code either way. Pinned
+    here so the fixture's reason for existing is a tested fact.
+    """
+    monkeypatch.setenv(DATABASE_URL_ENV_VAR, ASYNC_URL)
+
+    assert Settings(_env_file=None).database_url == ASYNC_URL
+
+
+@pytest.mark.usefixtures("unconfigured_environment")
+def test_database_url_is_absent_rather_than_fatal_when_unconfigured() -> None:
+    """An unconfigured database is an unready service, not a crashing one.
+
+    This test already cleared the one variable it names. The fixture does the
+    same thing for every `TCG_API_` variable, which is the rule the rest of the
+    suite now follows rather than a habit this file happened to have.
+    """
     assert Settings(_env_file=None).database_url is None
 
 
