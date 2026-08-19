@@ -25,13 +25,15 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # import works from the repository root without any path juggling.
 #
 # Autogenerate proposes dropping anything it finds and does not see here, so
-# every future domain table must be declared in a module reachable from it — not
-# created by hand-written DDL alone. `tcg_api.tables` holds the `MetaData`; the
-# two imports below are what put tables *on* it, and are therefore load-bearing
-# rather than unused. A third domain means a third line here.
-from tcg_api.analysis import tables as _analysis_tables  # noqa: F401
-from tcg_api.catalog import tables as _catalog_tables  # noqa: F401
+# every domain table must be declared in a module reachable from it — not created
+# by hand-written DDL alone.
+from tcg_api.tables import declared_tables
 from tcg_api.tables import metadata as target_metadata
+
+# `metadata` is empty until the table modules have been executed, and this is
+# what executes them. The return value is not needed here; the registration is.
+# A new domain is added to `declared_tables`, not to this file.
+declared_tables()
 
 config = context.config
 

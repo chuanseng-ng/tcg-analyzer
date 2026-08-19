@@ -32,19 +32,13 @@ from alembic.migration import MigrationContext
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import create_async_engine
-
-# The whole schema, not just the catalog's part of it: the drift guard below is
-# this repository's only check that `tables.py` and the migrations agree, and it
-# must therefore see every domain. Importing the analysis module is what puts its
-# three tables on this `MetaData` (see `tcg_api.tables`).
-from tcg_api.analysis import tables as _analysis_tables  # noqa: F401
 from tcg_api.catalog.tables import (
     card_database_versions,
     card_external_ids,
     cards,
     sets,
 )
-from tcg_api.tables import metadata
+from tcg_api.tables import declared_tables, metadata
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -59,6 +53,12 @@ pytestmark = [
 
 CATALOG_TABLES = ("sets", "cards", "card_external_ids", "card_database_versions")
 HARNESS_TABLE = "migration_harness_check"
+
+# The whole schema, not just the catalog's part of it. The drift guard below is
+# this repository's only check that the table modules and the migrations agree,
+# and it compares whatever is attached to this `MetaData` — which is empty until
+# those modules have been executed. Calling this is what executes them.
+DECLARED_TABLES = declared_tables()
 
 
 def alembic(*args: str) -> None:
@@ -187,6 +187,18 @@ def insert_card(**overrides: Any) -> uuid.UUID:
 # ---------------------------------------------------------------------------
 # The migration built what the code declares
 # ---------------------------------------------------------------------------
+def test_the_drift_guard_below_sees_every_domain() -> None:
+    """Guard the guard.
+
+    `compare_metadata` reports on exactly what is attached to this `MetaData`.
+    If a domain's table module were never executed, the comparison would quietly
+    succeed while checking half the schema — the failure mode is silence, so it
+    is asserted rather than assumed.
+    """
+    assert {table.name for table in DECLARED_TABLES} == set(metadata.tables)
+    assert set(CATALOG_TABLES) < set(metadata.tables)
+
+
 def test_the_migration_and_the_declared_tables_agree() -> None:
     """If this fails, `tables.py` and the migration have drifted apart.
 

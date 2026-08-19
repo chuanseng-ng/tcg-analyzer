@@ -18,8 +18,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 from tcg_api.analysis.tables import TABLES, analyses, analysis_sessions, images
-from tcg_api.catalog.tables import TABLES as CATALOG_TABLES
-from tcg_api.tables import metadata
+from tcg_api.tables import declared_tables, metadata
 from tcg_domain.analysis import AnalysisStatus, ImageSide, QualityStatus, SessionStatus
 
 SPEC_TABLES = ("analysis_sessions", "analyses", "images")
@@ -57,13 +56,13 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
     """A table autogenerate cannot reach is a table the next revision drops.
 
     `MetaData` is shared between the two domains, so "nothing sneaked in" can
-    only be asserted once both have been imported — which importing either
-    table module guarantees, since the analysis schema's foreign key into
-    `cards` makes the catalog a hard dependency of it.
+    only be asserted once every table module has been executed — which is what
+    `declared_tables()` is for, and the one place a new domain is registered.
     """
-    declared = {table.name for table in (*CATALOG_TABLES, *TABLES)}
+    declared = {table.name for table in declared_tables()}
 
     assert set(metadata.tables) == declared
+    assert {table.name for table in TABLES} < declared
 
 
 @pytest.mark.parametrize(

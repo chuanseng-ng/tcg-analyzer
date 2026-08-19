@@ -64,11 +64,13 @@ from tcg_domain.analysis import (
     SessionStatus,
 )
 
-# `analyses.card_id` points at `cards.id`, and a `sa.ForeignKey` resolves by name
-# against the `MetaData` it is attached to. Importing the catalog is therefore
-# not an unused import but the thing that makes this module's DDL compile at all;
-# without it, `CreateTable(analyses)` raises NoReferencedTableError.
-from tcg_api.catalog import tables as _catalog_tables  # noqa: F401
+# `analyses.card_id` points into the catalog, so the catalog is a hard dependency
+# of this module rather than merely of the migration environment: a `sa.ForeignKey`
+# resolves against the `MetaData` it is attached to, and without `cards` on it
+# `CreateTable(analyses)` raises NoReferencedTableError. The column object is
+# referenced directly rather than by the string "cards.id" so that the dependency
+# is visible to a reader and to a type checker, and cannot be a silent typo.
+from tcg_api.catalog.tables import cards
 from tcg_api.tables import PRINTED, metadata
 
 __all__ = ["TABLES", "analyses", "analysis_sessions", "images"]
@@ -197,7 +199,7 @@ analyses = sa.Table(
     sa.Column(
         "card_id",
         sa.Uuid(),
-        sa.ForeignKey("cards.id", ondelete="RESTRICT", name="fk_analyses_card_id_cards"),
+        sa.ForeignKey(cards.c.id, ondelete="RESTRICT", name="fk_analyses_card_id_cards"),
         nullable=True,
         comment=(
             "Nullable on purpose: unknown until the user confirms the "
