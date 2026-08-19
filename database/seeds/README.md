@@ -58,6 +58,24 @@ A set's id is `uuid5` over `game/language/set_code`; a card's over
 Changing the namespace UUID in `seed.py` re-keys everything and orphans every
 row a previous run wrote. Don't.
 
+### The catalog version
+
+Loading the fixtures also publishes `pokemon-catalog-seed-v0.0.0` into
+`card_database_versions` — spec §57's `card_database_version`, so a deployment
+running on these fixtures can say so rather than being mistaken for one running
+on the real catalog. Its counts come from the fixtures themselves rather than
+from `count(*)`, because they describe what *this* run wrote.
+
+It is written with `ON CONFLICT DO NOTHING`, which reverses the policy the three
+statements above use. That is deliberate. Correcting a card's name and re-running
+should converge on the fixture; rewriting a published version would falsify every
+analysis that recorded it, and the table's trigger refuses the `UPDATE` regardless.
+
+**So bump `SEED_CATALOG_VERSION` when the fixtures change materially.** Adding or
+removing one without bumping it leaves a published version describing content it
+no longer matches, and the loader warns rather than guessing which of the two you
+meant. Move `SEED_CATALOG_GENERATED_AT` with it, never on its own.
+
 ### What the loader will not do
 
 It never creates or drops anything, and it will not delete a row that has left

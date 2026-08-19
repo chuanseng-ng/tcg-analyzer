@@ -1,8 +1,9 @@
 # `packages/domain`
 
 The framework-free core: `GradeDistribution`, `Money`, the TCG-agnostic card
-reference, the canonical catalog entities and their repository port,
-`Confidence` and the `insufficient_information` sentinel.
+reference, the canonical catalog entities and their repository port, the card
+database version an analysis records for reproducibility, `Confidence` and the
+`insufficient_information` sentinel.
 
 **Zero framework, database or provider dependencies.** `GradeDistribution` must
 be impossible to construct in an invalid state — the single most load-bearing
@@ -30,10 +31,15 @@ Everything below is re-exported from `tcg_domain`; nothing else is public.
 | `SetId`, `CardId` | Our identifiers, distinct `NewType`s over `UUID` so one cannot be passed where the other is wanted. A provider's identifier is a `CardExternalId`, never one of these. |
 | `CardIdentification` | Spec §20's conclusion: a candidate `Card` and a **required, validated** `Confidence`. A bare `0.82` is rejected — an optional confidence makes "never silently use an uncertain identification" easy to violate. |
 | `CardRepository` | The catalog port — `get`, `search`, `external_ids`, all `async`, `Protocol` not ABC. The PostgreSQL adapter lives outside this package. Search is ordered by a total key so paging cannot drop or duplicate a row. |
+| `CardDatabaseVersion` | Spec §57's `card_database_version` — one import run, with its source, licence, upstream revision, when the data was made and how much of it there was. The identifier is explicit and ordered (`pokemon-catalog-v0.3.0`); a value naming a moving target is refused outright, because spec §31's rule against `/latest/` is exactly what a reproducibility record cannot survive. Publication order and row bookkeeping stay in the table. |
+| `CardDatabaseVersionRepository` | The version port — `current`, `get`, both `async`. Read-only: V1's writers are the seed loader and the import pipeline, each of which already owns the transaction that writes the catalog a version describes. |
+| `VERSION_PATTERN` | The identifier grammar, exposed so a writer can check one before building a record. |
 | `CardQuery`, `CardPage` | The search's two shapes. Every filter optional and ANDed; an empty filter is rejected rather than treated as a wildcard. `DEFAULT_SEARCH_LIMIT` and `MAX_SEARCH_LIMIT` bound every caller of the port, not merely of the endpoint. |
 | `Confidence` | A validated `[0, 1]` value, with `is_below(threshold)` for the places the pipeline must not act on a weak signal. |
 | `InsufficientInformation`, `INSUFFICIENT_INFORMATION`, `Uncertain[T]` | "We cannot tell" as a first-class **result** (spec §2.7). Never an exception, never raised, and falsy so `if result:` cannot mistake it for an answer. |
-| `DomainError` and subclasses | `InvalidGrade`, `InvalidGradeDistribution`, `InvalidMoney`, `CurrencyMismatch`, `InvalidConfidence`, `InvalidCardReference`, `InvalidCatalogRecord`, `InvalidCardIdentification`, `InvalidCardSearch`. Each also derives from `ValueError`. `CatalogUnavailable` is the one that is not about invalid input: it is what a `CardRepository` raises instead of leaking a driver exception, and derives from `ConnectionError`. |
+| `DomainError` and subclasses | `InvalidGrade`, `InvalidGradeDistribution`, `InvalidMoney`, `CurrencyMismatch`, `InvalidConfidence`, `InvalidCardReference`, `InvalidCatalogRecord`, `InvalidCardIdentification`, `InvalidCardSearch`. `InvalidCatalogRecord` covers
+the version record too — it is built by the same importer as the rows it counts.
+Each also derives from `ValueError`. `CatalogUnavailable` is the one that is not about invalid input: it is what a `CardRepository` raises instead of leaking a driver exception, and derives from `ConnectionError`. |
 
 ## Tests
 

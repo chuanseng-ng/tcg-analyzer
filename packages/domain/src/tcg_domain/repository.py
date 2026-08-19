@@ -8,7 +8,7 @@ what may be asked; it says nothing about who answers. There is deliberately no
 business, and a port that leaked one would make PostgreSQL part of the calling
 contract, exactly as ``tcg_shared.storage.port`` refuses to name a bucket.
 
-**This is the first port in `packages/domain`, and it belongs here rather than
+**This was the first port in `packages/domain`, and it belongs here rather than
 in `packages/shared`.** ADR 0002 placed :class:`~tcg_shared.storage.port.ObjectStorage`
 in `shared` because object storage has no domain knowledge — it moves bytes. A
 card repository returns :class:`~tcg_domain.catalog.Card`, so it does, and a

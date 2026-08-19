@@ -19,6 +19,11 @@ from tcg_domain.card import (
     Language,
 )
 from tcg_domain.catalog import Card, CardExternalId, CardId, Set, SetId
+from tcg_domain.catalog_version import (
+    VERSION_PATTERN,
+    CardDatabaseVersion,
+    CardDatabaseVersionRepository,
+)
 from tcg_domain.confidence import (
     INSUFFICIENT_INFORMATION,
     Confidence,
@@ -60,7 +65,10 @@ __all__ = [
     "MIN_GRADE",
     "POKEMON",
     "SUM_TOLERANCE",
+    "VERSION_PATTERN",
     "Card",
+    "CardDatabaseVersion",
+    "CardDatabaseVersionRepository",
     "CardExternalId",
     "CardId",
     "CardIdentification",

@@ -196,7 +196,8 @@ validated by `lib/env.ts`. Next reads env files from the app directory, so for
 uv run uvicorn tcg_api.main:app --reload   # API on http://localhost:8000
 ```
 
-`GET /health` reports the service status and the application version; the
+`GET /health` reports the service status and the application version, and
+`GET /catalog/version` reports which card catalog the deployment is serving. The
 OpenAPI schema is at `/openapi.json` and the interactive documentation at
 `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](#configuration).
@@ -265,6 +266,18 @@ uv run tcg-seed-catalog
 Roughly twenty English and Japanese cards under a `manual` provider, enough to
 search, identify and price against. It is idempotent, so re-run it after editing
 a fixture; see `database/seeds/README.md`.
+
+The catalog is versioned. Every run that writes it — the loader above, and the
+import pipeline that will replace it — publishes an immutable
+`card_database_version` recording the identifier, the source, the licence relied
+upon, the upstream revision and the record counts. That is one of the seven
+fields spec §57 requires an analysis to keep so it can be re-derived rather than
+re-guessed, and `GET /catalog/version` is how a client reads it.
+
+Published versions are never rewritten: a database trigger refuses `UPDATE` and
+`DELETE` outright, and a re-import publishes a new version rather than editing an
+old one. Identifiers are explicit and ordered — `pokemon-catalog-v0.3.0`, never
+`/latest/`.
 
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
