@@ -1,0 +1,233 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--space-5) var(--space-6);
+}
+
+.brand {
+  padding-block-start: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.brandLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.brandLink:hover {
+  color: var(--color-accent);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-block-size: var(--tap-target);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.back::before {
+  content: "←";
+  margin-inline-end: var(--space-2);
+}
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.name {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: var(--color-muted);
+}
+
+/*
+ * Where a picture would be. ADR 0004 imports no catalog artwork, so this is a
+ * stated absence rather than a slot waiting to be filled — hence a labelled
+ * block and a sentence, not an <img> with no src.
+ */
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 5 / 7;
+  max-inline-size: 16rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.placeholderLabel {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.placeholderNote {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+}
+
+.term {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.value {
+  margin: 0;
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.value[data-recorded="false"] {
+  font-weight: var(--weight-regular);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.note {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.provider {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+}
+
+.providerName {
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.providerId {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.disclaimer {
+  max-width: var(--measure);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: var(--space-1) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+}
+
+/* ------------------------------------------------------------- failures */
+
+.status {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-inline-start: var(--space-1) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.failureHeading {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+}
+
+.failureBody {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.failureActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.retry {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--color-accent);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}

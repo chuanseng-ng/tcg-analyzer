@@ -24,10 +24,21 @@ export default function LandingPage() {
               <p className={styles.lead}>
                 Estimate condition, likely grades and whether grading is worthwhile.
               </p>
-              {/* spec §48 — primary call to action. */}
-              <Link className={styles.cta} href="/analyze">
-                Analyze a card
-              </Link>
+              <div className={styles.actions}>
+                {/* spec §48 — primary call to action. */}
+                <Link className={styles.cta} href="/analyze">
+                  Analyze a card
+                </Link>
+                {/*
+                 * Secondary on purpose. Browsing the catalog is not a way into
+                 * analysis — confirming which card is in the user's hand is a
+                 * gate of its own (#91) — but the catalog has to be reachable
+                 * by something other than a typed URL.
+                 */}
+                <Link className={styles.secondary} href="/cards">
+                  Browse the card catalog
+                </Link>
+              </div>
               <ApiStatus />
             </Stack>
 
