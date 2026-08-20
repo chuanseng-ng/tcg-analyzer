@@ -219,7 +219,17 @@ reports the state of one, but only to the session that started it — an unknown
 identifier, another session's analysis, a missing cookie and an expired one all
 answer 404 with the same body, so the endpoint cannot be used to discover which
 analyses exist. Sessions expire after `TCG_API_SESSION_TTL_SECONDS`; nothing
-about the caller is recorded. The OpenAPI schema is at `/openapi.json`
+about the caller is recorded.
+
+Both writes — `POST /analyses` and `POST /analyses/{id}/run` — are rate-limited
+per client address (spec §55), `TCG_API_RATE_LIMIT_REQUESTS` per
+`TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
+runs on so the limit holds across replicas. A throttled request is a 429
+carrying `Retry-After`, deliberately outside the spec §66 error envelope —
+see [ADR 0005](docs/adr/0005-rate-limiting-the-analysis-endpoints.md). Polling
+`GET /analyses/{id}` is not limited, and neither are the catalog reads. With
+`TCG_API_REDIS_URL` unset, or Redis unreachable, the limiter lets requests
+through rather than refusing them. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](#configuration).
 

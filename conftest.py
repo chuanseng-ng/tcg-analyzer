@@ -26,6 +26,7 @@ import os
 
 import pytest
 from tcg_api.config import Settings, get_settings
+from tcg_api.rate_limit import get_redis
 from tcg_api.storage import get_object_storage
 
 #: The prefix every setting this service reads is spelled with.
@@ -34,13 +35,23 @@ _ENV_PREFIX = "TCG_API_"
 # Every process-wide cache derived from settings. Clearing settings alone would
 # leave a client built from the previous test's environment in place, which is
 # the same leak one step further down.
-_CACHED_ON_SETTINGS = (get_settings, get_object_storage)
+_CACHED_ON_SETTINGS = (get_settings, get_object_storage, get_redis)
+
+
+#: What the rate limiter is set to for the suite. High enough that no test trips
+#: it by accident: `TestClient` reports one address for every request in the
+#: process, so a developer who exported `TCG_API_REDIS_URL` alongside
+#: `TCG_API_DATABASE_URL` would otherwise have one module's twentieth request
+#: throttled and the failure would look like the endpoint's. `test_rate_limit.py`
+#: sets its own value, which is where the limit is actually asserted.
+_SUITE_RATE_LIMIT = "1000000"
 
 
 @pytest.fixture(autouse=True)
 def _isolate_from_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     """Describe the code, not the machine it happens to be running on."""
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.setenv("TCG_API_RATE_LIMIT_REQUESTS", _SUITE_RATE_LIMIT)
     for cached in _CACHED_ON_SETTINGS:
         cached.cache_clear()
     yield

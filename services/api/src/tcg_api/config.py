@@ -209,6 +209,32 @@ class Settings(BaseSettings):
     """
 
     # ----------------------------------------------------------------
+    # Rate limiting — spec §55, #98, ADR 0005.
+    #
+    # Counted in the same Redis, which is the whole reason `redis_url` is named
+    # for the store. An absent `redis_url` means no limiting at all, on the same
+    # terms an absent `database_url` means an unready service rather than a
+    # startup crash.
+    # ----------------------------------------------------------------
+
+    rate_limit_requests: int = Field(default=30, gt=0)
+    """How many requests one client may make to the limited endpoints per window.
+
+    Thirty a minute is generous for a person — starting an analysis, uploading
+    two photographs and running it is four or five requests, and a retake is a
+    couple more — and restrictive for a script. Clients behind one address share
+    a bucket, which is the cost of keying on an address at all (ADR 0005); raise
+    it where an office or a mobile carrier NAT would otherwise be one user.
+    """
+
+    rate_limit_window_seconds: int = Field(default=60, gt=0)
+    """The window `rate_limit_requests` is counted over.
+
+    A fixed window, so a client can send up to twice the limit across a boundary.
+    That is a known and deliberate ceiling; see `tcg_api.rate_limit`.
+    """
+
+    # ----------------------------------------------------------------
     # Object storage — the S3-compatible adapter in tcg_shared.storage.s3.
     #
     # These name S3 concepts because an adapter's configuration legitimately
