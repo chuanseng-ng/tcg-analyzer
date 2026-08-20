@@ -298,6 +298,13 @@ exactly once. The frontend obtains its API types by generating them from the
 FastAPI OpenAPI schema — see
 [ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md).
 
+The endpoints that create work are rate-limited per client address (spec §55),
+counted in that same Redis so one limit holds across replicas. A throttled
+request is a 429 with `Retry-After` and sits outside the spec §66 envelope, as
+the 404 and the 409 already do — see
+[ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). Polling is not
+limited: spec §65 requires a client to do it.
+
 Background processing is required rather than optional: ML inference is
 long-running and must never block an HTTP request. `POST /analyses/{id}/run`
 enqueues the work onto Celery over Redis and answers `queued` immediately; the

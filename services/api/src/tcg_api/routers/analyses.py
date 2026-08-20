@@ -29,9 +29,12 @@ so the row is left exactly where it was and the worker moves it. The transport
 word and the record deliberately do not agree, because they are answering
 different questions: "did you accept this?" and "where has it got to?".
 
-**No rate limiting here.** Spec §55 names analysis endpoints, and #98 owns both
-the limiter and the question of what a 429 body says. These endpoints are
-unlimited until it lands.
+**The two writes are rate-limited; the poll is not.** Spec §55 names analysis
+endpoints, and #98 reads that as the endpoints that create work — starting an
+analysis and running one. `GET /analyses/{id}` is what spec §65 requires a
+client to poll, so throttling it would throttle the product's own progress
+reporting. A throttled request is a 429 with `Retry-After`, outside the §66
+envelope for the same reason the 404 and the 409 above are (ADR 0005).
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from tcg_api.analysis.sessions import (
 from tcg_api.config import get_settings
 from tcg_api.database import get_session_factory
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
+from tcg_api.rate_limit import analysis_rate_limit
 from tcg_api.version import application_version
 
 __all__ = [
@@ -219,7 +223,15 @@ async def analysis_session() -> AsyncIterator[AsyncSession]:
         "session that has expired or never existed is not an error — a new "
         "session is opened. Nothing about the caller is recorded."
     ),
+    dependencies=[Depends(analysis_rate_limit)],
     responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": (
+                "Too many requests from this client (spec §55). Carries "
+                "`Retry-After`. Outside the spec §66 taxonomy, which has no "
+                "code meaning 'throttled' — see ADR 0005."
+            ),
+        },
         status.HTTP_503_SERVICE_UNAVAILABLE: {
             "model": ErrorResponse,
             "description": "The analysis store could not be reached.",
@@ -325,6 +337,7 @@ async def read_one_analysis(
     "/{analysis_id}/run",
     response_model=AnalysisRunResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(analysis_rate_limit)],
     summary="Run an analysis",
     description=(
         "Hands the analysis to a background worker and returns immediately "
@@ -349,6 +362,13 @@ async def read_one_analysis(
             "description": (
                 "The analysis is not in a state a run may start from. Outside "
                 "the spec §66 taxonomy, which has no code meaning 'conflict'."
+            ),
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": (
+                "Too many requests from this client (spec §55). Carries "
+                "`Retry-After`. Outside the spec §66 taxonomy, which has no "
+                "code meaning 'throttled' — see ADR 0005."
             ),
         },
         status.HTTP_503_SERVICE_UNAVAILABLE: {

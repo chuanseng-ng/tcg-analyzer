@@ -686,6 +686,13 @@ export interface operations {
                     "application/json": components["schemas"]["AnalysisResponse"];
                 };
             };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy, which has no code meaning 'throttled' — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description The request failed. `code` classifies it; see spec §66. */
             500: {
                 headers: {
@@ -806,6 +813,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy, which has no code meaning 'throttled' — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description The request failed. `code` classifies it; see spec §66. */
             500: {

@@ -21,6 +21,7 @@ from tcg_api.config import Settings, get_settings
 from tcg_api.database import get_engine
 from tcg_api.errors import ErrorResponse, install_error_handlers
 from tcg_api.logging import configure_logging
+from tcg_api.rate_limit import get_redis
 from tcg_api.routers import analyses, cards, catalog, health, readiness
 from tcg_api.version import application_version
 
@@ -40,17 +41,25 @@ ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001 - FastAPI passes it
-    """Release the connection pool on shutdown.
+    """Release the connection pools on shutdown.
 
     `get_engine` is lazily cached, so an engine exists only if something
     actually reached for the database. Checking that before disposing keeps a
     process that never touched PostgreSQL — anything serving only `/health` —
     from constructing an engine purely in order to throw it away, which would
     also make shutdown require configuration that startup did not.
+
+    The rate limiter's Redis client is closed on the same terms, and its cache
+    cleared as well: a pooled client that outlived the event loop it was built
+    on is the failure `analysis/jobs.py` documents for asyncpg, and a test
+    constructing two applications in one process would meet it.
     """
     yield
     if get_engine.cache_info().currsize:
         await get_engine().dispose()
+    if get_redis.cache_info().currsize:
+        await get_redis().aclose()
+        get_redis.cache_clear()
 
 
 DESCRIPTION = """\

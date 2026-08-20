@@ -267,6 +267,51 @@ jobs:
           test "$($COMPOSE ps -q worker | xargs docker inspect -f '{{.State.Status}}')" = running
           $COMPOSE logs worker | grep -q "celery@"
 
+      # The one place the limiter meets a real Redis: the unit tests drive it
+      # through a stub, which proves the branch and not the store. Thirty is the
+      # default `TCG_API_RATE_LIMIT_REQUESTS`, so the thirty-first call inside
+      # the window is the first that must be refused.
+      - name: The analysis endpoints are rate-limited
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sS -o /dev/null -X POST localhost:8000/analyses
+          done
+          throttled=$(curl -sS -D - -o /dev/null -X POST localhost:8000/analyses)
+          echo "$throttled"
+          echo "$throttled" | grep -q "429"
+          echo "$throttled" | grep -qi "^retry-after:"
+
+      # The counter must expire, and traffic inside a window must not push that
+      # expiry outwards — a plain `EXPIRE` in place of `EXPIRE ... NX` would
+      # refresh it on every request and lock a steady client out for good. The
+      # unit tests drive a stub that implements `nx`; this is the same claim
+      # against the real server. `redis-cli` reads its password from the
+      # container's own REDISCLI_AUTH.
+      - name: A throttled client's window ends rather than being extended
+        run: |
+          redis() { $COMPOSE exec -T redis redis-cli --no-auth-warning "$@" | tr -d "\r"; }
+          key=$(redis --scan --pattern "ratelimit:analyses:*" | head -1)
+          test -n "$key"
+          before=$(redis pttl "$key")
+          test "$before" -gt 0
+          sleep 2
+          curl -sS -o /dev/null -X POST localhost:8000/analyses
+          after=$(redis pttl "$key")
+          echo "pttl $before -> $after"
+          test "$after" -lt "$before"
+
+      # The load-bearing half of "fails open" (ADR 0005). A unit test drives a
+      # stub that raises, which proves the branch; only this proves that what a
+      # real down Redis raises is inside the caught set — the regression it
+      # guards against is a narrowed `except` turning a Redis outage into an
+      # outage of the endpoints the limiter exists to keep available.
+      - name: A limiter whose Redis is down does not refuse traffic
+        run: |
+          $COMPOSE stop redis
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST localhost:8000/analyses)" = 201
+          $COMPOSE logs api | grep -q "ratelimit.unavailable"
+          $COMPOSE up -d --wait redis
+
       - name: The web application serves
         run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3000
 

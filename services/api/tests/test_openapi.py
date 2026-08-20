@@ -98,6 +98,21 @@ def test_openapi_documents_the_analysis_paths() -> None:
     assert "get" in schema["paths"]["/analyses/{analysis_id}"]
 
 
+def test_openapi_documents_the_throttled_response() -> None:
+    """#98 limits the two writes spec §55 names, and says so in the contract.
+
+    Documented without a model, exactly as the 404 and the 409 are: a 429 is a
+    transport-level failure outside the spec §66 envelope (ADR 0005), so there
+    is no `ErrorResponse` for a generated client to expect.
+    """
+    paths = create_app().openapi()["paths"]
+
+    assert "429" in paths["/analyses"]["post"]["responses"]
+    assert "429" in paths["/analyses/{analysis_id}/run"]["post"]["responses"]
+    assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
+    assert "429" not in paths["/cards/search"]["get"]["responses"]
+
+
 # ---------------------------------------------------------------------------
 # The error taxonomy — spec §66
 # ---------------------------------------------------------------------------
