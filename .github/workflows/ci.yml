@@ -323,24 +323,85 @@ jobs:
           echo "$run"
           test "$(echo "$run" | jq -r .status)" = queued
 
-          # The worker picks it up, runs spec §19's gate over both photographs
-          # and leaves the analysis at the confirmation gate. This is the only
-          # place the gate meets a real object store, a real broker and a real
-          # OpenCV — the unit tests stub each of the three.
+          # This photograph is a flat 64x48 rectangle, which spec §19's gate is
+          # right to refuse: too small to measure, and with no tonal range at
+          # all. So the honest end of this run is `failed` — which is also the
+          # only place the gate meets a real object store, a real broker and a
+          # real OpenCV, each of which the unit tests stub.
+          #
+          # `uploaded` as well as `identifying` means "not there yet": `run`
+          # leaves the row in the first and the worker claims it into the
+          # second, so waiting only on `identifying` falls straight through.
           for _ in $(seq 1 30); do
             analysis=$(curl -sS -b jar "localhost:8000/analyses/$id")
-            test "$(echo "$analysis" | jq -r .status)" = identifying || break
-            sleep 1
+            case "$(echo "$analysis" | jq -r .status)" in
+              uploaded|identifying) sleep 1 ;;
+              *) break ;;
+            esac
           done
           echo "$analysis"
-          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
-          # A 64x48 flat rectangle is refused nothing and cleared of nothing:
-          # every geometric condition waits on card detection (#37), so the
-          # honest verdict is a status that says something was not checked.
+          test "$(echo "$analysis" | jq -r .status)" = failed
           test "$(echo "$analysis" | jq -r '.images | length')" = 2
+          test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = unusable
+
+          # Every condition is answered for, and the five that need the card
+          # located say so rather than being left out (#37 supplies them).
           test "$(echo "$analysis" | jq -r '.images[0].findings | length')" = 11
           test "$(echo "$analysis" | jq -r \
             '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
+
+          # And the refusal is what the confirmation endpoint reports, rather
+          # than the "not ready for this yet" 409 that invites a retry §65
+          # makes impossible.
+          refused=$(curl -sS -b jar -X POST "localhost:8000/analyses/$id/confirm-card" \
+            -H 'Content-Type: application/json' \
+            -d '{"card_id":"00000000-0000-0000-0000-000000000000"}')
+          echo "$refused"
+          test "$(echo "$refused" | jq -r .code)" = image_quality_failure
+
+      # The other side of the gate: a photograph it has no complaint about
+      # reaches the confirmation gate, where spec §20 says it must stop.
+      - name: A usable photograph reaches the confirmation gate
+        run: |
+          $COMPOSE exec -T api python -c "
+          import sys, random
+          from io import BytesIO
+          from PIL import Image, ImageDraw
+          random.seed(0)
+          # Large, and textured at a scale that survives the gate's downscale —
+          # a flat fill has no detail to measure and is refused, correctly.
+          picture = Image.new('RGB', (1200, 1600))
+          draw = ImageDraw.Draw(picture)
+          for y in range(0, 1600, 16):
+              for x in range(0, 1200, 16):
+                  tone = 215 if ((x // 16 + y // 16) % 2) else 20
+                  tone = max(0, min(255, tone + random.randint(-18, 18)))
+                  draw.rectangle([x, y, x + 15, y + 15], fill=(tone, tone, tone))
+          buffer = BytesIO()
+          picture.save(buffer, 'JPEG', quality=95)
+          sys.stdout.buffer.write(buffer.getvalue())" > usable.jpg
+          test -s usable.jpg
+
+          id=$(curl -sS -c jar3 -X POST localhost:8000/analyses | jq -r .id)
+          for side in front back; do
+            curl -sS -o /dev/null -b jar3 -X POST \
+              "localhost:8000/analyses/$id/images?side=$side" \
+              -H 'Content-Type: image/jpeg' --data-binary @usable.jpg
+          done
+          curl -sS -o /dev/null -b jar3 -X POST "localhost:8000/analyses/$id/run"
+
+          for _ in $(seq 1 30); do
+            analysis=$(curl -sS -b jar3 "localhost:8000/analyses/$id")
+            case "$(echo "$analysis" | jq -r .status)" in
+              uploaded|identifying) sleep 1 ;;
+              *) break ;;
+            esac
+          done
+          echo "$analysis"
+          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
+          # `acceptable`, never `good`: five conditions were not checked, and
+          # saying so is the whole point. `good` becomes reachable with #37.
+          test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = acceptable
 
       # The primary attack surface, against the real stack: a file is what its
       # bytes say it is, never what the request claims.
