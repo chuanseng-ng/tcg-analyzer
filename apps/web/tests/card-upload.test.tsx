@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   startAnalysis: vi.fn(),
   uploadImage: vi.fn(),
   runAnalysis: vi.fn(),
+  readAnalysis: vi.fn(),
 }));
 
 // The hand-off to the catalog is the one navigation this screen performs, and
@@ -23,20 +24,42 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-const { startAnalysis, uploadImage, runAnalysis } = await import("@/lib/api");
+const { startAnalysis, uploadImage, runAnalysis, readAnalysis } = await import("@/lib/api");
 const startAnalysisMock = vi.mocked(startAnalysis);
 const uploadImageMock = vi.mocked(uploadImage);
 const runAnalysisMock = vi.mocked(runAnalysis);
+const readAnalysisMock = vi.mocked(readAnalysis);
 
 const ANALYSIS_ID = "33333333-3333-3333-3333-333333333333";
 
-function analysis(): AnalysisResponse {
+function analysis(status = "created", images: AnalysisResponse["images"] = []): AnalysisResponse {
   return {
     id: ANALYSIS_ID,
-    status: "created",
+    status,
     created_at: "2026-08-21T00:00:00Z",
     completed_at: null,
     card_id: null,
+    images,
+  };
+}
+
+/** One photograph and what spec §19's gate made of it. */
+type ImageQuality = AnalysisResponse["images"][number];
+
+function judged(
+  side: "front" | "back",
+  quality_status: NonNullable<ImageQuality["quality_status"]>,
+  conditions: readonly ImageQuality["findings"][number]["condition"][] = [],
+): ImageQuality {
+  return {
+    side,
+    quality_status,
+    quality_score: quality_status === "unusable" ? 0.05 : 0.4,
+    findings: conditions.map((condition) => ({
+      condition,
+      verdict: "detected" as const,
+      severity: quality_status,
+    })),
   };
 }
 
@@ -77,6 +100,15 @@ beforeEach(() => {
   startAnalysisMock.mockReset();
   uploadImageMock.mockReset();
   startAnalysisMock.mockResolvedValue(analysis());
+  readAnalysisMock.mockReset();
+  // The gate found nothing worth mentioning, which is the ordinary case and the
+  // one every test that is not about the gate wants.
+  readAnalysisMock.mockResolvedValue(
+    analysis("awaiting_confirmation", [
+      judged("front", "acceptable"),
+      judged("back", "acceptable"),
+    ]),
+  );
   uploadImageMock.mockImplementation(({ side }) =>
     Promise.resolve(image(side, side === "front" ? "uploading" : "uploaded")),
   );
@@ -412,5 +444,127 @@ describe("once both photographs are stored", () => {
     await screen.findByText("Both photographs are stored.");
     // A second analysis, because the first one's photographs cannot be removed.
     expect(startAnalysisMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("what the quality gate found", () => {
+  async function storeBothAndChoose(): Promise<void> {
+    render(<CardUpload />);
+    choose("front", photograph());
+    choose("back", photograph());
+    fireEvent.click(sendButton());
+    await screen.findByText("Both photographs are stored.");
+    fireEvent.click(screen.getByRole("button", { name: "Choose which card this is" }));
+  }
+
+  it("waits for a verdict before handing off", async () => {
+    // Spec §18 puts the gate before anything else, and this screen is the only
+    // one that can act on what it finds — the retake is here, and #91 forbids
+    // `/identify` a route back.
+    await storeBothAndChoose();
+
+    await waitFor(() => {
+      expect(readAnalysisMock).toHaveBeenCalledWith(ANALYSIS_ID);
+    });
+  });
+
+  it("goes straight on when there is nothing to say", async () => {
+    await storeBothAndChoose();
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/cards");
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("stops on a photograph nothing could be read from, and says which and why", async () => {
+    readAnalysisMock.mockResolvedValue(
+      analysis("failed", [judged("front", "unusable", ["blur"]), judged("back", "good")]),
+    );
+
+    await storeBothAndChoose();
+
+    const verdict = await screen.findByRole("alert");
+    expect(verdict).toHaveTextContent(/cannot be analysed/i);
+    expect(verdict).toHaveTextContent(/front/i);
+    expect(verdict).toHaveTextContent(/out of focus/i);
+    // Spec §19: "If unusable, analysis should stop." Not "stop and then carry on".
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("says nothing about the photograph that was fine", async () => {
+    readAnalysisMock.mockResolvedValue(
+      analysis("failed", [judged("front", "unusable", ["blur"]), judged("back", "good")]),
+    );
+
+    await storeBothAndChoose();
+
+    const verdict = await screen.findByRole("alert");
+    expect(verdict).not.toHaveTextContent(/the back/i);
+  });
+
+  it("leaves the retake in reach after a refusal", async () => {
+    readAnalysisMock.mockResolvedValue(
+      analysis("failed", [judged("front", "unusable", ["excessive_darkness"])]),
+    );
+
+    await storeBothAndChoose();
+    await screen.findByRole("alert");
+
+    expect(screen.getByText("Retake the front")).toBeInTheDocument();
+  });
+
+  it("drops the verdict once that side has been retaken", async () => {
+    readAnalysisMock.mockResolvedValue(
+      analysis("failed", [judged("front", "unusable", ["glare"])]),
+    );
+
+    await storeBothAndChoose();
+    await screen.findByRole("alert");
+    choose("front", photograph("better.jpg"));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("informs rather than blocks when the photographs are merely poor", async () => {
+    // Spec §19: "analysis may continue but the user must be informed". Informed
+    // means a tap, not a banner they navigate past before reading it.
+    readAnalysisMock.mockResolvedValue(
+      analysis("awaiting_confirmation", [
+        judged("front", "poor", ["glare"]),
+        judged("back", "good"),
+      ]),
+    );
+
+    await storeBothAndChoose();
+
+    const verdict = await screen.findByRole("alert");
+    expect(verdict).toHaveTextContent(/reflection/i);
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use them anyway" }));
+
+    expect(push).toHaveBeenCalledWith("/cards");
+  });
+
+  it("offers no way past a refusal", async () => {
+    readAnalysisMock.mockResolvedValue(analysis("failed", [judged("front", "unusable", ["blur"])]));
+
+    await storeBothAndChoose();
+    await screen.findByRole("alert");
+
+    expect(screen.queryByRole("button", { name: "Use them anyway" })).toBeNull();
+  });
+
+  it("goes on rather than stalling when the gate has not answered", async () => {
+    // Giving up waiting is not an error: `/identify` will then say the
+    // photographs are not ready, which is the truth at that point.
+    readAnalysisMock.mockRejectedValue(new ApiError("down", { status: undefined }));
+
+    await storeBothAndChoose();
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/cards");
+    });
   });
 });

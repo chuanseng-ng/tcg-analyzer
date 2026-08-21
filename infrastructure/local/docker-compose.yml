@@ -2,8 +2,8 @@
 #
 #   docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 #
-# Brings up PostgreSQL, MinIO, the FastAPI service and the Next.js application,
-# having first run the migrations. That is M0's acceptance criterion: a
+# Brings up PostgreSQL, MinIO, Redis, the FastAPI service, the analysis worker
+# and the Next.js application, having first run the migrations. That is M0's acceptance criterion: a
 # developer can clone the repository and run the complete empty application
 # locally without a setup step.
 #
@@ -31,6 +31,10 @@ name: tcg-analyzer-local
 # migrations from the application's own image is that they cannot drift from
 # the code that reads the schema. Naming the tag explicitly keeps Compose from
 # building the same context twice under two generated names.
+#
+# The `worker` is deliberately *not* one of them any more: it builds
+# `worker.Dockerfile`, which is this image plus the `worker` extra, so OpenCV
+# stays out of the container that answers HTTP. See #36.
 x-api-image: &api-image
   build:
     context: ../..
@@ -244,17 +248,23 @@ services:
           path: ../../uv.lock
 
   worker:
-    # The analysis worker (spec §8, §65). It runs the API's own image with a
-    # different command, exactly as `migrate` does, so the code that processes a
-    # job cannot drift from the code that enqueued it. Spec §56's isolation is
-    # this container's rather than the image's: no published port, every
-    # capability dropped, no new privileges.
+    # The analysis worker (spec §8, §65). It runs the same application as the
+    # API, from an image of its own: #36's quality gate brought OpenCV, and a CV
+    # stack decoding untrusted photographs has no business inside an
+    # internet-facing web server. The two images differ by one uv extra and
+    # nothing else, so the code that processes a job still cannot drift from the
+    # code that enqueued it. Spec §56's isolation is this container's: no
+    # published port, every capability dropped, no new privileges.
     #
     # Deliberately NOT `read_only: true` — the watch rules below sync source
-    # into /app, and a read-only root filesystem would break hot reload. When
-    # the image splits (the first CV stage brings OpenCV), that split is the
-    # place to take the filesystem too.
-    <<: [*api-image, *hardening]
+    # into /app, and a read-only root filesystem would break hot reload. The
+    # image split did not change that; the sync is what stands in the way, and a
+    # deployment that does not hot-reload should take the filesystem.
+    <<: *hardening
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/worker.Dockerfile
+    image: tcg-analyzer-local/worker:dev
     command:
       - celery
       - --app
@@ -268,25 +278,25 @@ services:
       - ${TCG_API_LOG_LEVEL:-INFO}
     cap_drop:
       - ALL
-    # The image's own healthcheck probes /health over HTTP, and there is no
-    # server here — it is inherited from the API and has to be replaced rather
-    # than merely tolerated, or `up --wait` reports the stack as failed. A
-    # worker answers over the broker instead, which also makes the check prove
-    # the one dependency that matters: it is still connected to Redis.
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - celery --app tcg_api.analysis.worker inspect ping --destination "celery@$$HOSTNAME"
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+    # The healthcheck is the image's own now: it probes the broker with `celery
+    # inspect ping`, which is the one dependency that matters here. It used to
+    # be overridden in this file because the API image's `/health` probe was
+    # inherited and there is no HTTP server in a worker.
     environment:
       <<: [*api-database-url, *api-redis-url]
+      # The worker reads uploaded photographs back out of object storage to run
+      # spec §19's quality gate over them, so it needs the same storage
+      # configuration the API has. Before #36 it had none and could not have.
+      TCG_API_STORAGE_ENDPOINT_URL: http://minio:9000
+      TCG_API_STORAGE_BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
+      TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
+      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
       TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     depends_on:
       postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
       redis:
         condition: service_healthy

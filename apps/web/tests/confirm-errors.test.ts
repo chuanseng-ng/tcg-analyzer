@@ -72,4 +72,35 @@ describe("a confirmation the service did not record", () => {
     expect(failure.action).toBe("retry");
     expect(failure.message).toMatch(/did not understand/i);
   });
+
+  it("does not invite a retry that can never succeed", () => {
+    // The gate refused the photographs (#36). Spec §65 has no edge out of
+    // `failed`, so "try again" would be a loop with no exit — the reason this
+    // branch exists at all.
+    const failure = classifyConfirmFailure(
+      new ApiError("conflict", { status: 409, code: "image_quality_failure" }),
+    );
+
+    expect(failure.action).toBe("gone");
+    expect(failure.message).toMatch(/could not be analysed/i);
+  });
+
+  it("does not blame the photographs for a failure that was not theirs", () => {
+    const failure = classifyConfirmFailure(
+      new ApiError("conflict", { status: 409, code: "analysis_failed" }),
+    );
+
+    expect(failure.action).toBe("gone");
+    expect(failure.message).not.toMatch(/photograph/i);
+  });
+
+  it("offers no way into the upload screen, even when new photographs are what is needed", () => {
+    // #91: the confirmation gate has no route onward to analysis in any branch,
+    // and a failure is not the place to open one.
+    for (const code of ["image_quality_failure", "analysis_failed"] as const) {
+      const failure = classifyConfirmFailure(new ApiError("conflict", { status: 409, code }));
+
+      expect(failure.message).not.toMatch(/\/analyze/);
+    }
+  });
 });

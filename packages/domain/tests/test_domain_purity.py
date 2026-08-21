@@ -74,6 +74,7 @@ def test_the_public_surface_is_explicit() -> None:
         "errors",
         "grade",
         "identification",
+        "image_quality",
         "money",
         "repository",
     }

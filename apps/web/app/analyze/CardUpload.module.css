@@ -233,3 +233,60 @@
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
+
+/*
+ * The quality gate's verdict — spec §19.
+ *
+ * One block for both outcomes, distinguished by `data-refused` rather than by
+ * two class names: they say the same thing with different consequences, and a
+ * second block would drift from the first. Danger for a refusal, warning for a
+ * photograph that will do — the same two tokens the landing page and the upload
+ * failure already use, so nothing here introduces a third meaning for a colour.
+ */
+.verdict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-inline-start: var(--space-1) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.verdict[data-refused="true"] {
+  border-color: var(--color-danger);
+}
+
+.verdictHeading {
+  font-weight: var(--weight-medium);
+}
+
+.verdict[data-refused="true"] .verdictHeading {
+  color: var(--color-danger);
+}
+
+/* The heading takes focus when the verdict appears, so a screen reader lands on
+   the answer rather than wherever the button that asked for it used to be. */
+.verdictHeading:focus-visible {
+  outline: var(--space-1) solid var(--color-accent);
+  outline-offset: var(--space-1);
+}
+
+.verdictList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.verdictItem {
+  max-width: var(--measure);
+  font-size: var(--text-sm);
+}
+
+.verdictSide {
+  font-weight: var(--weight-medium);
+}

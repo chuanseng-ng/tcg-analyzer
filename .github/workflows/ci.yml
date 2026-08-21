@@ -191,11 +191,11 @@ jobs:
     name: Docker — ${{ matrix.image }} image builds
     runs-on: ubuntu-latest
     strategy:
-      # Both images build independently, and a failure should name the one that
-      # broke rather than stop at whichever came first.
+      # Every image builds independently, and a failure should name the one
+      # that broke rather than stop at whichever came first.
       fail-fast: false
       matrix:
-        image: [api, web]
+        image: [api, worker, web]
     steps:
       - uses: actions/checkout@v7
 
@@ -267,6 +267,16 @@ jobs:
           test "$($COMPOSE ps -q worker | xargs docker inspect -f '{{.State.Status}}')" = running
           $COMPOSE logs worker | grep -q "celery@"
 
+      # The image split, asserted where it actually matters — in the containers
+      # that get deployed rather than in a lockfile. `test_import_purity.py`
+      # proves the request path does not *import* OpenCV; this proves the API
+      # image does not *contain* it, which is the half a Python test run in a
+      # developer's virtualenv can never see.
+      - name: OpenCV is in the worker image and not in the API image
+        run: |
+          $COMPOSE exec -T worker python -c "import cv2; print(cv2.__version__)"
+          ! $COMPOSE exec -T api python -c "import cv2"
+
       # The only job where PostgreSQL, MinIO and the API are all real, so the
       # only place the upload path can be proved end to end. The JPEG is made
       # inside the API container, which also proves Pillow is in the deployed
@@ -298,6 +308,25 @@ jobs:
           run=$(curl -sS -b jar -X POST "localhost:8000/analyses/$id/run")
           echo "$run"
           test "$(echo "$run" | jq -r .status)" = queued
+
+          # The worker picks it up, runs spec §19's gate over both photographs
+          # and leaves the analysis at the confirmation gate. This is the only
+          # place the gate meets a real object store, a real broker and a real
+          # OpenCV — the unit tests stub each of the three.
+          for _ in $(seq 1 30); do
+            analysis=$(curl -sS -b jar "localhost:8000/analyses/$id")
+            test "$(echo "$analysis" | jq -r .status)" = identifying || break
+            sleep 1
+          done
+          echo "$analysis"
+          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
+          # A 64x48 flat rectangle is refused nothing and cleared of nothing:
+          # every geometric condition waits on card detection (#37), so the
+          # honest verdict is a status that says something was not checked.
+          test "$(echo "$analysis" | jq -r '.images | length')" = 2
+          test "$(echo "$analysis" | jq -r '.images[0].findings | length')" = 11
+          test "$(echo "$analysis" | jq -r \
+            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
 
       # The primary attack surface, against the real stack: a file is what its
       # bytes say it is, never what the request claims.

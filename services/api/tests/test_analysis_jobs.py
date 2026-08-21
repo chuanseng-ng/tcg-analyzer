@@ -14,7 +14,10 @@ setting, which is how a worker ends up accepting it by default.
 
 from __future__ import annotations
 
+import asyncio
 import pickle
+import sys
+import types
 import uuid
 from typing import Any
 
@@ -25,6 +28,7 @@ from kombu.serialization import dumps, loads, prepare_accept_content
 from structlog.testing import CapturingLogger
 from tcg_api.analysis import jobs
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
+from tcg_domain.analysis import AnalysisStatus, QualityStatus
 
 BROKER = "redis://:local@localhost:6379/0"
 
@@ -277,3 +281,147 @@ def test_a_delivery_with_nothing_to_do_is_not_an_error(
         jobs.run_analysis.pop_request()
 
     assert [call.args[0] for call in recorder.calls] == ["analysis.job_ignored"]
+
+
+# ---------------------------------------------------------------------------
+# The image-quality gate's place in a run — issue #36, spec §18, §19
+#
+# Still no database and still no OpenCV: `_advance` reaches the gate through a
+# lazy import, so a stub module in `sys.modules` is enough to drive every branch.
+# The stub is not merely convenient — it is the same mechanism the API image
+# relies on, since it does not install the gate at all.
+# ---------------------------------------------------------------------------
+
+
+class _FakeSession:
+    """Enough of an `AsyncSession` for `_advance` to run against."""
+
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def __aenter__(self) -> _FakeSession:
+        return self
+
+    async def __aexit__(self, *_: object) -> bool:
+        return False
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+class _FakeEngine:
+    def __init__(self) -> None:
+        self.disposed = False
+
+    async def dispose(self) -> None:
+        self.disposed = True
+
+
+def _run_with_gate(
+    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus
+) -> tuple[list[AnalysisStatus], _FakeEngine]:
+    """Drive `_advance` with a stubbed store and a stubbed gate.
+
+    Returns the transitions it attempted, in order, and the engine it built —
+    the second so that a test can assert the connection is always released.
+    """
+    engine = _FakeEngine()
+    session = _FakeSession()
+    moves: list[AnalysisStatus] = []
+
+    async def transition(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
+        moves.append(to)
+        return True
+
+    async def assess_analysis(_db: Any, _id: Any) -> QualityStatus:
+        return verdict
+
+    gate = types.ModuleType("tcg_api.analysis.quality")
+    gate.assess_analysis = assess_analysis  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
+    monkeypatch.setattr(jobs, "create_engine", lambda: engine)
+    monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: lambda: session)
+    monkeypatch.setattr(jobs, "transition", transition)
+
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is True
+    return moves, engine
+
+
+@pytest.mark.parametrize(
+    "verdict", [QualityStatus.GOOD, QualityStatus.ACCEPTABLE], ids=["good", "acceptable"]
+)
+def test_photographs_the_gate_is_content_with_reach_the_confirmation_gate(
+    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus
+) -> None:
+    moves, _ = _run_with_gate(monkeypatch, verdict)
+
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.AWAITING_CONFIRMATION]
+
+
+def test_poor_photographs_continue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec §19: "If poor, analysis may continue but the user must be informed."
+
+    Continuing is this half; the informing is the findings on `images`, which
+    `GET /analyses/{id}` serves and `/analyze` reads before it hands off.
+    """
+    moves, _ = _run_with_gate(monkeypatch, QualityStatus.POOR)
+
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.AWAITING_CONFIRMATION]
+
+
+def test_unusable_photographs_stop_the_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec §19: "If unusable, analysis should stop."
+
+    Stops meaning `failed`, and — the part worth asserting — **never**
+    `awaiting_confirmation`. An analysis that reached the confirmation gate on
+    photographs nothing could read would ask the user to confirm a card for an
+    analysis that can only ever produce a confident guess.
+    """
+    moves, _ = _run_with_gate(monkeypatch, QualityStatus.UNUSABLE)
+
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.FAILED]
+    assert AnalysisStatus.AWAITING_CONFIRMATION not in moves
+
+
+def test_the_gate_runs_after_the_claim_rather_than_before_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A duplicate delivery must not decode the photographs a second time.
+
+    Everything after the claim is inside it, so a second delivery finds the row
+    already moved and does no work at all — which is what makes an at-least-once
+    queue affordable when each job decodes tens of megapixels.
+    """
+    assessed = []
+
+    async def refuse_to_claim(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
+        return False
+
+    async def assess_analysis(_db: Any, _id: Any) -> QualityStatus:
+        assessed.append(True)
+        return QualityStatus.GOOD
+
+    gate = types.ModuleType("tcg_api.analysis.quality")
+    gate.assess_analysis = assess_analysis  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
+    monkeypatch.setattr(jobs, "create_engine", _FakeEngine)
+    monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: _FakeSession)
+    monkeypatch.setattr(jobs, "transition", refuse_to_claim)
+
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is False
+    assert assessed == []
+
+
+def test_the_connection_is_released_however_the_gate_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An engine per task run is only affordable if every run disposes of its own."""
+    _, engine = _run_with_gate(monkeypatch, QualityStatus.UNUSABLE)
+
+    assert engine.disposed

@@ -51,9 +51,19 @@ from tcg_domain.errors import (
     InvalidGrade,
     InvalidGradeDistribution,
     InvalidMoney,
+    InvalidQualityReport,
 )
 from tcg_domain.grade import MAX_GRADE, MIN_GRADE, Grade, GradeBound
 from tcg_domain.identification import CardIdentification
+from tcg_domain.image_quality import (
+    DECIDABLE_WITHOUT_GEOMETRY,
+    NEEDS_CARD_GEOMETRY,
+    ConditionVerdict,
+    QualityCondition,
+    QualityFinding,
+    QualityReport,
+    worst_status,
+)
 from tcg_domain.money import Currency, Money
 from tcg_domain.repository import (
     DEFAULT_SEARCH_LIMIT,
@@ -64,6 +74,7 @@ from tcg_domain.repository import (
 )
 
 __all__ = [
+    "DECIDABLE_WITHOUT_GEOMETRY",
     "DEFAULT_SEARCH_LIMIT",
     "ENGLISH",
     "INSUFFICIENT_INFORMATION",
@@ -71,6 +82,7 @@ __all__ = [
     "MAX_GRADE",
     "MAX_SEARCH_LIMIT",
     "MIN_GRADE",
+    "NEEDS_CARD_GEOMETRY",
     "POKEMON",
     "SUM_TOLERANCE",
     "TERMINAL_STATUSES",
@@ -88,6 +100,7 @@ __all__ = [
     "CardReference",
     "CardRepository",
     "CatalogUnavailable",
+    "ConditionVerdict",
     "Confidence",
     "Currency",
     "CurrencyMismatch",
@@ -106,11 +119,16 @@ __all__ = [
     "InvalidGrade",
     "InvalidGradeDistribution",
     "InvalidMoney",
+    "InvalidQualityReport",
     "Language",
     "Money",
+    "QualityCondition",
+    "QualityFinding",
+    "QualityReport",
     "QualityStatus",
     "SessionStatus",
     "Set",
     "SetId",
     "Uncertain",
+    "worst_status",
 ]

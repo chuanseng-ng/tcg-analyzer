@@ -323,11 +323,17 @@ These are **logical boundaries, not microservices**. V1 deploys as one API, one
 worker and one web application; the tree exists so the seams are in the right
 places when something eventually has to move, not so that everything is
 separately deployable now. The worker is a *process* boundary rather than a
-codebase one: it runs the API's own image with a different command, so the code
+codebase one: it runs the same application with a different command, so the code
 that runs a job cannot drift from the code that enqueued it. Its isolation
-(spec §56) is the container's — no published port, every capability dropped —
-and the image splits from the API's when the first computer-vision stage would
-otherwise put OpenCV into a web server.
+(spec §56) is the container's — no published port, every capability dropped.
+
+It has its own image since the image-quality gate (#36), and the two differ by
+exactly one uv extra. The gate brought OpenCV; a CV stack decoding untrusted
+photographs does not belong in the container answering HTTP. What holds that
+split up is a lazy import — the API imports `tcg_api.analysis.jobs` merely to
+enqueue, so the gate's wiring is imported inside the function that runs a job,
+and a purity test asserts that importing the application reaches neither `cv2`
+nor the gate.
 
 The split by language is not decorative either. `apps/*` is a pnpm/TypeScript
 workspace; `packages/*`, `services/*` and `ml/*` are a uv/Python workspace,

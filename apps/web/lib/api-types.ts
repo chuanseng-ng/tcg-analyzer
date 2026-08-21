@@ -265,6 +265,11 @@ export interface components {
              */
             id: string;
             /**
+             * Images
+             * @description Every photograph uploaded so far and spec §19's verdict on it. Empty before the first upload. This is how a `poor` verdict reaches the user, which §19 requires — a gate whose warning nothing surfaces is not a gate.
+             */
+            images: components["schemas"]["ImageQualityResponse"][];
+            /**
              * Status
              * @description One of spec §65's nine states. `created` until an upload moves it. `queued` is a transport word `POST /analyses/{id}/run` answers with and is never held here.
              * @example created
@@ -597,6 +602,16 @@ export interface components {
             version: string;
         };
         /**
+         * ConditionVerdict
+         * @description What the gate was able to say about one condition.
+         *
+         *     Three values rather than a boolean, because the third is the point. A gate
+         *     that reported "no glare" when it had not looked for glare would be the
+         *     confidently-wrong output spec §2.7 exists to forbid.
+         * @enum {string}
+         */
+        ConditionVerdict: "clear" | "detected" | "undetermined";
+        /**
          * ErrorCode
          * @description Spec §66, verbatim. The closed set of things that can go wrong.
          * @enum {string}
@@ -659,6 +674,26 @@ export interface components {
             status: "ok";
         };
         /**
+         * ImageQualityResponse
+         * @description One uploaded photograph and what spec §19's gate made of it.
+         */
+        ImageQualityResponse: {
+            /**
+             * Findings
+             * @description All eleven of spec §19's conditions, or empty while the gate has not run. Never a subset: a condition nobody assessed is reported `undetermined` rather than omitted.
+             */
+            findings: components["schemas"]["QualityFindingResponse"][];
+            /**
+             * Quality Score
+             * @description A [0, 1] verdict, 1 being best, or null while the gate has not run. The smallest headroom any condition had, so one bad measurement is not averaged away by five good ones.
+             */
+            quality_score: number | null;
+            /** @description Spec §19's verdict, or null while the gate has not run. `unusable` means the analysis stopped; `poor` means it went on and the user must be told. */
+            quality_status: components["schemas"]["QualityStatus"] | null;
+            /** @description Which view of the card this is. */
+            side: components["schemas"]["ImageSide"];
+        };
+        /**
          * ImageResponse
          * @description One uploaded photograph, as the API reports it.
          *
@@ -715,6 +750,62 @@ export interface components {
              */
             side: string;
         };
+        /**
+         * ImageSide
+         * @description Which view of the card an image is — spec §11.
+         *
+         *     All six exist from the first migration. Only :data:`V1_SIDES` are written in
+         *     V1; the other four are spec §52's guided-photography flow, which the V1
+         *     image pipeline "must be compatible with". Admitting them now costs a longer
+         *     CHECK constraint and saves a migration against a table holding user data.
+         * @enum {string}
+         */
+        ImageSide: "front" | "back" | "angled_front" | "angled_back" | "surface_front" | "surface_back";
+        /**
+         * QualityCondition
+         * @description Spec §19's eleven conditions, in the order the specification lists them.
+         *
+         *     A closed list for the reason :class:`~tcg_domain.analysis.AnalysisStatus` is
+         *     one: a condition nobody wrote a detector for is a condition no image can be
+         *     refused for. A twelfth is a feature, and it arrives with the heuristic that
+         *     decides it and the copy that explains it.
+         * @enum {string}
+         */
+        QualityCondition: "blur" | "low_resolution" | "glare" | "poor_exposure" | "excessive_darkness" | "excessive_brightness" | "severe_perspective_distortion" | "card_partly_outside_frame" | "multiple_cards" | "sleeve_obstruction" | "insufficient_card_size";
+        /**
+         * QualityFindingResponse
+         * @description What the gate concluded about one of spec §19's eleven conditions.
+         *
+         *     The measurement the gate recorded is deliberately absent. It exists so M7's
+         *     model can be compared against this baseline, and a Laplacian variance is not
+         *     something to put in front of somebody holding a phone; the copy that turns a
+         *     condition into a sentence lives in `apps/web`.
+         */
+        QualityFindingResponse: {
+            /**
+             * @description Which of spec §19's eleven conditions this is about.
+             * @example blur
+             */
+            condition: components["schemas"]["QualityCondition"];
+            /** @description What a detected condition makes the image — `poor` or `unusable`. Null for every other verdict. Nullable rather than absent, so a reader never has to tell 'no severity' from 'field not sent'. */
+            severity: components["schemas"]["QualityStatus"] | null;
+            /**
+             * @description `clear` if it was looked for and not found, `detected` if it was, `undetermined` if the gate could not tell. The third is a real answer, not a gap: five conditions need the card located first, which no V1 stage does yet.
+             * @example clear
+             */
+            verdict: components["schemas"]["ConditionVerdict"];
+        };
+        /**
+         * QualityStatus
+         * @description What the image-quality gate concluded — spec §19.
+         *
+         *     §19 also fixes what each means for the pipeline: `unusable` stops the
+         *     analysis, `poor` continues but the user must be told. `good` and
+         *     `acceptable` proceed silently. The gate itself is an OpenCV heuristic in M2
+         *     and a model in M7; this vocabulary does not change when it does.
+         * @enum {string}
+         */
+        QualityStatus: "good" | "acceptable" | "poor" | "unusable";
         /**
          * ReadinessChecks
          * @description Per-dependency outcome. Further dependencies join this model as they land.
@@ -926,7 +1017,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The analysis is not waiting for a confirmation. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            /** @description The analysis is not waiting for a confirmation. A bare body while it has merely not got there yet — outside the spec §66 taxonomy, which has no code meaning 'conflict' — and the §66 envelope once it has `failed`, carrying `image_quality_failure` when the gate refused the photographs and `analysis_failed` otherwise. The difference is whether trying again could ever help. */
             409: {
                 headers: {
                     [name: string]: unknown;

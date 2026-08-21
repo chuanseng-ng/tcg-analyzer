@@ -56,6 +56,7 @@ from collections.abc import Iterable
 from typing import Final
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 from tcg_domain.analysis import (
     TERMINAL_STATUSES,
     AnalysisStatus,
@@ -373,10 +374,11 @@ images = sa.Table(
         sa.Double(),
         nullable=True,
         comment=(
-            "The quality gate's numeric verdict. NULL until the gate has run. "
-            "Deliberately unconstrained in range: spec §19 fixes the four statuses "
-            "and says nothing about a scale, so the gate defines it and may add a "
-            "CHECK then. An omission on purpose, not an oversight."
+            "The quality gate's numeric verdict, in [0, 1] with 1 being best. "
+            "NULL until the gate has run. Spec §19 fixes the four statuses and says "
+            "nothing about a scale, so the gate defined this one (#36): the smallest "
+            "headroom any condition had above its poor threshold, so the weakest "
+            "link governs exactly as the status is the worst finding."
         ),
     ),
     sa.Column(
@@ -387,6 +389,19 @@ images = sa.Table(
             "Spec §19's verdict: good, acceptable, poor or unusable. NULL until the "
             "gate has run. 'unusable' stops the analysis and 'poor' continues but "
             "the user must be told — rules that live with the gate, not here."
+        ),
+    ),
+    sa.Column(
+        "quality_details",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "What the gate concluded about each of spec §19's eleven conditions, "
+            "plus the gate version and the thresholds it ran with. NULL until the "
+            "gate has run. A column beyond §11's list, on the same reasoning as the "
+            "three `sets`/`cards` carry beyond §10's: §19 requires the user to be "
+            "told what was wrong, and a status alone cannot say. JSONB rather than a "
+            "findings table because its only reader renders it."
         ),
     ),
     sa.Column(
@@ -410,6 +425,13 @@ images = sa.Table(
     sa.CheckConstraint(
         "(width IS NULL OR width > 0) AND (height IS NULL OR height > 0)",
         name="dimensions_are_positive",
+    ),
+    # The range #31 left for the gate to define (#36). A score outside [0, 1] is
+    # not a worse photograph, it is a gate that has miscomputed — and every
+    # consumer of it, the score bar included, reads it as a fraction.
+    sa.CheckConstraint(
+        "quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)",
+        name="quality_score_is_a_unit_interval",
     ),
     sa.CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="sha256_is_lowercase_hex"),
     # The cache lookup: every image already processed from these bytes. Not

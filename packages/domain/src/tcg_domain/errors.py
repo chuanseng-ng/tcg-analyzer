@@ -33,6 +33,7 @@ __all__ = [
     "InvalidGrade",
     "InvalidGradeDistribution",
     "InvalidMoney",
+    "InvalidQualityReport",
 ]
 
 
@@ -105,6 +106,18 @@ class InvalidCardSearch(DomainError, ValueError):
     Covers both directions of :meth:`tcg_domain.repository.CardRepository.search`:
     a filter that is empty rather than absent, and a page whose window does not
     describe the result set it claims.
+    """
+
+
+class InvalidQualityReport(DomainError, ValueError):
+    """An image-quality finding or report is not representable — spec §19, #36.
+
+    Covers a report that does not carry every one of §19's eleven conditions, a
+    finding whose verdict and severity contradict each other, an undetermined
+    verdict with no reason, and a score outside ``[0, 1]``. The completeness
+    rule is why this is an error rather than something the gate merely tries to
+    honour: a condition nobody assessed must be *reported* undetermined, not
+    quietly left out of the answer.
     """
 
 

@@ -11,6 +11,7 @@ needing the root `pnpm-lock.yaml`.
 
 ```bash
 docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
+docker build -f infrastructure/docker/worker.Dockerfile -t tcg-worker:dev .
 docker build -f infrastructure/docker/web.Dockerfile -t tcg-web:dev .
 ```
 
@@ -19,11 +20,25 @@ docker build -f infrastructure/docker/web.Dockerfile -t tcg-web:dev .
 | File | Image | Shape |
 | --- | --- | --- |
 | `api.Dockerfile` | `services/api` — FastAPI, and the Alembic migrations | production |
+| `worker.Dockerfile` | `services/api` run as the Celery analysis worker | production |
 | `web.Dockerfile` | `apps/web` — Next.js | development |
 
 `api.Dockerfile` carries `alembic.ini` and `database/` as well as the
 application, so the local stack's one-shot `migrate` service runs the migrations
 from the same image as the code that reads the schema.
+
+`worker.Dockerfile` is the same application plus one uv extra, `worker`, which
+brings `ml/image-quality` and with it OpenCV. **That extra is the whole reason
+there are two images.** The worker decodes untrusted photographs; the API
+answers HTTP; putting a CV stack in the container facing the internet buys
+nothing and widens the attack surface (spec §56). The worker was the API image
+with a different command until the quality gate arrived (#36), which is exactly
+when the condition stopped holding.
+
+What keeps the split real is a lazy import: `tcg_api.analysis.jobs` reaches the
+gate from inside the function that runs a job, because the API imports that
+module merely to enqueue. Move it to the top of the file and the API container
+stops starting. `services/api/tests/test_import_purity.py` asserts it.
 
 `web.Dockerfile` is **development-shaped**: it runs `next dev`. Production
 packaging for the web app is deliberately absent — it is a deployment concern,
@@ -43,6 +58,6 @@ inheriting it.
 
 ## Still to come
 
-The analysis worker (M2) and the ML image (M6). The ML image needs NVIDIA
-Container Toolkit + CUDA for local GPU development; the Compose file is shaped
-so that service is an addition rather than a restructure.
+The ML image (M6). It needs NVIDIA Container Toolkit + CUDA for local GPU
+development; the Compose file is shaped so that service is an addition rather
+than a restructure.
