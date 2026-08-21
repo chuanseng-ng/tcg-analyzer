@@ -23,15 +23,16 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path            | Contents                                                                                                                |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `app/`          | App Router routes. `/` is the landing page; `/analyze` is an M2 placeholder                                             |
-| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                           |
-| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                                           |
-| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                                              |
-| `lib/`          | `api.ts` — the client for `services/api`; `card-search.ts`, `card-display.ts`, `card-errors.ts` and `identification.ts` |
-| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                                                  |
-| `tests/`        | Vitest + React Testing Library, jsdom environment                                                                       |
+| Path            | Contents                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `app/`          | App Router routes. `/` is the landing page                                                        |
+| `app/analyze/`  | `/analyze` — photograph the front and back of a card and upload them (spec §48)                   |
+| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                     |
+| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                     |
+| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                        |
+| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts` and `upload-*.ts` |
+| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                            |
+| `tests/`        | Vitest + React Testing Library, jsdom environment                                                 |
 
 ## Styling
 
@@ -47,6 +48,49 @@ is a phone camera. Layout primitives use fluid units and `max-width` only;
 nothing declares a fixed pixel width. A `tests/layout-primitives.test.ts` check
 enforces that, standing in for a real 375px viewport assertion until E2E
 arrives.
+
+## The upload screen
+
+`/analyze` is where the product actually begins: photograph the front and the
+back of a card and commit them to an analysis. The landing page's spec §48 call
+to action has always pointed here. Six decisions shape it:
+
+- **Nothing is sent until the user says so.** Both photographs are staged in the
+  browser and uploaded by one explicit action. That is what makes **Remove**
+  possible at all — spec §65's state graph is forward-only, so once an analysis
+  holds an image no legal move takes it back, and a photograph that has not been
+  sent is the only one that can be un-chosen. After the upload the corrections
+  are **Retake**, which `POST /analyses/{id}/images` treats as a replacement, and
+  **Start over**, which abandons the analysis for a fresh one.
+- **One native file input per side, with no `capture` attribute.** `capture`
+  forces the camera and _removes_ the photo library and the file picker; without
+  it mobile Safari and Chrome offer Take Photo, Photo Library and Browse from the
+  same control, and a desktop gets the file picker. `accept` names JPEG and PNG
+  concretely rather than `image/*`, because iOS hands over an unconverted HEIC
+  for `image/*` and the service refuses it after the whole file has arrived.
+- **Front and back are never told apart by position alone.** The side is in the
+  heading, the button, the alt text and the status line. Mixing the two up
+  silently corrupts centering and condition analysis, and no later stage can
+  notice.
+- **`lib/api.ts` uploads over `XMLHttpRequest`, not `fetch`.** `fetch` has no
+  upload-progress event: reporting one needs a streaming request body, which
+  Safari does not implement. Spec §48 lists upload progress as a requirement, so
+  the transport follows the requirement. A failure is the same `ApiError` either
+  way.
+- **`lib/upload-slots.ts`'s size and type rules are a courtesy.** They save a
+  wasted upload over a mobile connection; `services/api` sniffs the content and
+  is the only thing that decides (spec §55). There is deliberately no pixel
+  check — reading an image header means decoding the file, which is client-side
+  image analysis and a non-goal.
+- **The screen leads nowhere afterwards, on purpose.** Persisting which card the
+  photographs show writes to the analysis (#104) and running the pipeline needs
+  that confirmation first, so a link onward today would be a link to a dead end.
+
+`lib/upload-errors.ts` is a sibling of `lib/card-errors.ts` rather than an
+extension of it: two of its outcomes — throttled, and an analysis that has moved
+past taking photographs — have no counterpart at `GET /cards/{id}`. A 429 is
+answered with the `Retry-After` countdown and **no** retry button, because a
+button there fires straight back into the limit that produced it.
 
 ## The card catalog surface
 
