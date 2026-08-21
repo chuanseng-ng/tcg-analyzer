@@ -5,21 +5,28 @@ no object storage, no HTTP — `tcg_api.analysis.image_validation` is the model,
 and for the same reason: everything security- or product-critical about this
 module can then be asserted by a test that needs no infrastructure at all.
 
-**Six of spec §19's eleven are decided here.** The other five —
-perspective distortion, card partly outside frame, multiple cards, sleeve
+**Six of spec §19's eleven are decided from the pixels alone.** The other five
+— perspective distortion, card partly outside frame, multiple cards, sleeve
 obstruction, insufficient card size — all reduce to "where is the card", which
 is #37's card boundary detection; its own scope says it "feeds back into the
-quality gate". They are reported :data:`ConditionVerdict.UNDETERMINED` with a
-reason, which is what the acceptance criterion asks for and what spec §2.7
-requires: a gate that answered "no sleeve" without having looked for one would
-be exactly the confidently-wrong output the specification forbids.
+quality gate". They are decided here too, but only when the `geometry` argument
+carries a :class:`~tcg_domain.card_geometry.CardGeometry`.
 
-**#37 adds a `geometry` keyword argument here.** It is deliberately not
-declared yet: the shape of a detected quadrilateral — corner order, coordinate
-space, whether a detection confidence rides along — is #37's decision to make,
-and a parameter typed against a class nobody has defined would pre-empt it. The
-argument is keyword-only when it arrives, so no caller of :func:`assess`
-changes.
+**Without one they are reported :data:`ConditionVerdict.UNDETERMINED` with a
+reason**, which is what the acceptance criterion asks for and what spec §2.7
+requires: a gate that answered "no sleeve" without having looked for one would
+be exactly the confidently-wrong output the specification forbids. That is the
+whole degradation path — a detector that cannot find a card hands back
+:class:`~tcg_domain.confidence.InsufficientInformation`, this module says so on
+all five conditions, and nothing anywhere guesses a quadrilateral.
+
+**`geometry` takes three states, and the third is why it is not just
+`CardGeometry | None`.** `None` means no detector ran at all; an
+:class:`~tcg_domain.confidence.InsufficientInformation` means one ran and could
+not locate the card, and its reason is what gets stored; a
+:class:`~tcg_domain.card_geometry.CardGeometry` means the five are answered.
+Folding the first two together would lose the only explanation a stored row
+would ever carry.
 
 **This is a heuristic, and M7 replaces it with a model.** What must not change
 when it does is this signature and :class:`QualityReport` — the thresholds and
@@ -35,8 +42,9 @@ import cv2
 import numpy as np
 from cv2.typing import MatLike
 from tcg_domain.analysis import QualityStatus
+from tcg_domain.card_geometry import CardGeometry
+from tcg_domain.confidence import InsufficientInformation, Uncertain
 from tcg_domain.image_quality import (
-    NEEDS_CARD_GEOMETRY,
     ConditionVerdict,
     QualityCondition,
     QualityFinding,
@@ -60,10 +68,11 @@ _Gray = MatLike
 #: `(unusable, poor, ideal)` for one measurement — see `QualityThresholds`.
 _Limits = tuple[float, float, float]
 
-#: Why the geometric five cannot be answered yet. One sentence, stored on every
-#: image, naming the thing that is missing rather than the issue number — the
-#: record outlives the issue tracker.
-_NO_GEOMETRY: Final = "the card has not been located in the photograph yet"
+#: Why the geometric five could not be answered, when no detector ran at all.
+#: One sentence, stored on the image, naming the thing that is missing rather
+#: than the issue number — the record outlives the issue tracker. A detector
+#: that *did* run and failed supplies its own reason instead.
+_NO_GEOMETRY: Final = "the card has not been located in the photograph"
 
 
 class UnreadableImage(ValueError):
@@ -80,6 +89,7 @@ def assess(
     data: bytes,
     *,
     thresholds: QualityThresholds = DEFAULT_THRESHOLDS,
+    geometry: Uncertain[CardGeometry] | None = None,
 ) -> QualityReport:
     """Judge one photograph against spec §19's eleven conditions.
 
@@ -87,10 +97,15 @@ def assess(
         data: The stored image, JPEG or PNG.
         thresholds: Where each condition crosses into poor and then unusable.
             Recorded in the report, so the verdict explains itself later.
+        geometry: Where the card is, from `tcg_ml_card_detection.detect`. A
+            :class:`~tcg_domain.card_geometry.CardGeometry` decides the five
+            geometric conditions; an
+            :class:`~tcg_domain.confidence.InsufficientInformation` and `None`
+            both leave them undetermined, with different reasons.
 
     Returns:
         A report carrying all eleven conditions, a `[0, 1]` score and the
-        version and thresholds that produced them.
+        versions and thresholds that produced them.
 
     Raises:
         UnreadableImage: If the bytes do not decode.
@@ -107,22 +122,40 @@ def assess(
         short_edge=min(original_width, original_height),
         glare_level=thresholds.glare_level,
     )
-    findings = [_finding(condition, measurements, thresholds) for condition in _DECIDED]
+    located = geometry if isinstance(geometry, CardGeometry) else None
+    if located is not None:
+        measurements |= _measure_geometry(located)
+
+    decided = _DECIDED if located is None else _DECIDED + _GEOMETRIC
+    findings = [_finding(condition, measurements, thresholds) for condition in decided]
     findings.extend(
         QualityFinding(
             condition=condition,
             verdict=ConditionVerdict.UNDETERMINED,
-            reason=_NO_GEOMETRY,
+            reason=_why_not_decided(geometry),
         )
-        for condition in sorted(NEEDS_CARD_GEOMETRY)
+        for condition in sorted(set(QualityCondition) - set(decided))
     )
 
     return QualityReport(
         findings=tuple(sorted(findings, key=lambda f: list(QualityCondition).index(f.condition))),
-        score=_score(measurements, thresholds),
+        score=_score(measurements, thresholds, decided),
         version=IMAGE_QUALITY_VERSION,
-        thresholds=thresholds.as_record(),
+        thresholds={**thresholds.as_record(), **(located.thresholds if located else {})},
+        detector=None if located is None else located.detector,
     )
+
+
+def _why_not_decided(geometry: Uncertain[CardGeometry] | None) -> str:
+    """What to store against a condition the card boundary would have answered.
+
+    A detector that ran and failed knows more than this module does about why,
+    so its reason is preferred over the generic one. `undetermined` with no
+    explanation is a gap wearing an answer's clothes.
+    """
+    if isinstance(geometry, InsufficientInformation) and (geometry.reason or "").strip():
+        return geometry.reason.strip() if geometry.reason else _NO_GEOMETRY
+    return _NO_GEOMETRY
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +192,25 @@ def _working_gray(colour: _Gray, *, long_edge: int) -> _Gray:
     )
 
 
+def _measure_geometry(geometry: CardGeometry) -> dict[QualityCondition, float]:
+    """The five measurements a located card supplies.
+
+    Every one of them is a property of
+    :class:`~tcg_domain.card_geometry.CardGeometry` rather than arithmetic done
+    here, so that this module and perspective correction cannot disagree about
+    what the same quadrilateral means.
+    """
+    return {
+        QualityCondition.SEVERE_PERSPECTIVE_DISTORTION: geometry.opposite_side_ratio,
+        QualityCondition.CARD_PARTLY_OUTSIDE_FRAME: geometry.border_margin_fraction,
+        QualityCondition.MULTIPLE_CARDS: float(geometry.candidates),
+        QualityCondition.SLEEVE_OBSTRUCTION: geometry.enclosing_ratio,
+        QualityCondition.INSUFFICIENT_CARD_SIZE: geometry.area_fraction,
+    }
+
+
 def _measure(gray: _Gray, *, short_edge: int, glare_level: int) -> dict[QualityCondition, float]:
-    """Every decidable condition's measurement, in one pass."""
+    """Every photometric condition's measurement, in one pass."""
     low, high = (float(value) for value in np.percentile(gray, (5, 95)))
     return {
         # The *original* short edge, not the working copy's: this is the one
@@ -196,8 +246,8 @@ def _largest_saturated_fraction(gray: _Gray, *, level: int) -> float:
 # Judging.
 # ---------------------------------------------------------------------------
 
-#: Which measurement each condition reads, and which direction is better. The
-#: order is spec §19's, so a report reads the way the specification does.
+#: The conditions the pixels alone answer. The order is spec §19's, so a report
+#: reads the way the specification does.
 _DECIDED: Final = (
     QualityCondition.BLUR,
     QualityCondition.LOW_RESOLUTION,
@@ -205,6 +255,16 @@ _DECIDED: Final = (
     QualityCondition.POOR_EXPOSURE,
     QualityCondition.EXCESSIVE_DARKNESS,
     QualityCondition.EXCESSIVE_BRIGHTNESS,
+)
+
+#: The conditions a located card answers, judged by exactly the same threshold
+#: machinery as the six above — one way a condition becomes a finding, not two.
+_GEOMETRIC: Final = (
+    QualityCondition.SEVERE_PERSPECTIVE_DISTORTION,
+    QualityCondition.CARD_PARTLY_OUTSIDE_FRAME,
+    QualityCondition.MULTIPLE_CARDS,
+    QualityCondition.SLEEVE_OBSTRUCTION,
+    QualityCondition.INSUFFICIENT_CARD_SIZE,
 )
 
 
@@ -286,16 +346,22 @@ def _ascending(value: float, limits: _Limits) -> tuple[float, float, float, floa
     return (value, unusable, poor, ideal)
 
 
-def _score(measurements: dict[QualityCondition, float], thresholds: QualityThresholds) -> float:
+def _score(
+    measurements: dict[QualityCondition, float],
+    thresholds: QualityThresholds,
+    decided: tuple[QualityCondition, ...],
+) -> float:
     """One `[0, 1]` verdict for the photograph, 1 being best.
 
-    The **minimum** over the decided conditions, so the weakest link governs —
-    the same rule that makes the status the worst finding. That is what keeps
-    the two consistent: `score < 0.5` exactly when something was detected, which
-    is worth more than an average that lets five clean measurements hide a
-    ruinous sixth. Undetermined conditions contribute nothing; a gate that
-    scored an unchecked condition would be inventing a measurement.
+    The **minimum** over the conditions actually decided, so the weakest link
+    governs — the same rule that makes the status the worst finding. That is
+    what keeps the two consistent: `score < 0.5` exactly when something was
+    detected, which is worth more than an average that lets ten clean
+    measurements hide a ruinous eleventh. `decided` is passed rather than read
+    from a module constant precisely so that this stays true when the geometric
+    five join in: undetermined conditions contribute nothing, because a gate
+    that scored an unchecked condition would be inventing a measurement.
     """
     return min(
-        _margin(measurements[condition], _limits(condition, thresholds)) for condition in _DECIDED
+        _margin(measurements[condition], _limits(condition, thresholds)) for condition in decided
     )

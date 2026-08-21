@@ -19,22 +19,23 @@ other module here, and `test_domain_purity.py` enforces it.
 **Undetermined is a first-class answer, not a gap.** Five of §19's eleven —
 perspective distortion, card partly outside frame, multiple cards, sleeve
 obstruction, insufficient card size — cannot be decided until the card has been
-located in the photograph, which is #37's work. The acceptance criterion allows
-exactly this: every condition is "detected or explicitly reported as
-undetermined". Spec §2.7 says the same thing in general terms, and
-:class:`~tcg_domain.confidence.InsufficientInformation` is the in-process form
-of it. :data:`ConditionVerdict.UNDETERMINED` is its persisted form — an enum
-member rather than the singleton, because this value is stored as JSON and
-served over HTTP.
+located in the photograph. #37's card boundary detection locates it, and
+:class:`~tcg_domain.card_geometry.CardGeometry` is what it concludes; when it
+cannot find a card these five are still reported undetermined rather than
+guessed. The acceptance criterion allows exactly this: every condition is
+"detected or explicitly reported as undetermined". Spec §2.7 says the same thing
+in general terms, and :class:`~tcg_domain.confidence.InsufficientInformation` is
+the in-process form of it. :data:`ConditionVerdict.UNDETERMINED` is its
+persisted form — an enum member rather than the singleton, because this value is
+stored as JSON and served over HTTP.
 
 **What `acceptable` means.** §19 lists four statuses and defines none of them.
 :meth:`QualityReport.status` fixes the reading: `good` is all eleven conditions
 clear; `acceptable` is nothing wrong found *but something not checked*; `poor`
-and `unusable` are the worst severity actually detected. A consequence worth
-knowing before it surprises somebody: while the geometric five are always
-undetermined, **no image can score `good`** — the gate has not looked at
-everything. `good` becomes reachable the moment #37 supplies a card geometry,
-with no change here.
+and `unusable` are the worst severity actually detected. So a photograph the
+detector could not locate a card in tops out at `acceptable`, however sharp and
+well lit it is — the gate has not looked at everything, and saying so is the
+point.
 """
 
 from __future__ import annotations
@@ -112,9 +113,10 @@ DECIDABLE_WITHOUT_GEOMETRY: Final = frozenset(
 )
 
 #: The conditions that need the card located first — #37's card boundary
-#: detection, which its own scope says "feeds back into the quality gate". Until
-#: it lands these are reported :data:`ConditionVerdict.UNDETERMINED`, never
-#: guessed and never quietly omitted.
+#: detection, which its own scope says "feeds back into the quality gate".
+#: Without a :class:`~tcg_domain.card_geometry.CardGeometry` these are reported
+#: :data:`ConditionVerdict.UNDETERMINED`, never guessed and never quietly
+#: omitted.
 NEEDS_CARD_GEOMETRY: Final = frozenset(QualityCondition) - DECIDABLE_WITHOUT_GEOMETRY
 
 #: How bad each status is. `good` is the absence of a finding, so a fold over an
@@ -246,6 +248,11 @@ class QualityReport:
         thresholds: The values the gate ran with, copied on construction. What
             makes the record reproducible without knowing which configuration
             was live.
+        detector: The identifier of the card detector whose geometry decided the
+            geometric conditions, when one ran. A second component the findings
+            depend on is a second version the record has to name, or a verdict
+            cannot be reproduced from what is stored beside it. Absent when the
+            geometric five were reported undetermined.
 
     Raises:
         InvalidQualityReport: If a condition is missing or repeated, the score is
@@ -256,6 +263,7 @@ class QualityReport:
     score: float
     version: str
     thresholds: Mapping[str, float] = _NO_THRESHOLDS
+    detector: str | None = None
 
     def __post_init__(self) -> None:
         set_field = object.__setattr__
@@ -263,6 +271,8 @@ class QualityReport:
         set_field(self, "score", _validated_score(self.score))
         set_field(self, "version", _validated_version(self.version))
         set_field(self, "thresholds", MappingProxyType(dict(self.thresholds)))
+        if self.detector is not None:
+            set_field(self, "detector", _validated_version(self.detector, label="detector"))
 
         seen = [finding.condition for finding in self.findings]
         if sorted(seen) != sorted(QualityCondition):
@@ -294,6 +304,7 @@ class QualityReport:
         """
         return {
             "version": self.version,
+            **({} if self.detector is None else {"detector": self.detector}),
             "thresholds": dict(self.thresholds),
             "findings": [
                 {
@@ -322,11 +333,11 @@ def _validated_score(value: object) -> float:
     return number
 
 
-def _validated_version(value: object) -> str:
+def _validated_version(value: object, *, label: str = "version") -> str:
     if not isinstance(value, str) or not value.strip():
-        raise InvalidQualityReport("version must be a non-empty identifier")
+        raise InvalidQualityReport(f"{label} must be a non-empty identifier")
     if "latest" in value.lower():
         # The same refusal `catalog_version.py` makes, for the same reason: a
         # record naming "latest" is worthless the moment the gate changes.
-        raise InvalidQualityReport(f"version must name a fixed gate, not {value!r}")
+        raise InvalidQualityReport(f"{label} must name a fixed component, not {value!r}")
     return value.strip()

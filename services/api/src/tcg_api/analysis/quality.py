@@ -1,8 +1,18 @@
-"""Running the image-quality gate over an analysis — issue #36, spec §18, §19.
+"""Running the image pipeline's first two stages — issues #36, #37, spec §18, §19.
 
-The gate itself is `tcg_ml_image_quality`, which knows nothing about databases
-or object storage. This module is the wiring: read what was stored, judge it,
-write the verdict back, and answer with what it means for the analysis.
+The stages themselves are `tcg_ml_card_detection` and `tcg_ml_image_quality`,
+neither of which knows anything about databases or object storage. This module
+is the wiring: read what was stored, locate the card, judge the photograph
+against spec §19, write the verdict back, and answer with what it means for the
+analysis.
+
+**Detection runs before the gate, which is not the order spec §18 draws.** §18
+lists image quality above card detection, and that is still the order the
+*refusal* happens in — the gate is the stage that stops an analysis, and the
+detector never stops anything. But five of spec §19's eleven conditions are
+about where the card is, so the boundary has to be found before the gate can
+answer them. What §18 fixes is which stage owns the verdict, and that is
+unchanged.
 
 **Nothing imports this module eagerly, and that is load-bearing.**
 `routers/analyses.py` imports `tcg_api.analysis.jobs` merely to enqueue, so a
@@ -25,6 +35,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import QualityStatus
 from tcg_domain.image_quality import QualityReport, worst_status
+from tcg_ml_card_detection import detect
 from tcg_ml_image_quality import assess
 from tcg_shared.storage.keys import StorageKey
 from tcg_shared.storage.port import ObjectStorage
@@ -76,6 +87,11 @@ async def assess_analysis(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
             quality_status=str(report.status),
             quality_score=round(report.score, 3),
             gate=report.version,
+            # Whether the card was located at all, which is the difference
+            # between five answered conditions and five undetermined ones — and
+            # therefore the first thing to look at when a photograph nobody can
+            # fault comes back `acceptable`.
+            detector=report.detector,
         )
 
     return worst_status(statuses)
@@ -84,10 +100,33 @@ async def assess_analysis(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
 async def _assess_one(storage: ObjectStorage, key: str) -> QualityReport:
     """Fetch one stored photograph and judge it, off the event loop.
 
-    Decoding tens of megapixels and convolving a Laplacian over the result is
-    CPU-bound, and a blocking call on the loop is an outage under load rather
-    than a slow request — the same reason the upload endpoint puts
-    `validate_image` behind `run_in_threadpool`.
+    Decoding tens of megapixels, walking its contours and convolving a Laplacian
+    over the result is CPU-bound, and a blocking call on the loop is an outage
+    under load rather than a slow request — the same reason the upload endpoint
+    puts `validate_image` behind `run_in_threadpool`. One hop for both stages,
+    not one each.
     """
     data = await storage.get(StorageKey(key))
-    return await anyio.to_thread.run_sync(partial(assess, data))
+    return await anyio.to_thread.run_sync(partial(_locate_and_judge, data))
+
+
+def _locate_and_judge(data: bytes) -> QualityReport:
+    """Where the card is, and what spec §19 makes of the photograph around it.
+
+    A detector that cannot find a card returns
+    :class:`~tcg_domain.confidence.InsufficientInformation` rather than raising,
+    and the gate reports the five geometric conditions undetermined with its
+    reason. Undecodable bytes are the one case both stages meet: `detect`
+    answers rather than raising, so `assess` stays the single place that turns
+    them into an `UnreadableImage` for the job runner.
+
+    ponytail: two decodes of the same JPEG, tens of milliseconds inside a
+    background job. Pass a decoded array between the two if a profile ever says
+    it matters — the cost is that both packages then take a numpy array instead
+    of bytes, which is a worse contract for a worse reason.
+
+    #38 needs this quadrilateral for perspective correction and it exists right
+    here; returning it alongside the report is that issue's change, not a
+    second detection pass.
+    """
+    return assess(data, geometry=detect(data))

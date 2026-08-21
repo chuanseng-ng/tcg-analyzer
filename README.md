@@ -159,7 +159,7 @@ in the pipeline is a step you cannot reproduce yourself.
 ```bash
 uv run ruff check .                     # lint
 uv run ruff format --check .            # formatting
-uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src
+uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src ml/card-detection/src
 uv run pytest -m "not integration and not object_storage"   # both need Docker
 
 pnpm --filter @tcg/web lint
@@ -447,7 +447,8 @@ an acknowledgement rather than a state, and no analysis ever holds it.
 
 The same `up` starts Redis and the worker. The worker runs the same application
 with a different command, from an image of its own — the API's plus the `worker`
-extra, which brings the image-quality gate and with it OpenCV:
+extra, which brings the image-quality gate and the card detector, and with them
+OpenCV:
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml logs -f worker
@@ -456,10 +457,10 @@ docker compose -f infrastructure/local/docker-compose.yml logs -f worker
 Five properties are load-bearing rather than incidental, and each has a test:
 
 - **The API image does not contain OpenCV.** The worker decodes untrusted
-  photographs; the API answers HTTP. `tcg_api.analysis.jobs` imports the gate's
-  wiring inside the function that runs a job rather than at module scope,
-  because the API imports that module to enqueue — moving it to the top of the
-  file is a tidy-up that stops the API container from starting.
+  photographs; the API answers HTTP. `tcg_api.analysis.jobs` imports the
+  pipeline's wiring inside the function that runs a job rather than at module
+  scope, because the API imports that module to enqueue — moving it to the top
+  of the file is a tidy-up that stops the API container from starting.
 
 - **The worker accepts JSON and nothing else.** A Celery worker willing to
   deserialize pickle from a broker an attacker can write to is arbitrary code
@@ -484,20 +485,46 @@ continues but the user must be told. The M2 implementation is OpenCV heuristics
 in `ml/image-quality`, and M7 replaces it with a model behind the same
 signature.
 
-It decides six of §19's eleven conditions — blur, low resolution, glare, poor
-exposure, excessive darkness, excessive brightness. The other five all reduce to
-"where is the card", which card boundary detection has not answered yet, and
-they are reported **undetermined with a reason** rather than guessed. A
-consequence worth knowing before it looks like a bug: while five conditions go
-unchecked, no photograph can be `good` — the best available verdict is
-`acceptable`, which here means "nothing wrong found, and something not looked
-at".
+Six of §19's eleven conditions are measured from the pixels alone — blur, low
+resolution, glare, poor exposure, excessive darkness, excessive brightness. The
+other five all reduce to "where is the card", and are answered from the card
+boundary the detector below supplies. Without one they are reported
+**undetermined with a reason** rather than guessed, and a photograph with five
+conditions unchecked cannot be `good` however sharp it is: the best available
+verdict is `acceptable`, which here means "nothing wrong found, and something
+not looked at".
 
 Every verdict is persisted on `images` — the status, a `[0, 1]` score and all
 eleven findings — and served by `GET /analyses/{id}`, which is what lets
 `/analyze` say what was wrong before it hands off to the catalog. The thresholds
-that produced a verdict are recorded beside it, along with the gate's version,
-so a later model can be compared against the baseline that actually ran.
+that produced a verdict are recorded beside it, along with the versions of the
+gate and of the detector, so a later model can be compared against the baseline
+that actually ran.
+
+#### Card boundary detection
+
+`ml/card-detection` locates the card so that everything downstream operates on
+the card rather than on the table it is lying on (spec §18). It takes the stored
+bytes and returns four corners **clockwise from the top left**, in the original
+photograph's coordinates, with a detection confidence — or an explicit "no card
+found", never a guessed quadrilateral. The V1 implementation is an OpenCV
+contour baseline; a learned detector is an M7 option behind the same signature.
+
+Three things about it are deliberate and easy to undo by accident:
+
+- **The corner order is validated, not documented.** Perspective correction
+  reads the four corners positionally, so a wrong order does not fail — it
+  silently rotates or mirrors the card. `CardGeometry` refuses a quadrilateral
+  that does not run clockwise around a convex shape, so a mirrored one is not
+  representable.
+- **The boundary is not cropped tight.** M7's edge and corner analysis needs the
+  card's actual edge, and a tight crop shaves the whitening that matters most.
+- **Concentric quadrilaterals are one card.** A sleeve, a top-loader and the two
+  walls of an edge ribbon all put a second quadrilateral around the first;
+  counting those as two cards would refuse the photograph for `multiple_cards`.
+  The spread between them is what answers sleeve obstruction instead — the
+  weakest heuristic in the pipeline, and one that costs a `poor` rather than a
+  refusal.
 
 ## Contributing
 

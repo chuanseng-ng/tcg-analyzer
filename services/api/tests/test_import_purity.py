@@ -8,11 +8,12 @@ what that adapter already wrote. Nothing about serving a card should require an
 HTTP client, and an accidental re-export in `tcg_api.catalog.__init__` is all it
 would take to acquire one — at which point the boundary is decorative.
 
-#36 added the second. The image-quality gate lives in `ml/image-quality` and
-brings OpenCV, `infrastructure/docker/worker.Dockerfile` is the only image that
-installs it, and `tcg_api.analysis.jobs` therefore imports its wiring *inside*
-`_advance` rather than at module scope — the API imports `jobs` merely to
-enqueue. Moving that import to the top of the file looks like tidying and
+#36 added the second, and #37 widened it to a second package. The image-quality
+gate lives in `ml/image-quality` and the card detector in `ml/card-detection`;
+both bring OpenCV, `infrastructure/docker/worker.Dockerfile` is the only image
+that installs either, and `tcg_api.analysis.jobs` therefore imports their wiring
+*inside* `_advance` rather than at module scope — the API imports `jobs` merely
+to enqueue. Moving that import to the top of the file looks like tidying and
 produces an API container that cannot start, so it is asserted here rather than
 left to a comment.
 
@@ -71,26 +72,29 @@ def test_the_tcgdex_adapter_is_the_module_that_binds_to_the_http_client() -> Non
     assert "httpx" in pulled
 
 
-def test_serving_the_api_pulls_in_neither_opencv_nor_the_quality_gate() -> None:
-    """The whole reason there are two images (#36).
+def test_serving_the_api_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """The whole reason there are two images (#36, #37).
 
-    `api.Dockerfile` does not install `tcg-ml-image-quality`, so this is not
-    merely about image size: a module-level import on the request path is an
-    `ImportError` at startup in the deployed API container, and it would be
-    found in a deployment rather than here.
+    `api.Dockerfile` installs neither `tcg-ml-image-quality` nor
+    `tcg-ml-card-detection`, so this is not merely about image size: a
+    module-level import on the request path is an `ImportError` at startup in
+    the deployed API container, and it would be found in a deployment rather
+    than here.
     """
     cv = _modules_matching("cv2", after_importing="tcg_api.main")
     gate = _modules_matching("tcg_ml_image_quality", after_importing="tcg_api.main")
+    detector = _modules_matching("tcg_ml_card_detection", after_importing="tcg_api.main")
 
     assert cv == [], (
-        f"importing tcg_api.main pulled in {cv}. The quality gate runs in the "
-        "worker image; the API image does not install OpenCV and would fail to "
-        "start. Keep the import inside `jobs._advance`."
+        f"importing tcg_api.main pulled in {cv}. The gate and the detector run "
+        "in the worker image; the API image does not install OpenCV and would "
+        "fail to start. Keep the import inside `jobs._advance`."
     )
     assert gate == [], gate
+    assert detector == [], detector
 
 
-def test_enqueueing_a_job_does_not_pull_in_the_quality_gate() -> None:
+def test_enqueueing_a_job_does_not_pull_in_the_analysis_stages() -> None:
     """Guard the guard, one layer down.
 
     `routers/analyses.py` imports `tcg_api.analysis.jobs` to enqueue, so that
@@ -105,5 +109,7 @@ def test_enqueueing_a_job_does_not_pull_in_the_quality_gate() -> None:
 def test_the_quality_wiring_is_the_module_that_binds_to_opencv() -> None:
     """Guard the guard: without this, deleting the gate would 'fix' the tests above."""
     pulled = _modules_matching("cv2", after_importing="tcg_api.analysis.quality")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.analysis.quality")
 
     assert "cv2" in pulled
+    assert {"tcg_ml_card_detection", "tcg_ml_image_quality"} <= set(stages), stages

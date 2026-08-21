@@ -1,9 +1,24 @@
 [project]
 name = "tcg-ml-card-detection"
 version = "0.0.0"
-description = "Card boundary detection"
+description = "Card boundary detection: where the card is in the photograph"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # The detector itself. **Headless** for the reason `ml/image-quality` gives:
+    # plain `opencv-python` links against libGL and raises ImportError in a slim
+    # image with no X stack, which a worker container has no reason to carry.
+    "opencv-python-headless>=4.10",
+    # A transitive dependency of OpenCV; named because this package uses it
+    # directly for the contour arithmetic.
+    "numpy>=2",
+    # `CardGeometry`, `Confidence` and `Uncertain`. Stdlib-only, and the reason
+    # `ml/image-quality` can consume a geometry without depending on this
+    # package.
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 from tcg_domain.analysis import QualityStatus
+from tcg_domain.card_geometry import CardGeometry
+from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence, InsufficientInformation
 from tcg_domain.image_quality import (
     NEEDS_CARD_GEOMETRY,
     ConditionVerdict,
@@ -197,29 +199,173 @@ def test_a_large_specular_blob_is_unusable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The five this gate cannot decide, and says so
+# The five that need the card located — issue #37
+#
+# The geometries here are built by hand rather than detected, because what is
+# under test is the *judging*: `ml/card-detection` owns whether a quadrilateral
+# is the right one, and asserting both at once would leave neither pinned.
 # ---------------------------------------------------------------------------
 
+DETECTOR = "card-detection-test-v0"
 
-def test_every_condition_that_needs_the_card_located_is_reported_undetermined() -> None:
-    """The acceptance criterion's other half. #37 supplies the geometry."""
+
+def a_card(**overrides: object) -> CardGeometry:
+    """A card square-on, filling a comfortable share of `SIZE`."""
+    height, width = SIZE
+    fields: dict[str, object] = {
+        "corners": (
+            (0.2 * width, 0.15 * height),
+            (0.8 * width, 0.15 * height),
+            (0.8 * width, 0.85 * height),
+            (0.2 * width, 0.85 * height),
+        ),
+        "confidence": Confidence.of(0.95),
+        "frame_width": width,
+        "frame_height": height,
+        "detector": DETECTOR,
+    }
+    fields.update(overrides)
+    return CardGeometry(**fields)  # type: ignore[arg-type]
+
+
+def test_without_a_geometry_the_five_are_reported_undetermined() -> None:
+    """The acceptance criterion's other half, and the degradation path."""
     report = assess(png(a_photograph()))
 
     for condition in NEEDS_CARD_GEOMETRY:
         finding = report.of(condition)
         assert finding.verdict is ConditionVerdict.UNDETERMINED, condition
         assert finding.reason
+    assert report.detector is None
 
 
-def test_an_otherwise_clean_photograph_is_acceptable_rather_than_good() -> None:
-    """Because five conditions were not checked. `good` waits for #37."""
-    assert assess(png(a_photograph())).status is QualityStatus.ACCEPTABLE
+def test_a_detector_that_could_not_find_the_card_supplies_its_own_reason() -> None:
+    """`None` and a failed detection are different facts, and both are stored."""
+    excuse = "no card-like quadrilateral was found in the photograph"
+    report = assess(png(a_photograph()), geometry=InsufficientInformation(excuse))
+
+    assert report.of(QualityCondition.MULTIPLE_CARDS).reason == excuse
+    assert report.status is QualityStatus.ACCEPTABLE
+    assert report.detector is None
+
+
+def test_a_reasonless_failure_still_says_something() -> None:
+    """`undetermined` with no explanation is a gap wearing an answer's clothes."""
+    report = assess(png(a_photograph()), geometry=INSUFFICIENT_INFORMATION)
+
+    assert report.of(QualityCondition.MULTIPLE_CARDS).reason
+
+
+def test_a_located_card_makes_a_clean_photograph_good() -> None:
+    """The first status this project can reach that is not `acceptable`."""
+    report = assess(png(a_photograph()), geometry=a_card())
+
+    undetermined = [
+        finding for finding in report.findings if finding.verdict is ConditionVerdict.UNDETERMINED
+    ]
+    assert undetermined == []
+    assert report.status is QualityStatus.GOOD
+    assert report.detector == DETECTOR
+
+
+def geometric(condition: QualityCondition, geometry: CardGeometry) -> QualityStatus:
+    finding = assess(png(a_photograph()), geometry=geometry).of(condition)
+    assert finding.verdict is ConditionVerdict.DETECTED, finding
+    assert finding.severity is not None
+    return finding.severity
+
+
+def test_a_second_card_in_the_frame_is_unusable() -> None:
+    """Not `poor`: an analysis that picked one of two is confidently wrong."""
+    assert (
+        geometric(QualityCondition.MULTIPLE_CARDS, a_card(candidates=2)) is QualityStatus.UNUSABLE
+    )
+
+
+def test_a_card_running_off_the_edge_of_the_frame_is_unusable() -> None:
+    height, width = SIZE
+    clipped = a_card(
+        corners=(
+            (0.0, 0.0),
+            (0.6 * width, 0.0),
+            (0.6 * width, 0.9 * height),
+            (0.0, 0.9 * height),
+        )
+    )
+
+    assert geometric(QualityCondition.CARD_PARTLY_OUTSIDE_FRAME, clipped) is QualityStatus.UNUSABLE
+
+
+def test_a_card_too_small_in_the_frame_is_detected() -> None:
+    height, width = SIZE
+    distant = a_card(
+        corners=(
+            (0.45 * width, 0.45 * height),
+            (0.55 * width, 0.45 * height),
+            (0.55 * width, 0.60 * height),
+            (0.45 * width, 0.60 * height),
+        )
+    )
+
+    assert geometric(QualityCondition.INSUFFICIENT_CARD_SIZE, distant) is QualityStatus.UNUSABLE
+
+
+def tilted(top_inset: float) -> CardGeometry:
+    """A card whose top edge is foreshortened against a 0.6-frame bottom edge."""
+    height, width = SIZE
+    return a_card(
+        corners=(
+            (top_inset * width, 0.15 * height),
+            ((1.0 - top_inset) * width, 0.15 * height),
+            (0.80 * width, 0.85 * height),
+            (0.20 * width, 0.85 * height),
+        )
+    )
+
+
+def test_a_card_held_at_a_mild_angle_is_poor_and_correctable() -> None:
+    """0.25 to 0.75 is a 600 px top edge against a 720 px bottom: a 1.2."""
+    assert (
+        geometric(QualityCondition.SEVERE_PERSPECTIVE_DISTORTION, tilted(0.25))
+        is QualityStatus.POOR
+    )
+
+
+def test_a_card_held_at_a_severe_angle_is_unusable() -> None:
+    """0.32 to 0.68 is a 432 px top edge against 720: past correcting back."""
+    assert (
+        geometric(QualityCondition.SEVERE_PERSPECTIVE_DISTORTION, tilted(0.32))
+        is QualityStatus.UNUSABLE
+    )
+
+
+def test_a_sleeve_costs_a_poor_and_never_a_refusal() -> None:
+    """The weakest heuristic in the pipeline, so it may inform and not refuse.
+
+    Asserted against the whole band rather than one value, so a recalibration
+    that made a sleeve stop an analysis trips over this test.
+    """
+    for ratio in (1.03, 1.10, 1.25, 1.40, 1.50):
+        assert (
+            geometric(QualityCondition.SLEEVE_OBSTRUCTION, a_card(enclosing_ratio=ratio))
+            is QualityStatus.POOR
+        ), ratio
+
+
+def test_the_geometric_thresholds_are_recorded_beside_the_detectors_own() -> None:
+    """One flat record, and the two cannot collide: the detector's are prefixed."""
+    detected = {"card_detection_work_long_edge": 1024.0}
+    report = assess(png(a_photograph()), geometry=a_card(thresholds=detected))
+
+    assert report.thresholds["work_long_edge"] == float(DEFAULT_THRESHOLDS.work_long_edge)
+    assert report.thresholds["card_detection_work_long_edge"] == 1024.0
 
 
 def test_a_report_answers_for_all_eleven_conditions() -> None:
-    report = assess(png(a_photograph()))
+    for geometry in (None, INSUFFICIENT_INFORMATION, a_card()):
+        report = assess(png(a_photograph()), geometry=geometry)
 
-    assert {finding.condition for finding in report.findings} == set(QualityCondition)
+        assert {finding.condition for finding in report.findings} == set(QualityCondition)
 
 
 # ---------------------------------------------------------------------------
@@ -235,15 +381,20 @@ def test_a_detected_condition_and_a_score_below_a_half_are_the_same_fact() -> No
     """Kept true by construction: the score is the smallest margin, and the poor
     threshold sits at 0.5. A score that could disagree with the status would be
     two answers to one question."""
-    for data in (
+    photographs = (
         png(a_photograph()),
         png(cv2.GaussianBlur(a_photograph(), (0, 0), sigmaX=8)),
         png((a_photograph() // 5).astype(np.uint8)),
-    ):
-        report = assess(data)
-        detected = any(finding.verdict is ConditionVerdict.DETECTED for finding in report.findings)
+    )
+    geometries = (None, a_card(), a_card(candidates=2), a_card(enclosing_ratio=1.2))
+    for data in photographs:
+        for geometry in geometries:
+            report = assess(data, geometry=geometry)
+            detected = any(
+                finding.verdict is ConditionVerdict.DETECTED for finding in report.findings
+            )
 
-        assert detected == (report.score < 0.5), report
+            assert detected == (report.score < 0.5), report
 
 
 def test_a_worse_photograph_scores_lower() -> None:

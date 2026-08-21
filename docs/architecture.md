@@ -103,6 +103,13 @@ to stop the pipeline:
   poor one continues, and the user is told which measurements it weakened. The
   gate is not advisory — a confident grade prediction drawn from an image nobody
   could grade by eye is exactly the failure this product must not produce.
+  Five of the eleven conditions it must decide — perspective distortion, card
+  partly outside frame, multiple cards, sleeve obstruction, insufficient card
+  size — are about *where the card is*, so card detection runs before the gate
+  answers them even though §18 draws it after. That changes which stage measures
+  what, never which stage owns the verdict: a photograph the detector cannot
+  find a card in is reported honestly as five conditions unchecked, not refused
+  and not passed.
 - **Card identification.** A low-confidence match is never used silently. The
   user confirms the card, because every downstream number — market value,
   expected graded value, the recommendation itself — is wrong if the identity is
@@ -328,12 +335,13 @@ that runs a job cannot drift from the code that enqueued it. Its isolation
 (spec §56) is the container's — no published port, every capability dropped.
 
 It has its own image since the image-quality gate (#36), and the two differ by
-exactly one uv extra. The gate brought OpenCV; a CV stack decoding untrusted
+exactly one uv extra — which since card boundary detection (#37) carries two ml
+packages rather than one. Both bring OpenCV; a CV stack decoding untrusted
 photographs does not belong in the container answering HTTP. What holds that
 split up is a lazy import — the API imports `tcg_api.analysis.jobs` merely to
-enqueue, so the gate's wiring is imported inside the function that runs a job,
-and a purity test asserts that importing the application reaches neither `cv2`
-nor the gate.
+enqueue, so the wiring for both stages is imported inside the function that runs
+a job, and a purity test asserts that importing the application reaches neither
+`cv2` nor either package.
 
 The split by language is not decorative either. `apps/*` is a pnpm/TypeScript
 workspace; `packages/*`, `services/*` and `ml/*` are a uv/Python workspace,
