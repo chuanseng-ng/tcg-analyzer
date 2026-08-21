@@ -221,7 +221,8 @@ def test_a_card_found_by_more_than_one_pass_is_still_one_card() -> None:
 
 
 def test_a_clipped_card_reports_no_margin_rather_than_inventing_the_missing_part() -> None:
-    picture = place(background(), (0, 0, *CARD[2:]), 210)
+    _left, _top, width, height = CARD
+    picture = place(background(), (0, 0, width, height), 210)
 
     assert located(png(picture)).border_margin_fraction == 0.0
 

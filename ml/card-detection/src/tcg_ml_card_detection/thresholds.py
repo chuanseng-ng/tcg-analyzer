@@ -21,7 +21,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Final
 
-__all__ = ["CARD_DETECTION_VERSION", "DEFAULT_DETECTION_THRESHOLDS", "DetectionThresholds"]
+__all__ = [
+    "CARD_ASPECT",
+    "CARD_DETECTION_VERSION",
+    "DEFAULT_DETECTION_THRESHOLDS",
+    "DetectionThresholds",
+]
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
