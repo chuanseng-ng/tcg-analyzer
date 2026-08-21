@@ -63,6 +63,9 @@ export type AnalysisResponse = components["schemas"]["AnalysisResponse"];
 /** `POST /analyses/{id}/images` — one stored photograph. */
 export type ImageResponse = components["schemas"]["ImageResponse"];
 
+/** `POST /analyses/{id}/run`'s acknowledgement. `queued` is not a state (§65). */
+export type AnalysisRunResponse = components["schemas"]["AnalysisRunResponse"];
+
 /**
  * Which view of the card an upload is.
  *
@@ -193,6 +196,13 @@ function isAnalysisResponse(payload: unknown): payload is AnalysisResponse {
   return typeof payload.id === "string" && typeof payload.status === "string";
 }
 
+function isAnalysisRunResponse(payload: unknown): payload is AnalysisRunResponse {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return typeof payload.analysis_id === "string" && payload.status === "queued";
+}
+
 function isImageResponse(payload: unknown): payload is ImageResponse {
   if (!isRecord(payload)) {
     return false;
@@ -320,6 +330,11 @@ interface JsonRequest<T> {
    * (#32). The catalog reads belong to nobody and deliberately do not ask for it.
    */
   readonly credentials?: RequestCredentials;
+  /**
+   * Sent as JSON when present. The analysis writes are the only requests here
+   * that carry one; a catalog read has nothing to say.
+   */
+  readonly body?: unknown;
   readonly signal: AbortSignal | undefined;
   readonly timeoutMs: number;
   readonly isPayload: (payload: unknown) => payload is T;
@@ -341,7 +356,11 @@ async function requestJson<T>(request: JsonRequest<T>): Promise<T> {
     response = await fetch(url, {
       method: request.method ?? "GET",
       cache: "no-store",
-      headers: { accept: "application/json" },
+      headers: {
+        accept: "application/json",
+        ...(request.body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
       ...(request.credentials === undefined ? {} : { credentials: request.credentials }),
       signal: requestSignal(request.signal, request.timeoutMs),
     });
@@ -476,6 +495,57 @@ export async function startAnalysis(signal?: AbortSignal): Promise<AnalysisRespo
     url: `${apiBaseUrl()}/analyses`,
     method: "POST",
     credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isAnalysisResponse,
+    payloadName: "analysis",
+  });
+}
+
+/**
+ * `POST /analyses/{id}/run` — hand the analysis to a worker (spec §8, §65).
+ *
+ * Answers `queued`, which is an acknowledgement rather than a state: the worker
+ * moves the analysis, and `GET /analyses/{id}` is where its state is read. Only
+ * an analysis whose photographs have both arrived may run; anything else is a
+ * 409.
+ *
+ * Rate-limited, sharing one bucket with the other analysis writes (ADR 0005).
+ */
+export async function runAnalysis(
+  analysisId: string,
+  signal?: AbortSignal,
+): Promise<AnalysisRunResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/run`,
+    method: "POST",
+    credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isAnalysisRunResponse,
+    payloadName: "run acknowledgement",
+  });
+}
+
+/**
+ * `POST /analyses/{id}/confirm-card` — record which card this is (spec §20).
+ *
+ * The identifier is resolved against the catalog server-side, so one naming no
+ * card is a 404 carrying `card_not_identified` — the same code
+ * `GET /cards/{id}` answers with. An analysis that is not waiting for a
+ * confirmation is a 409, which includes one that has already been confirmed:
+ * §65 moves forwards only, so there is no second confirmation.
+ */
+export async function confirmCard(
+  analysisId: string,
+  cardId: string,
+  signal?: AbortSignal,
+): Promise<AnalysisResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/confirm-card`,
+    method: "POST",
+    credentials: "include",
+    body: { card_id: cardId },
     signal,
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     isPayload: isAnalysisResponse,

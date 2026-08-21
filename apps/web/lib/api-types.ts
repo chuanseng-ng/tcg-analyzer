@@ -46,6 +46,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analyses/{analysis_id}/confirm-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm which card the analysis is of
+         * @description Records the card the user has confirmed they are holding (spec §20) and moves the analysis on from `awaiting_confirmation`.
+         *
+         *     **The card is resolved against the catalog before it is written.** The identifier arrives from a client and is therefore not trusted (spec §55); one that names no card is refused with the same `card_not_identified` that `GET /cards/{id}` answers with.
+         *
+         *     Only an analysis waiting for a confirmation can take one, and there is no way back: spec §65's states move forwards only, so confirming twice — or confirming a different card afterwards — is a 409. A card chosen in error is corrected by starting a new analysis.
+         */
+        post: operations["confirm_card_analyses__analysis_id__confirm_card_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analyses/{analysis_id}/images": {
         parameters: {
             query?: never;
@@ -269,6 +293,25 @@ export interface components {
              * @constant
              */
             status: "queued";
+        };
+        /**
+         * CardConfirmationRequest
+         * @description Which card the user says they are holding — spec §20, §64.
+         *
+         *     One field, and deliberately only one. The catalog record is the truth about
+         *     what that card is, so a client that also sent a name, a set or a variant
+         *     would be sending something this service must not believe (spec §55: never
+         *     trust client-side card metadata). The identifier is resolved against the
+         *     catalog before it is written, which is what makes it a card rather than a
+         *     string the caller chose.
+         */
+        CardConfirmationRequest: {
+            /**
+             * Card Id
+             * Format: uuid
+             * @description The card the user confirmed, from `GET /cards/search` or `GET /cards/{id}`.
+             */
+            card_id: string;
         };
         /**
          * CardExternalIdResponse
@@ -841,6 +884,81 @@ export interface operations {
                 };
             };
             /** @description The analysis store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    confirm_card_analyses__analysis_id__confirm_card_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CardConfirmationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller — or no card is recorded under the one in the body. The first is the bare 404 `GET /analyses/{id}` answers with; the second carries the spec §66 envelope with `card_not_identified`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The analysis is not waiting for a confirmation. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store or the card catalog could not be reached. */
             503: {
                 headers: {
                     [name: string]: unknown;

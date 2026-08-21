@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getCard, type CardResponse } from "@/lib/api";
+import { currentAnalysis } from "@/lib/analysis-session";
+import { confirmCard, getCard, type CardResponse } from "@/lib/api";
 import { cardHref, languageLabel, rarityLabel, variantLabel } from "@/lib/card-display";
 import { classifyCardFailure, type CardFailure } from "@/lib/card-errors";
+import { classifyConfirmFailure, type ConfirmFailure } from "@/lib/confirm-errors";
 import { certaintyOf, manuallySelected, type ConfirmationCandidate } from "@/lib/identification";
 
 import styles from "./page.module.css";
@@ -14,8 +16,19 @@ import styles from "./page.module.css";
 type ConfirmationState =
   | { readonly status: "nothing_selected" }
   | { readonly status: "loading" }
-  | { readonly status: "awaiting"; readonly candidate: ConfirmationCandidate }
-  | { readonly status: "confirmed"; readonly candidate: ConfirmationCandidate }
+  | {
+      readonly status: "awaiting";
+      readonly candidate: ConfirmationCandidate;
+      /** A previous attempt to record this confirmation, if one failed. */
+      readonly failure?: ConfirmFailure;
+    }
+  | { readonly status: "saving"; readonly candidate: ConfirmationCandidate }
+  | {
+      readonly status: "confirmed";
+      readonly candidate: ConfirmationCandidate;
+      /** Whether it was recorded against an analysis, or only on this page. */
+      readonly saved: boolean;
+    }
   | { readonly status: "failed"; readonly failure: CardFailure };
 
 /**
@@ -24,9 +37,10 @@ type ConfirmationState =
  * Two properties matter more than any of the copy, and both are structural:
  *
  * **There is no auto-confirm, at any confidence.** The only transition into
- * `confirmed` is the click handler, written as a functional update that refuses
- * to fire from any state but `awaiting`. Spec §20 requires the user to confirm;
- * a 99% match still takes a tap.
+ * `confirmed` is the click handler, and it refuses to act from any state but
+ * `awaiting`. Spec §20 requires the user to confirm; a 99% match still takes a
+ * tap, and a confirmation that fails to reach the server returns to `awaiting`
+ * rather than pretending.
  *
  * **The screen never presents itself as settled.** The heading is a question,
  * the certainty is stated before the card rather than after it, and Change
@@ -35,7 +49,13 @@ type ConfirmationState =
  * `CardIdentification` exists until M2's image pipeline.
  *
  * There is deliberately no `useRouter` here. Change is a plain link, so nothing
- * in this component can navigate on its own.
+ * in this component can navigate on its own — recording a confirmation does not
+ * move the user anywhere, it says what happened.
+ *
+ * **The confirmation is recorded against the analysis when there is one.** The
+ * identifier comes from `sessionStorage` (`lib/analysis-session.ts`), left there
+ * by `/analyze`; arriving from the catalog with no photographs is still a
+ * legitimate path, and then the confirmation is this page's alone and says so.
  */
 export function CardConfirmation() {
   const searchParams = useSearchParams();
@@ -46,6 +66,15 @@ export function CardConfirmation() {
     cardId === "" ? { status: "nothing_selected" } : { status: "loading" },
   );
   const [attempt, setAttempt] = useState(0);
+  const [waitSeconds, setWaitSeconds] = useState(0);
+
+  // A throttled confirmation is counted down rather than offered a button that
+  // would fire straight back into the limit (ADR 0005).
+  useEffect(() => {
+    if (waitSeconds <= 0) return;
+    const timer = setTimeout(() => setWaitSeconds((left) => left - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [waitSeconds]);
 
   useEffect(() => {
     if (cardId === "") {
@@ -76,13 +105,35 @@ export function CardConfirmation() {
     };
   }, [cardId, attempt]);
 
-  const confirm = useCallback(() => {
-    setState((current) =>
-      current.status === "awaiting"
-        ? { status: "confirmed", candidate: current.candidate }
-        : current,
-    );
-  }, []);
+  const confirm = useCallback(async () => {
+    // The gate is only reachable from `awaiting`, in either direction: nothing
+    // else may produce a confirmation, and a second tap while one is in flight
+    // does nothing.
+    if (state.status !== "awaiting") return;
+    const { candidate } = state;
+
+    const analysisId = currentAnalysis();
+    if (analysisId === null) {
+      // No photographs in this tab. The confirmation is this page's alone, as
+      // it was before there was anywhere to put it.
+      setState({ status: "confirmed", candidate, saved: false });
+      return;
+    }
+
+    setState({ status: "saving", candidate });
+    try {
+      await confirmCard(analysisId, candidate.card.id);
+      setState({ status: "confirmed", candidate, saved: true });
+    } catch (error: unknown) {
+      const failure = classifyConfirmFailure(error);
+      if (failure.retryAfterSeconds !== undefined) {
+        setWaitSeconds(failure.retryAfterSeconds);
+      }
+      // Back to the question, with what went wrong. A confirmation that did not
+      // reach the server is not a confirmation.
+      setState({ status: "awaiting", candidate, failure });
+    }
+  }, [state]);
 
   if (state.status === "nothing_selected") {
     return <NothingSelected />;
@@ -103,10 +154,18 @@ export function CardConfirmation() {
   }
 
   if (state.status === "confirmed") {
-    return <Confirmed candidate={state.candidate} />;
+    return <Confirmed candidate={state.candidate} saved={state.saved} />;
   }
 
-  return <Awaiting candidate={state.candidate} onConfirm={confirm} />;
+  return (
+    <Awaiting
+      candidate={state.candidate}
+      saving={state.status === "saving"}
+      failure={state.status === "awaiting" ? state.failure : undefined}
+      waitSeconds={waitSeconds}
+      onConfirm={() => void confirm()}
+    />
+  );
 }
 
 /**
@@ -181,12 +240,21 @@ function Failed({
 
 function Awaiting({
   candidate,
+  saving,
+  failure,
+  waitSeconds,
   onConfirm,
 }: {
   readonly candidate: ConfirmationCandidate;
+  readonly saving: boolean;
+  readonly failure: ConfirmFailure | undefined;
+  readonly waitSeconds: number;
   readonly onConfirm: () => void;
 }) {
   const certainty = certaintyOf(candidate);
+  // `gone` means there is nothing left to confirm against, so offering the tap
+  // again would be offering a button that cannot work. Throttled means waiting.
+  const offerable = failure?.action !== "gone" && waitSeconds <= 0;
 
   return (
     <div className={styles.gate}>
@@ -210,24 +278,63 @@ function Awaiting({
        * weight as Confirm, so the interface leads with search rather than
        * presenting a guess as the answer.
        */}
+      {failure !== undefined && <SaveFailure failure={failure} waitSeconds={waitSeconds} />}
+
       <div className={styles.actions} data-certainty={certainty.state}>
-        <button className={styles.confirm} type="button" onClick={onConfirm}>
-          Confirm this card
-        </button>
+        {offerable && (
+          <button className={styles.confirm} type="button" onClick={onConfirm} disabled={saving}>
+            {saving ? "Recording…" : "Confirm this card"}
+          </button>
+        )}
         <Link className={styles.change} href="/cards">
           Change card
         </Link>
       </div>
 
       <p className={styles.footnote}>
-        Confirming records nothing and analyses nothing. It only says that this is the card you
-        mean.
+        Confirming analyses nothing. It only says that this is the card you mean.
       </p>
     </div>
   );
 }
 
-function Confirmed({ candidate }: { readonly candidate: ConfirmationCandidate }) {
+/**
+ * A confirmation that did not reach the service.
+ *
+ * Says what happened and what is worth doing about it, and nothing else. There
+ * is no link to `/analyze` in any branch: this screen is not a door into
+ * analysis, and a failure is not the place to open one.
+ */
+function SaveFailure({
+  failure,
+  waitSeconds,
+}: {
+  readonly failure: ConfirmFailure;
+  readonly waitSeconds: number;
+}) {
+  return (
+    <div className={styles.failure} role="alert">
+      <p className={styles.failureBody}>{failure.message}</p>
+      <p className={styles.failureBody}>
+        {failure.action === "wait"
+          ? waitSeconds > 0
+            ? `Confirming is paused for ${String(waitSeconds)} more second${waitSeconds === 1 ? "" : "s"}.`
+            : "You can confirm again now."
+          : failure.action === "gone"
+            ? "Nothing has been recorded. Photographing the card again is what starts a new analysis."
+            : "Nothing has been recorded. Confirming again is safe."}
+      </p>
+    </div>
+  );
+}
+
+function Confirmed({
+  candidate,
+  saved,
+}: {
+  readonly candidate: ConfirmationCandidate;
+  readonly saved: boolean;
+}) {
   const heading = useRef<HTMLHeadingElement>(null);
 
   // The Confirm button unmounts with the gate, so without this a keyboard user
@@ -245,12 +352,14 @@ function Confirmed({ candidate }: { readonly candidate: ConfirmationCandidate })
       <CardIdentity card={candidate.card} />
 
       <p className={styles.body}>
-        Nothing has been analysed. Uploading photographs of this card, reading its condition, the
-        likely grades from PSA, TAG and BGS, and the economics of sending it in all arrive in M2.
+        {saved
+          ? "Your photographs are now recorded as being of this card. Nothing has analysed them yet — reading the card's condition, the likely grades from PSA, TAG and BGS, and the economics of sending it in are still being built."
+          : "Nothing has been analysed. Reading this card's condition, the likely grades from PSA, TAG and BGS, and the economics of sending it in are still being built."}
       </p>
       <p className={styles.footnote}>
-        This confirmation lives on this page only. It is not saved, and reloading or closing the tab
-        forgets it.
+        {saved
+          ? "This is the card the analysis will use. It cannot be changed afterwards — photographing the card again is what starts over."
+          : "This confirmation lives on this page only. There are no photographs in this tab to record it against, so reloading or closing the tab forgets it."}
       </p>
 
       <div className={styles.actions}>

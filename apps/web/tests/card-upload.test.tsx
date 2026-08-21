@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardUpload } from "@/app/analyze/CardUpload";
+import { currentAnalysis } from "@/lib/analysis-session";
 import { ApiError, type AnalysisResponse, type ImageResponse } from "@/lib/api";
 import { MAX_UPLOAD_BYTES } from "@/lib/upload-slots";
 
@@ -11,11 +12,21 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   startAnalysis: vi.fn(),
   uploadImage: vi.fn(),
+  runAnalysis: vi.fn(),
 }));
 
-const { startAnalysis, uploadImage } = await import("@/lib/api");
+// The hand-off to the catalog is the one navigation this screen performs, and
+// it must be a tap rather than something that happens on its own — so the push
+// is recorded rather than stubbed away.
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
+
+const { startAnalysis, uploadImage, runAnalysis } = await import("@/lib/api");
 const startAnalysisMock = vi.mocked(startAnalysis);
 const uploadImageMock = vi.mocked(uploadImage);
+const runAnalysisMock = vi.mocked(runAnalysis);
 
 const ANALYSIS_ID = "33333333-3333-3333-3333-333333333333";
 
@@ -59,6 +70,10 @@ function sendButton(): HTMLButtonElement {
 }
 
 beforeEach(() => {
+  window.sessionStorage.clear();
+  push.mockReset();
+  runAnalysisMock.mockReset();
+  runAnalysisMock.mockResolvedValue({ analysis_id: ANALYSIS_ID, status: "queued" });
   startAnalysisMock.mockReset();
   uploadImageMock.mockReset();
   startAnalysisMock.mockResolvedValue(analysis());
@@ -308,12 +323,53 @@ describe("once both photographs are stored", () => {
     return container;
   }
 
-  it("leads nowhere — nothing consumes an uploaded analysis yet", async () => {
+  it("leads to the catalog, and only on a tap", async () => {
     const container = await storeBoth();
 
-    // #104 persists a confirmed card and #35's run needs that first, so any
-    // link onward from here today would be a link to a dead end.
+    // Still no link out: the hand-off runs the analysis first, so it cannot be
+    // an anchor that navigates before the request has been made.
     expect(container.querySelector("a[href]")).toBeNull();
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose which card this is" }));
+
+    await waitFor(() => {
+      expect(runAnalysisMock).toHaveBeenCalledWith(ANALYSIS_ID);
+    });
+    expect(push).toHaveBeenCalledWith("/cards");
+  });
+
+  it("leaves the analysis where /identify will look for it", async () => {
+    await storeBoth();
+
+    // `/identify` is three screens away, so the identifier travels in the tab
+    // rather than through the catalog's URLs.
+    expect(currentAnalysis()).toBe(ANALYSIS_ID);
+  });
+
+  it("goes on to the catalog when the analysis has already been run", async () => {
+    await storeBoth();
+    runAnalysisMock.mockRejectedValue(new ApiError("conflict", { status: 409 }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose which card this is" }));
+
+    // A 409 means it is already past `uploaded` — which is where this button was
+    // trying to get it. Nothing has gone wrong.
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/cards");
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("stays put and says so when the analysis cannot be run", async () => {
+    await storeBoth();
+    runAnalysisMock.mockRejectedValue(new ApiError("down", { status: undefined }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose which card this is" }));
+
+    await screen.findByRole("alert");
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Choose which card this is" })).toBeEnabled();
   });
 
   it("still offers a retake of either side", async () => {
@@ -346,6 +402,8 @@ describe("once both photographs are stored", () => {
     expect(screen.queryByRole("img", { name: /front of your card/i })).toBeNull();
     expect(screen.getByText("Add the front")).toBeInTheDocument();
     expect(screen.getByText("Add the back")).toBeInTheDocument();
+    // The abandoned analysis must not be the one `/identify` confirms against.
+    expect(currentAnalysis()).toBeNull();
 
     choose("front", photograph());
     choose("back", photograph());

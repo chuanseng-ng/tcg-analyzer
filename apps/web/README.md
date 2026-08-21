@@ -30,7 +30,7 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 | `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                     |
 | `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                     |
 | `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                        |
-| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts` and `upload-*.ts` |
+| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts` and `analysis-session.ts` |
 | `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                            |
 | `tests/`        | Vitest + React Testing Library, jsdom environment                                                 |
 
@@ -82,9 +82,19 @@ to action has always pointed here. Six decisions shape it:
   is the only thing that decides (spec §55). There is deliberately no pixel
   check — reading an image header means decoding the file, which is client-side
   image analysis and a non-goal.
-- **The screen leads nowhere afterwards, on purpose.** Persisting which card the
-  photographs show writes to the analysis (#104) and running the pipeline needs
-  that confirmation first, so a link onward today would be a link to a dead end.
+- **Where it leads, it leads on a tap.** Once both photographs are stored,
+  **Choose which card this is** runs the analysis (`POST /analyses/{id}/run`)
+  and goes to the catalog. Nothing navigates on its own, and the run happens
+  first — which is why it is a button rather than a link. A 409 from the run
+  means the analysis is already past `uploaded`, which is where the button was
+  trying to get it, so the hand-off continues rather than reporting an error.
+- **The analysis identifier travels in `sessionStorage`** (`lib/analysis-session.ts`),
+  because the trip to `/identify` passes through `/cards` and `/cards/[cardId]`.
+  Carrying it in the URL would mean re-emitting it from the search form, the
+  pager, every result row and the detail link — and it would buy nothing, since
+  an analysis id is worthless without the HTTP-only `tcg_session` cookie. It is
+  a convenience, never authorisation: the API scopes every analysis to that
+  cookie.
 
 `lib/upload-errors.ts` is a sibling of `lib/card-errors.ts` rather than an
 extension of it: two of its outcomes — throttled, and an analysis that has moved
@@ -148,10 +158,20 @@ has a route of its own instead of a button somewhere in the catalog.
   calibrates one, and a threshold is not what makes the screen safe — the
   question in the heading and the required tap are. The only distinction the
   wording draws is whether a measurement exists at all.
-- **Confirming is not persisted.** It lives in React state on that page, and the
-  screen says so out loud. There is no consumer of a confirmed identification
-  until M2, and inventing a store for a consumer that does not exist would be
-  the wrong shape to inherit.
+- **Confirming is recorded against the analysis, when there is one.** The
+  identifier comes from `sessionStorage`, left there by `/analyze`, and the tap
+  calls `POST /analyses/{id}/confirm-card`. Arriving from the catalog with no
+  photographs is still a legitimate path, and then the confirmation lives on the
+  page alone and the screen says so. A confirmation that does not reach the
+  service is **not** a confirmation: the screen returns to the question with
+  what went wrong, rather than showing a confirmed state nothing recorded.
+  `lib/confirm-errors.ts` is a third sibling of `card-errors.ts` and
+  `upload-errors.ts`, because a 409 here means "your photographs are not ready
+  for this yet" where the upload's means "start a new analysis".
+- **Confirming still leads nowhere, and there is no route into analysis** in any
+  branch, including the failures. The confirmed screen says that nothing is
+  analysing the photographs yet, because nothing is: the analysis rests in
+  `analyzing` until the condition stages exist.
 - **The gate shows no `metadata` and no provider identifiers.** They are catalog
   bookkeeping rather than something a person checks against a card in their
   hand; the full record is one link away.
