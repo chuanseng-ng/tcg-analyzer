@@ -242,7 +242,18 @@ and `uploaded` once both sides have arrived, which is the one state
 `POST /analyses/{id}/run` may start from. Every rejection is `invalid_image`
 with a message naming the rule and nothing about the decoder.
 
-The three writes — `POST /analyses`, `POST /analyses/{id}/images` and
+`POST /analyses/{id}/confirm-card` records which card the user is holding
+(spec §20). The card identifier arrives from a client and is therefore not
+trusted (spec §55): it is resolved against the catalog before it is written, and
+one naming no card is refused with the same `card_not_identified` that
+`GET /cards/{id}` answers with. Only an analysis in `awaiting_confirmation` may
+take a confirmation, and recording one moves it to `analyzing`. Spec §65's
+states move forwards only, so there is no second confirmation and no changing
+the card afterwards — both are a 409, and a card chosen in error is corrected by
+starting a new analysis.
+
+The four writes — `POST /analyses`, `POST /analyses/{id}/images`,
+`POST /analyses/{id}/confirm-card` and
 `POST /analyses/{id}/run` — are rate-limited
 per client address (spec §55, which names analysis endpoints *and* image
 uploads), `TCG_API_RATE_LIMIT_REQUESTS` per

@@ -238,7 +238,11 @@ reached through the mechanism meant to prevent it.
 
 The link into shared reference data points the other way and is `RESTRICT`:
 `analyses.card_id` is nullable until the user confirms an identification, and a
-catalog re-import can never delete a card an analysis names.
+catalog re-import can never delete a card an analysis names. The confirmation
+itself is `POST /analyses/{id}/confirm-card`, and the identifier it takes is
+resolved against the catalog before it is written — spec §55 says never to trust
+client-side card metadata, and the foreign key is the backstop rather than the
+check.
 
 ### Uploaded images are untrusted input
 
@@ -333,7 +337,7 @@ FastAPI OpenAPI schema — see
 [ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md).
 
 The endpoints that create work — starting an analysis, adding a photograph to
-one, running it — are rate-limited per client address (spec §55, which names
+one, confirming its card, running it — are rate-limited per client address (spec §55, which names
 analysis endpoints *and* image uploads),
 counted in that same Redis so one limit holds across replicas. A throttled
 request is a 429 with `Retry-After` and sits outside the spec §66 envelope, as
@@ -346,6 +350,14 @@ long-running and must never block an HTTP request. `POST /analyses/{id}/run`
 enqueues the work onto Celery over Redis and answers `queued` immediately; the
 client polls `GET /analyses/{id}` for one of spec §65's nine states. `queued` is
 not one of them — it is an acknowledgement, and no analysis row ever holds it.
+
+A run rests at `awaiting_confirmation`: spec §20 forbids acting on an
+identification the user has not confirmed, and nothing in the decomposed
+milestones produces a candidate, so the user names the card themselves. Recording
+that confirmation is what moves the analysis to `analyzing`, where it rests in
+turn until the condition stages exist. Neither resting point is a stub standing
+in for a result — an analysis reported as `completed` with every result column
+NULL is exactly the confidently-wrong output the specification forbids.
 
 Delivery is deliberately at-least-once, and safe because a run *claims* its
 analysis with a single conditional `UPDATE` naming the states the move is legal
