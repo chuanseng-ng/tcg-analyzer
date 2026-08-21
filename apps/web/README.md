@@ -23,16 +23,16 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path            | Contents                                                                                                                |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `app/`          | App Router routes. `/` is the landing page                                                                              |
-| `app/analyze/`  | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                         |
-| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                           |
-| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                                           |
-| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                                              |
-| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts` and `upload-*.ts`                       |
-| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                                                  |
-| `tests/`        | Vitest + React Testing Library, jsdom environment                                                                       |
+| Path            | Contents                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| `app/`          | App Router routes. `/` is the landing page                                                        |
+| `app/analyze/`  | `/analyze` — photograph the front and back of a card and upload them (spec §48)                   |
+| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                     |
+| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                     |
+| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                        |
+| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts` and `upload-*.ts` |
+| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                            |
+| `tests/`        | Vitest + React Testing Library, jsdom environment                                                 |
 
 ## Styling
 
