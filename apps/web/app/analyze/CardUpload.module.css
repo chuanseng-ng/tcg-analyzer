@@ -1,0 +1,235 @@
+/*
+ * The upload screen — spec §48, issue #34.
+ *
+ * A phone is the primary device, so there are no fixed widths anywhere: the two
+ * slots stack on a narrow screen and sit side by side once there is room for
+ * them. `tests/layout-primitives.test.ts` enforces the first half of that.
+ */
+
+.upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding-block: var(--space-6);
+}
+
+.heading {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}
+
+.lede {
+  max-width: var(--measure);
+  color: var(--color-muted);
+}
+
+.slots {
+  display: grid;
+  /* `auto-fit` plus a minimum in `ch` rather than a breakpoint: one column on a
+     phone, two once the container can hold them, and no magic pixel width. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 34ch), 1fr));
+  gap: var(--space-5);
+}
+
+.slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.slotHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* A trading card is roughly 5:7. The box keeps that shape whatever the
+     photograph's own aspect ratio turns out to be. */
+  aspect-ratio: 5 / 7;
+  overflow: hidden;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+}
+
+.preview[data-filled="true"] {
+  border-style: solid;
+}
+
+.previewImage {
+  max-inline-size: 100%;
+  max-block-size: 100%;
+  object-fit: contain;
+}
+
+.placeholder {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.hint {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The file input covers its own label transparently rather than being hidden.
+ * `display: none` and `visibility: hidden` both take it out of the tab order,
+ * which leaves a control only a mouse can reach; laying it over the label keeps
+ * it focusable, keeps the click target the whole button, and needs no width of
+ * its own — `inset: 0` takes the label's.
+ */
+.file {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file:disabled {
+  cursor: not-allowed;
+}
+
+.slotActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.choose,
+.remove,
+.send,
+.startOver {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-5);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.choose {
+  position: relative;
+}
+
+.choose,
+.send {
+  border: 1px solid var(--color-accent);
+  background-color: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.choose:hover,
+.send:not(:disabled):hover {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+/* A label cannot be disabled, so it mirrors the input's state instead. */
+.choose[data-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The ring belongs on the button the user sees, not on the invisible input. */
+.choose:focus-within {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.remove,
+.startOver {
+  border: 1px solid var(--color-border);
+  background-color: transparent;
+  color: var(--color-fg);
+}
+
+.remove:not(:disabled):hover,
+.startOver:not(:disabled):hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.send:disabled,
+.remove:disabled,
+.startOver:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.progress {
+  inline-size: 100%;
+  block-size: var(--space-2);
+}
+
+.rejection {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.failureMessage {
+  font-weight: var(--weight-medium);
+  color: var(--color-danger);
+}
+
+.failureNote,
+.note {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.actions,
+.done {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.done {
+  padding: var(--space-4);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.doneHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-success);
+}
+
+.doneHeading:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
