@@ -10,6 +10,14 @@
  * to offer is the same tap again. Merging the two would give one status two
  * meanings.
  *
+ * **Not every 409 is a "not yet", and #36 is where that stopped being true.**
+ * An analysis that has `failed` also is not at the gate, and never will be —
+ * spec §65 has no edge out of it. Offering "try again" there is a loop with no
+ * exit, and it was wrong for a dead-lettered job before the quality gate
+ * existed. The service now says which it is with two of spec §66's codes, so
+ * the distinction is read from the envelope rather than guessed from the
+ * status.
+ *
  * Nothing here offers a way into `/analyze`. The confirmation gate has no route
  * onward to analysis in either direction (#91), and a failure is not the place
  * to open one.
@@ -24,8 +32,9 @@ import { ApiError } from "./api";
  *   answering, and the analysis not having reached the gate yet.
  * - `wait` — throttled. The copy carries the countdown and there is no button,
  *   because pressing one fires straight back into the limit (ADR 0005).
- * - `gone` — the analysis or the session no longer exists, or the card does
- *   not. Confirming again cannot help; there is nothing to confirm against.
+ * - `gone` — the analysis or the session no longer exists, the card does not,
+ *   or the analysis has failed for good. Confirming again cannot help; there is
+ *   nothing to confirm against.
  */
 export type ConfirmAction = "retry" | "wait" | "gone";
 
@@ -55,6 +64,29 @@ export function classifyConfirmFailure(error: unknown): ConfirmFailure {
     };
   }
 
+  // The gate refused the photographs (spec §19). Permanent: §65 has no way out
+  // of `failed`, so this needs new photographs rather than another tap. What
+  // was wrong with them was already said on `/analyze`, which is where the
+  // retake is — and a link to it from the confirmation gate is exactly what
+  // #91 refuses to open, in this branch as in every other.
+  if (error.code === "image_quality_failure") {
+    return {
+      message:
+        "These photographs could not be analysed. Start again with new ones when you are ready.",
+      action: "gone",
+    };
+  }
+
+  // The analysis failed for some other reason — a job that ran out of retries,
+  // or a dependency that never came back. Said without blaming the photographs,
+  // because nothing here suggests they were the problem.
+  if (error.code === "analysis_failed") {
+    return {
+      message: "This analysis did not finish. Starting again is the only way on from here.",
+      action: "gone",
+    };
+  }
+
   if (error.status === 429) {
     return {
       message: "Too many requests from this connection.",
@@ -68,7 +100,9 @@ export function classifyConfirmFailure(error: unknown): ConfirmFailure {
   // The analysis is not at the confirmation gate. Either your photographs are
   // still being prepared, or this analysis was confirmed already — and the
   // second is not something to say out loud, because the confirmation the user
-  // is making is the one they can see.
+  // is making is the one they can see. A `failed` analysis no longer reaches
+  // here: the two branches above take it, which is what makes "try again"
+  // honest again.
   if (error.status === 409) {
     return {
       message: "Your photographs are not ready for this yet.",

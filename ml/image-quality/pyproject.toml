@@ -3,7 +3,21 @@ name = "tcg-ml-image-quality"
 version = "0.0.0"
 description = "Image-quality gate: blur, glare, exposure, resolution"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # The heuristic itself. **Headless** deliberately: plain `opencv-python`
+    # links against libGL and raises ImportError in a slim image that has no X
+    # stack, which a worker container has no reason to carry.
+    "opencv-python-headless>=4.10",
+    # Already a transitive dependency of OpenCV; named because this package
+    # uses it directly for the histogram statistics.
+    "numpy>=2",
+    # The vocabulary and the report. Stdlib-only, so depending on it costs the
+    # domain nothing and keeps §19's words in exactly one place.
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

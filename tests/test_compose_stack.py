@@ -114,14 +114,32 @@ def test_the_worker_waits_for_migrations_too(services: dict[str, Any]) -> None:
     )
 
 
-def test_the_worker_runs_from_the_api_image(services: dict[str, Any]) -> None:
-    """So the code that runs a job cannot drift from the code that enqueued it.
+def test_the_worker_runs_from_its_own_image(services: dict[str, Any]) -> None:
+    """Not the API's, since #36 — and the split is the point.
 
-    The same reasoning as `migrate`, and the reason there is no worker
-    Dockerfile yet: isolation here is the container's, not the image's.
+    The quality gate brought OpenCV, and a CV stack decoding untrusted
+    photographs does not belong in the container that answers HTTP. `migrate`
+    still shares the API image, because a migration is the same code reading the
+    same schema; a worker is the same code plus an extra.
     """
-    assert services["worker"]["image"] == services["api"]["image"]
-    assert services["worker"]["build"] == services["api"]["build"]
+    assert services["worker"]["image"] != services["api"]["image"]
+    assert services["worker"]["build"]["dockerfile"].endswith("worker.Dockerfile")
+    # Same build context as everything else: the workspace root, because
+    # `services/api` cannot be resolved without its siblings.
+    assert services["worker"]["build"]["context"] == services["api"]["build"]["context"]
+
+
+def test_the_worker_can_reach_object_storage(services: dict[str, Any]) -> None:
+    """It reads uploaded photographs back to run spec §19's gate over them.
+
+    Before #36 it had no storage configuration at all, which was correct while
+    nothing in a job opened an image and is an outage the moment one does.
+    """
+    environment = services["worker"]["environment"]
+
+    assert environment["TCG_API_STORAGE_ENDPOINT_URL"]
+    assert environment["TCG_API_STORAGE_BUCKET"]
+    assert services["worker"]["depends_on"]["minio"]["condition"] == "service_healthy"
 
 
 def test_the_migration_service_does_not_restart(services: dict[str, Any]) -> None:

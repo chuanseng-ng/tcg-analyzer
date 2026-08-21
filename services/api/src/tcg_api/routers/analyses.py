@@ -58,8 +58,9 @@ than after a multipart parser has already spooled whatever was sent.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Final, Literal
 from uuid import UUID
 
@@ -68,14 +69,22 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
-from tcg_domain.analysis import V1_SIDES, AnalysisStatus, ImageSide
+from tcg_domain.analysis import V1_SIDES, AnalysisStatus, ImageSide, QualityStatus
 from tcg_domain.catalog import CardId
 from tcg_domain.errors import CatalogUnavailable
+from tcg_domain.image_quality import ConditionVerdict, QualityCondition
 from tcg_domain.repository import CardRepository
 from tcg_shared.storage import ObjectStorage, StorageError, StorageKey, generate_key
 
 from tcg_api.analysis.image_validation import InvalidImage, ValidatedImage, validate_image
-from tcg_api.analysis.images import ImageRecord, read_image_key, upsert_image, v1_sides_present
+from tcg_api.analysis.images import (
+    ImageQuality,
+    ImageRecord,
+    read_image_key,
+    read_quality,
+    upsert_image,
+    v1_sides_present,
+)
 from tcg_api.analysis.jobs import JobQueueUnavailable, enqueue_analysis
 from tcg_api.analysis.sessions import (
     AnalysisRecord,
@@ -181,6 +190,64 @@ _ACCEPTS_IMAGES: Final = frozenset(
 )
 
 
+class QualityFindingResponse(BaseModel):
+    """What the gate concluded about one of spec §19's eleven conditions.
+
+    The measurement the gate recorded is deliberately absent. It exists so M7's
+    model can be compared against this baseline, and a Laplacian variance is not
+    something to put in front of somebody holding a phone; the copy that turns a
+    condition into a sentence lives in `apps/web`.
+    """
+
+    condition: QualityCondition = Field(
+        description="Which of spec §19's eleven conditions this is about.",
+        examples=["blur"],
+    )
+    verdict: ConditionVerdict = Field(
+        description=(
+            "`clear` if it was looked for and not found, `detected` if it was, "
+            "`undetermined` if the gate could not tell. The third is a real "
+            "answer, not a gap: five conditions need the card located first, "
+            "which no V1 stage does yet."
+        ),
+        examples=["clear"],
+    )
+    severity: QualityStatus | None = Field(
+        description=(
+            "What a detected condition makes the image — `poor` or `unusable`. "
+            "Null for every other verdict. Nullable rather than absent, so a "
+            "reader never has to tell 'no severity' from 'field not sent'."
+        ),
+    )
+
+
+class ImageQualityResponse(BaseModel):
+    """One uploaded photograph and what spec §19's gate made of it."""
+
+    side: ImageSide = Field(description="Which view of the card this is.")
+    quality_status: QualityStatus | None = Field(
+        description=(
+            "Spec §19's verdict, or null while the gate has not run. `unusable` "
+            "means the analysis stopped; `poor` means it went on and the user "
+            "must be told."
+        ),
+    )
+    quality_score: float | None = Field(
+        description=(
+            "A [0, 1] verdict, 1 being best, or null while the gate has not run. "
+            "The smallest headroom any condition had, so one bad measurement is "
+            "not averaged away by five good ones."
+        ),
+    )
+    findings: list[QualityFindingResponse] = Field(
+        description=(
+            "All eleven of spec §19's conditions, or empty while the gate has "
+            "not run. Never a subset: a condition nobody assessed is reported "
+            "`undetermined` rather than omitted."
+        ),
+    )
+
+
 class AnalysisResponse(BaseModel):
     """One analysis, as the API reports it.
 
@@ -212,6 +279,14 @@ class AnalysisResponse(BaseModel):
             "The card the user confirmed, or null before they have. Unknown "
             "until confirmation (spec §20), which is a step in the pipeline "
             "rather than a precondition of starting one."
+        ),
+    )
+    images: list[ImageQualityResponse] = Field(
+        description=(
+            "Every photograph uploaded so far and spec §19's verdict on it. "
+            "Empty before the first upload. This is how a `poor` verdict reaches "
+            "the user, which §19 requires — a gate whose warning nothing surfaces "
+            "is not a gate."
         ),
     )
 
@@ -292,14 +367,70 @@ class ImageResponse(BaseModel):
     )
 
 
-def _response(record: AnalysisRecord) -> AnalysisResponse:
+def _response(record: AnalysisRecord, images: Sequence[ImageQuality] = ()) -> AnalysisResponse:
     return AnalysisResponse(
         id=record.id,
         status=record.status,
         created_at=record.created_at,
         completed_at=record.completed_at,
         card_id=record.card_id,
+        images=[_image_response(image) for image in images],
     )
+
+
+def _image_response(image: ImageQuality) -> ImageQualityResponse:
+    return ImageQualityResponse(
+        side=ImageSide(image.side),
+        quality_status=None
+        if image.quality_status is None
+        else QualityStatus(image.quality_status),
+        quality_score=image.quality_score,
+        findings=_findings(image.details),
+    )
+
+
+def _findings(details: dict[str, object] | None) -> list[QualityFindingResponse]:
+    """The gate's per-condition verdicts, read back out of JSONB.
+
+    Written by this application and still read defensively. `quality_details` is
+    a document rather than a set of columns, so nothing in the database refuses a
+    row an older — or newer — gate wrote; an unrecognised condition is dropped
+    rather than turned into a 500 on a screen whose whole job is to explain a
+    problem. The measurement each finding carries is not read at all: it is not
+    a caller's to see.
+    """
+    if not isinstance(details, dict):
+        return []
+    raw = details.get("findings")
+    if not isinstance(raw, list):
+        return []
+
+    findings = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        condition = _member(QualityCondition, entry.get("condition"))
+        verdict = _member(ConditionVerdict, entry.get("verdict"))
+        if condition is None or verdict is None:
+            continue
+        findings.append(
+            QualityFindingResponse(
+                condition=condition,
+                verdict=verdict,
+                severity=_member(QualityStatus, entry.get("severity")),
+            )
+        )
+    return findings
+
+
+def _member[T: StrEnum](vocabulary: type[T], value: object) -> T | None:
+    """`value` as a member of `vocabulary`, or None if it names none."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return vocabulary(value)
+    except ValueError:
+        return None
 
 
 def _unreachable() -> ApiError:
@@ -462,6 +593,8 @@ async def start_analysis(
     # The internal session id, never the token, and nothing about the caller —
     # no address, no user agent. Spec §53: an analysis is not tied to a person.
     logger.info("analysis.created", analysis_id=str(record.id), session_id=str(session_id))
+    # No images, and no query for them: this analysis was created one statement
+    # ago and cannot have any.
     return _response(record)
 
 
@@ -507,6 +640,9 @@ async def read_one_analysis(
     try:
         session_id = await resolve_session(db, request.cookies.get(SESSION_COOKIE))
         record = None if session_id is None else await read_analysis(db, analysis_id, session_id)
+        # In the same try: an unreachable store is one failure however many
+        # statements noticed it, and both reads answer the same question.
+        images = () if record is None else await read_quality(db, record.id)
     except AnalysisStoreUnavailable as error:
         logger.warning("analysis.could_not_be_read", exc_info=True)
         raise _unreachable() from error
@@ -514,7 +650,7 @@ async def read_one_analysis(
     if record is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
 
-    return _response(record)
+    return _response(record, images)
 
 
 @router.post(
@@ -637,8 +773,13 @@ async def run_one_analysis(
         },
         status.HTTP_409_CONFLICT: {
             "description": (
-                "The analysis is not waiting for a confirmation. Outside the "
-                "spec §66 taxonomy, which has no code meaning 'conflict'."
+                "The analysis is not waiting for a confirmation. A bare body "
+                "while it has merely not got there yet — outside the spec §66 "
+                "taxonomy, which has no code meaning 'conflict' — and the §66 "
+                "envelope once it has `failed`, carrying `image_quality_failure` "
+                "when the gate refused the photographs and `analysis_failed` "
+                "otherwise. The difference is whether trying again could ever "
+                "help."
             ),
         },
         status.HTTP_429_TOO_MANY_REQUESTS: {
@@ -677,12 +818,16 @@ async def confirm_card(
     try:
         session_id = await resolve_session(db, request.cookies.get(SESSION_COOKIE))
         record = None if session_id is None else await read_analysis(db, analysis_id, session_id)
+        images = () if record is None else await read_quality(db, record.id)
     except AnalysisStoreUnavailable as error:
         logger.warning("analysis.could_not_be_read", exc_info=True)
         raise _unreachable() from error
 
     if record is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
+
+    if record.status == AnalysisStatus.FAILED:
+        raise _failed(images)
 
     if record.status != _CONFIRMABLE:
         # Safe to name the state: ownership is established, and the caller can
@@ -724,12 +869,43 @@ async def confirm_card(
         card_id=str(body.card_id),
         status=confirmed.status,
     )
-    return _response(confirmed)
+    return _response(confirmed, images)
 
 
 def _not_confirmable(current: str) -> str:
     """Why a confirmation was refused, in the terms `run`'s 409 uses."""
     return f"A card is confirmed while the analysis is waiting for one, and this one is {current}."
+
+
+def _failed(images: Sequence[ImageQuality]) -> ApiError:
+    """Why a failed analysis cannot take a confirmation — #36.
+
+    A `failed` analysis used to fall into `_not_confirmable`'s 409, whose copy
+    reads "your photographs are not ready for this yet" and invites a retry that
+    can never succeed. §65 has no edge out of `failed`, so this is a permanent
+    answer and has to say so.
+
+    Two of spec §66's eight codes describe it exactly, and neither had a caller
+    until now. Which one depends on what the images say: the gate refusing them
+    is `image_quality_failure`, and anything else — a dead-lettered job, an
+    unreachable dependency the runner gave up on — is `analysis_failed`. The
+    distinction matters because only the first is the user's to fix, and it has
+    always been wrong for a dead-lettered job too, not merely since the gate
+    existed.
+    """
+    unusable = [image.side for image in images if image.quality_status == QualityStatus.UNUSABLE]
+    if unusable:
+        return ApiError(
+            ErrorCode.IMAGE_QUALITY_FAILURE,
+            "These photographs cannot support an analysis.",
+            status_code=status.HTTP_409_CONFLICT,
+            details={"sides": sorted(unusable)},
+        )
+    return ApiError(
+        ErrorCode.ANALYSIS_FAILED,
+        "This analysis did not finish.",
+        status_code=status.HTTP_409_CONFLICT,
+    )
 
 
 async def _read_body(request: Request, max_bytes: int) -> bytes:

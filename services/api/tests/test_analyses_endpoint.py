@@ -682,7 +682,7 @@ def test_a_confirmed_analysis_reports_its_card_when_polled(client: TestClient) -
 
 @pytest.mark.integration
 @requires_postgres
-@pytest.mark.parametrize("state", ["created", "uploading", "uploaded", "analyzing", "failed"])
+@pytest.mark.parametrize("state", ["created", "uploading", "uploaded", "analyzing"])
 def test_only_an_analysis_waiting_for_a_card_takes_one(client: TestClient, state: str) -> None:
     """Spec §20 makes confirmation a step, not something available at any moment."""
     created = client.post("/analyses").json()
@@ -701,6 +701,54 @@ def test_only_an_analysis_waiting_for_a_card_takes_one(client: TestClient, state
     assert querying("SELECT card_id FROM analyses WHERE id = :id", id=uuid.UUID(created["id"])) is (
         None
     )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_failed_analysis_says_so_rather_than_asking_for_another_try(
+    client: TestClient,
+) -> None:
+    """`failed` is a 409 like the rest, and used to read like the rest — "not
+    ready for this yet", which invites a retry that spec §65 makes impossible.
+
+    It carries the §66 envelope instead. `analysis_failed` is the general case:
+    a job that ran out of retries, or a dependency that never came back.
+    """
+    created = client.post("/analyses").json()
+    executing("UPDATE analyses SET status = 'failed' WHERE id = :id", id=uuid.UUID(created["id"]))
+
+    response = client.post(
+        f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "analysis_failed"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_quality_failure_is_named_as_one(client: TestClient) -> None:
+    """The gate refusing the photographs is the one failure the user can act on,
+    so it gets spec §66's code for exactly that and names the sides."""
+    created = client.post("/analyses").json()
+    analysis_id = uuid.UUID(created["id"])
+    executing(
+        "INSERT INTO images (id, analysis_id, side, original_uri, mime_type, sha256, "
+        "quality_score, quality_status) VALUES "
+        "(:image_id, :id, 'front', 'uploads/front', 'image/jpeg', :digest, 0.05, 'unusable')",
+        image_id=uuid.uuid4(),
+        id=analysis_id,
+        digest="a" * 64,
+    )
+    executing("UPDATE analyses SET status = 'failed' WHERE id = :id", id=analysis_id)
+
+    response = client.post(
+        f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "image_quality_failure"
+    assert response.json()["details"]["sides"] == ["front"]
 
 
 @pytest.mark.integration

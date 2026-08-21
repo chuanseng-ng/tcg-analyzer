@@ -4,7 +4,16 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { forgetAnalysis, rememberAnalysis } from "@/lib/analysis-session";
-import { ApiError, runAnalysis, startAnalysis, uploadImage, type UploadSide } from "@/lib/api";
+import {
+  ApiError,
+  readAnalysis,
+  runAnalysis,
+  startAnalysis,
+  uploadImage,
+  type AnalysisResponse,
+  type UploadSide,
+} from "@/lib/api";
+import { concerning, faultsIn, isUnusable, nameOf } from "@/lib/quality-copy";
 import { classifyUploadFailure, type UploadFailure } from "@/lib/upload-errors";
 import {
   ACCEPT_ATTRIBUTE,
@@ -17,6 +26,41 @@ import {
 } from "@/lib/upload-slots";
 
 import styles from "./CardUpload.module.css";
+
+/**
+ * The states an analysis passes through while the quality gate is running.
+ *
+ * `uploaded` is where `run` leaves it and `identifying` is where the worker
+ * claims it; anything else means the gate has spoken, one way or the other.
+ */
+const STILL_WORKING: ReadonlySet<string> = new Set(["uploaded", "identifying"]);
+
+/** Between polls. Long enough not to hammer, short enough to feel immediate. */
+const VERDICT_POLL_INTERVAL_MS = 1_000;
+
+/**
+ * How many polls before the screen gives up waiting.
+ *
+ * Twenty, so roughly twenty seconds. Giving up is not an error: the gate has
+ * simply not got there, and going on to the catalog is right — `/identify`'s
+ * 409 then genuinely means "not ready yet", which is the one thing it can say
+ * honestly at that point.
+ */
+const VERDICT_POLL_ATTEMPTS = 20;
+
+/**
+ * What the gate concluded, once it has.
+ *
+ * `refused` is spec §19's `unusable`: the analysis stopped and there is nothing
+ * to go on to. `warned` is `poor`, which §19 says continues — "but the user must
+ * be informed", which is why it is a state of this screen and not a banner on
+ * the way past. Both carry the photographs worth mentioning, worst first.
+ */
+type Verdict =
+  | { readonly kind: "refused"; readonly images: readonly ImageQuality[] }
+  | { readonly kind: "warned"; readonly images: readonly ImageQuality[] };
+
+type ImageQuality = AnalysisResponse["images"][number];
 
 /**
  * How each side is described, everywhere it is described.
@@ -71,6 +115,7 @@ export function CardUpload() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<UploadFailure | null>(null);
   const [waitSeconds, setWaitSeconds] = useState(0);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
   const router = useRouter();
 
   // Every object URL this component has minted. Revoked on replacement, on
@@ -113,6 +158,9 @@ export function CardUpload() {
       const previewUrl = URL.createObjectURL(file);
       previews.current.add(previewUrl);
       setFailure(null);
+      // A new photograph for this side means the old verdict is about bytes the
+      // analysis is no longer going to hold.
+      setVerdict(null);
       setSlots((current) => {
         dropPreview(current[side]);
         return { ...current, [side]: { status: "staged", file, previewUrl } };
@@ -125,6 +173,7 @@ export function CardUpload() {
     (side: UploadSide) => {
       setRejections((current) => ({ ...current, [side]: null }));
       setFailure(null);
+      setVerdict(null);
       setSlots((current) => {
         dropPreview(current[side]);
         return { ...current, [side]: { status: "empty" } };
@@ -145,6 +194,7 @@ export function CardUpload() {
     setAnalysisId(null);
     forgetAnalysis();
     setFailure(null);
+    setVerdict(null);
   }, [dropPreview]);
 
   const send = useCallback(async () => {
@@ -213,12 +263,13 @@ export function CardUpload() {
 
     setBusy(true);
     setFailure(null);
+    setVerdict(null);
     try {
       await runAnalysis(analysisId);
     } catch (error: unknown) {
       // A 409 means the analysis is already past `uploaded` — it has been run
       // before, which is exactly where this button was trying to get it. Going
-      // on to the catalog is the right answer, not an error.
+      // on is the right answer, not an error.
       if (!(error instanceof ApiError) || error.status !== 409) {
         const classified = classifyUploadFailure(error);
         setFailure(classified);
@@ -229,6 +280,35 @@ export function CardUpload() {
         return;
       }
     }
+
+    // Wait for spec §19's gate before handing off. This screen is the only one
+    // that can act on what it finds: the retake is here, and `/identify` is
+    // forbidden a route back (#91). #34 deliberately had no polling anywhere,
+    // and this is not a retry loop — it is waiting for an answer, on the
+    // endpoint §65 says a client polls.
+    const analysis = await settled(analysisId);
+    if (analysis === null) {
+      // The gate has not got there. Going on is honest: `/identify` will say
+      // the photographs are not ready, which is exactly what is true.
+      router.push("/cards");
+      return;
+    }
+
+    const worrying = concerning(analysis.images);
+    if (analysis.status === "failed") {
+      setVerdict({ kind: "refused", images: worrying });
+      setBusy(false);
+      return;
+    }
+    if (worrying.length > 0) {
+      // §19: "analysis may continue but the user must be informed". Informed
+      // *here*, with the retake in reach, rather than by a banner they navigate
+      // past — and it takes a tap to go on, so it cannot be missed.
+      setVerdict({ kind: "warned", images: worrying });
+      setBusy(false);
+      return;
+    }
+
     router.push("/cards");
   }, [analysisId, router]);
 
@@ -260,8 +340,17 @@ export function CardUpload() {
 
       {failure !== null && <Failure failure={failure} waitSeconds={waitSeconds} />}
 
+      {verdict !== null && (
+        <QualityVerdict verdict={verdict} onContinue={() => router.push("/cards")} />
+      )}
+
       {stored ? (
-        <Stored busy={busy} onChooseCard={() => void chooseCard()} onStartOver={startOver} />
+        <Stored
+          busy={busy}
+          judged={verdict !== null}
+          onChooseCard={() => void chooseCard()}
+          onStartOver={startOver}
+        />
       ) : (
         <div className={styles.actions}>
           <button
@@ -284,6 +373,27 @@ export function CardUpload() {
       )}
     </div>
   );
+}
+
+/**
+ * Poll until the quality gate has spoken, or give up.
+ *
+ * Polls first and sleeps second, so an analysis that has already been judged
+ * costs no delay at all. A read that fails is treated as "no answer" rather than
+ * as an error: nothing has gone wrong with the user's photographs, and the
+ * screen has somewhere sensible to go either way.
+ */
+async function settled(analysisId: string): Promise<AnalysisResponse | null> {
+  for (let attempt = 0; attempt < VERDICT_POLL_ATTEMPTS; attempt += 1) {
+    try {
+      const analysis = await readAnalysis(analysisId);
+      if (!STILL_WORKING.has(analysis.status)) return analysis;
+    } catch {
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, VERDICT_POLL_INTERVAL_MS));
+  }
+  return null;
 }
 
 /** An upload that did not finish keeps its photograph, ready to be sent again. */
@@ -435,6 +545,68 @@ function Failure({
 }
 
 /**
+ * What the quality gate found — spec §19.
+ *
+ * Two outcomes and one component, because they say almost the same thing and
+ * differ in exactly one way: whether there is a way on. `unusable` stopped the
+ * analysis and offers nothing but a retake; `poor` went through and needs a
+ * deliberate tap, so that "the user must be informed" means informed rather
+ * than shown something on the way past.
+ *
+ * The retake controls are the ones already above — this panel does not
+ * duplicate them, it points at them. A second set of file inputs would be a
+ * second place for a side to be replaced, and they would disagree.
+ */
+function QualityVerdict({
+  verdict,
+  onContinue,
+}: {
+  readonly verdict: Verdict;
+  readonly onContinue: () => void;
+}) {
+  const heading = useRef<HTMLParagraphElement>(null);
+  const refused = verdict.kind === "refused";
+
+  useEffect(() => {
+    heading.current?.focus();
+  }, [verdict]);
+
+  return (
+    <div className={styles.verdict} data-refused={refused} role="alert">
+      <p className={styles.verdictHeading} ref={heading} tabIndex={-1}>
+        {refused
+          ? "These photographs cannot be analysed."
+          : "These photographs will do, but something is off."}
+      </p>
+
+      <ul className={styles.verdictList}>
+        {verdict.images.map((image) => (
+          <li key={image.side} className={styles.verdictItem}>
+            <span className={styles.verdictSide}>
+              The {nameOf(image.side)}
+              {isUnusable(image) ? "" : " — usable, but"}:
+            </span>{" "}
+            {faultsIn(image).join(" ")}
+          </li>
+        ))}
+      </ul>
+
+      <p className={styles.note}>
+        {refused
+          ? "Retake the side above and send it again. Nothing else has to be done over."
+          : "Going on is fine — the reading may just be less reliable. Retaking above is the alternative."}
+      </p>
+
+      {!refused && (
+        <button className={styles.send} type="button" onClick={onContinue}>
+          Use them anyway
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Both photographs are on the server, and the next thing the product needs is
  * the one thing it cannot work out for itself: which card this is.
  *
@@ -442,13 +614,21 @@ function Failure({
  * navigates on its own — it takes this tap — and the analysis is not confirmed
  * here: that is `/identify`'s job, and it is a separate, deliberate answer to a
  * question this screen never asks.
+ *
+ * **Once the gate has spoken, this panel gets out of the way.** The verdict
+ * owns the forward action from then on — it refuses one outright, or offers
+ * "Use them anyway" — and leaving a second, cheerier route to the same place
+ * would be redundant beneath a warning and a plain contradiction beneath a
+ * refusal. What survives is Start over, which is true either way.
  */
 function Stored({
   busy,
+  judged,
   onChooseCard,
   onStartOver,
 }: {
   readonly busy: boolean;
+  readonly judged: boolean;
   readonly onChooseCard: () => void;
   readonly onStartOver: () => void;
 }) {
@@ -459,18 +639,22 @@ function Stored({
   }, []);
 
   return (
-    <div className={styles.done} role="status">
-      <p className={styles.doneHeading} ref={heading} tabIndex={-1}>
-        Both photographs are stored.
-      </p>
-      <p className={styles.note}>
-        Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
-        product will not guess which card you are holding. Reading the card&apos;s condition and the
-        economics of grading it are still being built.
-      </p>
-      <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
-        {busy ? "Getting ready…" : "Choose which card this is"}
-      </button>
+    <div className={styles.done} role="status" data-judged={judged}>
+      {!judged && (
+        <>
+          <p className={styles.doneHeading} ref={heading} tabIndex={-1}>
+            Both photographs are stored.
+          </p>
+          <p className={styles.note}>
+            Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
+            product will not guess which card you are holding. Reading the card&apos;s condition and
+            the economics of grading it are still being built.
+          </p>
+          <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
+            {busy ? "Getting ready…" : "Choose which card this is"}
+          </button>
+        </>
+      )}
       <p className={styles.note}>
         Retake either side above to replace what is stored, or start over with a different card.
       </p>

@@ -528,6 +528,29 @@ export async function runAnalysis(
 }
 
 /**
+ * `GET /analyses/{id}` — the state of one analysis, and what the quality gate
+ * made of its photographs (spec §65, §19).
+ *
+ * The polling endpoint. Deliberately not rate-limited, because §65 requires a
+ * client to poll it and throttling that would throttle the product's own
+ * progress reporting (ADR 0005). One 404 covers an unknown analysis, someone
+ * else's, a missing cookie and a lapsed one.
+ */
+export async function readAnalysis(
+  analysisId: string,
+  signal?: AbortSignal,
+): Promise<AnalysisResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}`,
+    credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isAnalysisResponse,
+    payloadName: "analysis",
+  });
+}
+
+/**
  * `POST /analyses/{id}/confirm-card` — record which card this is (spec §20).
  *
  * The identifier is resolved against the catalog server-side, so one naming no

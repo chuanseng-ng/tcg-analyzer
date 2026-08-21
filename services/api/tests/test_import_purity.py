@@ -1,10 +1,20 @@
-"""The request path must not reach the catalog source.
+"""The request path must reach neither the catalog source nor the CV stack.
+
+Two boundaries, one mechanism.
 
 ADR 0004: "no import-time dependency anywhere the request path can reach". The
 import pipeline is an adapter run from a console script; the FastAPI app serves
 what that adapter already wrote. Nothing about serving a card should require an
 HTTP client, and an accidental re-export in `tcg_api.catalog.__init__` is all it
 would take to acquire one — at which point the boundary is decorative.
+
+#36 added the second. The image-quality gate lives in `ml/image-quality` and
+brings OpenCV, `infrastructure/docker/worker.Dockerfile` is the only image that
+installs it, and `tcg_api.analysis.jobs` therefore imports its wiring *inside*
+`_advance` rather than at module scope — the API imports `jobs` merely to
+enqueue. Moving that import to the top of the file looks like tidying and
+produces an API container that cannot start, so it is asserted here rather than
+left to a comment.
 
 The same shape as `packages/shared/tests/test_storage_purity.py`, and for the
 same reason: the only honest place to check what an import drags in is a real
@@ -59,3 +69,41 @@ def test_the_tcgdex_adapter_is_the_module_that_binds_to_the_http_client() -> Non
     pulled = _modules_matching("httpx", after_importing="tcg_api.catalog.tcgdex")
 
     assert "httpx" in pulled
+
+
+def test_serving_the_api_pulls_in_neither_opencv_nor_the_quality_gate() -> None:
+    """The whole reason there are two images (#36).
+
+    `api.Dockerfile` does not install `tcg-ml-image-quality`, so this is not
+    merely about image size: a module-level import on the request path is an
+    `ImportError` at startup in the deployed API container, and it would be
+    found in a deployment rather than here.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.main")
+    gate = _modules_matching("tcg_ml_image_quality", after_importing="tcg_api.main")
+
+    assert cv == [], (
+        f"importing tcg_api.main pulled in {cv}. The quality gate runs in the "
+        "worker image; the API image does not install OpenCV and would fail to "
+        "start. Keep the import inside `jobs._advance`."
+    )
+    assert gate == [], gate
+
+
+def test_enqueueing_a_job_does_not_pull_in_the_quality_gate() -> None:
+    """Guard the guard, one layer down.
+
+    `routers/analyses.py` imports `tcg_api.analysis.jobs` to enqueue, so that
+    module is the one place the lazy import has to hold. Asserting it directly
+    means the failure names the module that broke it rather than the whole app.
+    """
+    pulled = _modules_matching("cv2", after_importing="tcg_api.analysis.jobs")
+
+    assert pulled == [], pulled
+
+
+def test_the_quality_wiring_is_the_module_that_binds_to_opencv() -> None:
+    """Guard the guard: without this, deleting the gate would 'fix' the tests above."""
+    pulled = _modules_matching("cv2", after_importing="tcg_api.analysis.quality")
+
+    assert "cv2" in pulled

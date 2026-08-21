@@ -37,6 +37,7 @@ function confirmed(): AnalysisResponse {
     created_at: "2026-08-21T00:00:00Z",
     completed_at: null,
     card_id: CARD_ID,
+    images: [],
   };
 }
 

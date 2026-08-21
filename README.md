@@ -159,7 +159,7 @@ in the pipeline is a step you cannot reproduce yourself.
 ```bash
 uv run ruff check .                     # lint
 uv run ruff format --check .            # formatting
-uv run mypy packages/domain/src packages/shared/src services/api/src
+uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src
 uv run pytest -m "not integration and not object_storage"   # both need Docker
 
 pnpm --filter @tcg/web lint
@@ -445,15 +445,21 @@ longer than an HTTP request should (spec §8). Progress is polled through
 `GET /analyses/{id}`, which reports one of spec §65's nine states — `queued` is
 an acknowledgement rather than a state, and no analysis ever holds it.
 
-The same `up` starts Redis and the worker. The worker runs the API's own image
-with a different command, so the code that runs a job cannot drift from the code
-that enqueued it:
+The same `up` starts Redis and the worker. The worker runs the same application
+with a different command, from an image of its own — the API's plus the `worker`
+extra, which brings the image-quality gate and with it OpenCV:
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml logs -f worker
 ```
 
-Four properties are load-bearing rather than incidental, and each has a test:
+Five properties are load-bearing rather than incidental, and each has a test:
+
+- **The API image does not contain OpenCV.** The worker decodes untrusted
+  photographs; the API answers HTTP. `tcg_api.analysis.jobs` imports the gate's
+  wiring inside the function that runs a job rather than at module scope,
+  because the API imports that module to enqueue — moving it to the top of the
+  file is a tidy-up that stops the API container from starting.
 
 - **The worker accepts JSON and nothing else.** A Celery worker willing to
   deserialize pickle from a broker an attacker can write to is arbitrary code
@@ -469,6 +475,29 @@ Four properties are load-bearing rather than incidental, and each has a test:
   and nothing else.** Analysis payloads reference photographs of somebody's card
   and their surroundings; keeping one indefinitely so a job nobody re-drives
   could be re-driven is not a trade this project makes (spec §54).
+
+#### The image-quality gate
+
+Spec §18 puts a quality gate between file validation and card detection, and
+spec §19 fixes what it may conclude: `unusable` stops the analysis, `poor`
+continues but the user must be told. The M2 implementation is OpenCV heuristics
+in `ml/image-quality`, and M7 replaces it with a model behind the same
+signature.
+
+It decides six of §19's eleven conditions — blur, low resolution, glare, poor
+exposure, excessive darkness, excessive brightness. The other five all reduce to
+"where is the card", which card boundary detection has not answered yet, and
+they are reported **undetermined with a reason** rather than guessed. A
+consequence worth knowing before it looks like a bug: while five conditions go
+unchecked, no photograph can be `good` — the best available verdict is
+`acceptable`, which here means "nothing wrong found, and something not looked
+at".
+
+Every verdict is persisted on `images` — the status, a `[0, 1]` score and all
+eleven findings — and served by `GET /analyses/{id}`, which is what lets
+`/analyze` say what was wrong before it hands off to the catalog. The thresholds
+that produced a verdict are recorded beside it, along with the gate's version,
+so a later model can be compared against the baseline that actually ran.
 
 ## Contributing
 

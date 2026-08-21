@@ -5,22 +5,24 @@ Spec §8 requires that long-running ML inference never block an HTTP request, so
 work. This module is both halves of that: the Celery application the API
 enqueues through, and the task the worker runs.
 
-**One module, one process boundary.** The worker is started from the API's own
-image with a different command, exactly as the `migrate` service is, and its
-isolation (spec §56) is the container's — no published port, no capabilities,
-`no-new-privileges` — rather than the image's.
-`# ponytail: worker shares the API image; split it in #36, when the image would
-otherwise acquire OpenCV.`
+**One module, two images.** The worker runs `tcg_api` with a different command,
+but from `infrastructure/docker/worker.Dockerfile` rather than the API's image:
+#36's quality gate brought OpenCV, and a CV stack has no place in an
+internet-facing web server. What that costs this module is one **deliberately
+lazy import** — see `_advance` — and `tests/test_import_purity.py` is what keeps
+it from being tidied away. Isolation (spec §56) remains the container's: no
+published port, no capabilities, `no-new-privileges`.
 
 **What the harness actually does, and what it deliberately does not.** There is
-no ML here and no pipeline stage to call. A run claims an analysis whose images
-have arrived and advances it to `awaiting_confirmation`, where it rests. That is
-not a stub standing in for a result: spec §20 forbids acting on an
-identification the user has not confirmed, no milestone yet produces a
-candidate, and #104 is the issue that supplies the confirmation which lets it
-move on. **Do not make this reach `completed`** — every result column is still
-NULL, and a completed analysis with nothing computed is precisely the
-confidently-wrong output the specification forbids.
+one pipeline stage here, spec §19's image-quality gate, and no ML. A run claims
+an analysis whose images have arrived, judges them, and — unless they are
+unusable — advances to `awaiting_confirmation`, where it rests. That is not a
+stub standing in for a result: spec §20 forbids acting on an identification the
+user has not confirmed, no milestone yet produces a candidate, and #104 is the
+issue that supplies the confirmation which lets it move on. **Do not make this
+reach `completed`** — every result column is still NULL, and a completed
+analysis with nothing computed is precisely the confidently-wrong output the
+specification forbids.
 
 **Security.** The `python-background-jobs` skill's example configuration is
 insecure by omission and none of its snippets are copied here:
@@ -57,7 +59,7 @@ import structlog
 from celery import Celery, Task, shared_task
 from celery.exceptions import OperationalError
 from celery.utils.time import get_exponential_backoff_interval
-from tcg_domain.analysis import AnalysisStatus
+from tcg_domain.analysis import AnalysisStatus, QualityStatus
 
 from tcg_api.analysis.state import transition
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
@@ -210,9 +212,38 @@ async def _advance(analysis_id: UUID) -> bool:
                 await db.rollback()
                 return False
 
+            # Spec §18 puts the quality gate here, before anything looks for a
+            # card: refusing a photograph nothing could be read from costs one
+            # decode, where letting it through costs the whole pipeline and ends
+            # in a confident answer about a blurred rectangle.
+            #
+            # Imported *here*, not at the top of the module. `routers/analyses.py`
+            # imports this file to enqueue, so a module-level import would drag
+            # OpenCV into the API image, which does not have it. See
+            # `tcg_api.analysis.quality`.
+            from tcg_api.analysis.quality import assess_analysis
+
+            verdict = await assess_analysis(db, analysis_id)
+            if verdict is QualityStatus.UNUSABLE:
+                # §19: "If unusable, analysis should stop." The findings are
+                # already written, so the refusal can be explained; the status
+                # is the only thing said out loud here (spec §54).
+                await transition(db, analysis_id, to=AnalysisStatus.FAILED)
+                await db.commit()
+                logger.info(
+                    "analysis.image_quality_failed",
+                    analysis_id=str(analysis_id),
+                    quality_status=str(verdict),
+                )
+                return True
+
             # Where identification would run. It does not exist in any decomposed
             # milestone yet, so the analysis reaches the confirmation gate with no
             # candidate and the user names the card themselves (#91, #104).
+            #
+            # A `poor` verdict continues, per §19 — and is not silent: the
+            # findings are on the images and `GET /analyses/{id}` serves them, so
+            # `/analyze` can tell the user before they go on.
             await transition(db, analysis_id, to=AnalysisStatus.AWAITING_CONFIRMATION)
             await db.commit()
     finally:

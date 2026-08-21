@@ -107,6 +107,11 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 "sha256",
                 "quality_score",
                 "quality_status",
+                # Beyond spec §11's list, on the precedent the catalog revision
+                # set with the three it added beyond §10's: §19 requires the user
+                # to be told *what* was wrong with a photograph, and neither the
+                # status nor the score can name a condition.
+                "quality_details",
                 "created_at",
             },
         ),
@@ -318,10 +323,14 @@ def test_a_stored_image_knows_its_key_its_type_and_its_digest() -> None:
 
 @pytest.mark.parametrize(
     "column",
-    ["normalized_uri", "width", "height", "quality_score", "quality_status"],
+    ["normalized_uri", "width", "height", "quality_score", "quality_status", "quality_details"],
 )
 def test_what_a_later_stage_computes_starts_empty(column: str) -> None:
-    """Normalization writes the first three; the quality gate writes the last two."""
+    """Normalization writes the first three; the quality gate writes the last three.
+
+    NULL has to keep meaning "not assessed": an empty details object would claim
+    eleven conditions were looked at and found clear.
+    """
     assert images.columns[column].nullable is True
 
 
@@ -338,13 +347,21 @@ def test_the_accepted_mime_types_are_not_a_schema_fact() -> None:
     assert "mime_type IN" not in ddl(images)
 
 
-def test_the_quality_scale_is_left_to_the_gate() -> None:
-    """Spec §19 fixes four statuses and says nothing about a scale.
+def test_the_quality_scale_is_the_one_the_gate_defined() -> None:
+    """Spec §19 fixes four statuses and says nothing about a scale, so the
+    column was created unconstrained and its comment said the gate would define
+    it. #36 did: a `[0, 1]` fraction, 1 being best.
 
-    A bound invented here would be one the gate has to migrate away from.
+    A bound is worth a CHECK now for the reason it was worth leaving out before —
+    the value is rendered as a fraction wherever it is shown, so a gate producing
+    1.4 is a defect rather than a worse photograph, and the database is the one
+    place every writer passes through.
     """
-    assert "quality_score" not in check_constraint(images, "quality_status_is_a_known_status")
-    assert "ck_images_quality_score" not in ddl(images)
+    rendered = check_constraint(images, "quality_score_is_a_unit_interval")
+
+    assert "quality_score IS NULL" in rendered
+    assert "quality_score >= 0" in rendered
+    assert "quality_score <= 1" in rendered
 
 
 # ---------------------------------------------------------------------------
