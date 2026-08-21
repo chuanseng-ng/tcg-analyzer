@@ -267,10 +267,53 @@ jobs:
           test "$($COMPOSE ps -q worker | xargs docker inspect -f '{{.State.Status}}')" = running
           $COMPOSE logs worker | grep -q "celery@"
 
+      # The only job where PostgreSQL, MinIO and the API are all real, so the
+      # only place the upload path can be proved end to end. The JPEG is made
+      # inside the API container, which also proves Pillow is in the deployed
+      # image rather than only in the developer's virtualenv.
+      - name: A photograph uploads, validates and reaches uploaded
+        run: |
+          $COMPOSE exec -T api python -c "
+          import sys
+          from io import BytesIO
+          from PIL import Image
+          buffer = BytesIO()
+          Image.new('RGB', (64, 48), (180, 30, 30)).save(buffer, 'JPEG')
+          sys.stdout.buffer.write(buffer.getvalue())" > card.jpg
+          test -s card.jpg
+
+          id=$(curl -sS -c jar -X POST localhost:8000/analyses | jq -r .id)
+          upload() {
+            curl -sS -b jar -X POST "localhost:8000/analyses/$id/images?side=$1" \
+              -H 'Content-Type: image/jpeg' --data-binary @card.jpg
+          }
+          front=$(upload front); echo "$front"
+          test "$(echo "$front" | jq -r .analysis_status)" = uploading
+          back=$(upload back); echo "$back"
+          test "$(echo "$back" | jq -r .analysis_status)" = uploaded
+          test "$(echo "$front" | jq -r .sha256)" != null
+
+          # `uploaded` is the one state a run may start from, so a 202 here is
+          # the real assertion that the state machine moved in PostgreSQL.
+          run=$(curl -sS -b jar -X POST "localhost:8000/analyses/$id/run")
+          echo "$run"
+          test "$(echo "$run" | jq -r .status)" = queued
+
+      # The primary attack surface, against the real stack: a file is what its
+      # bytes say it is, never what the request claims.
+      - name: A non-image is refused as invalid_image
+        run: |
+          id=$(curl -sS -c jar2 -X POST localhost:8000/analyses | jq -r .id)
+          refused=$(curl -sS -b jar2 -X POST "localhost:8000/analyses/$id/images?side=front" \
+            -H 'Content-Type: image/jpeg' --data-binary @/bin/sh)
+          echo "$refused"
+          test "$(echo "$refused" | jq -r .code)" = invalid_image
+
       # The one place the limiter meets a real Redis: the unit tests drive it
       # through a stub, which proves the branch and not the store. Thirty is the
-      # default `TCG_API_RATE_LIMIT_REQUESTS`, so the thirty-first call inside
-      # the window is the first that must be refused.
+      # default `TCG_API_RATE_LIMIT_REQUESTS` and the steps above have already
+      # spent a few of it, so the loop below is comfortably past the limit and
+      # the call after it must be refused.
       - name: The analysis endpoints are rate-limited
         run: |
           for _ in $(seq 1 30); do

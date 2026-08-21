@@ -18,6 +18,13 @@ dependencies = [
     # imports this. Declared here rather than left to the dev group: the
     # console script below has to work from `uv sync --package tcg-api`.
     "httpx>=0.27",
+    # The upload endpoint's validator (#33). Pillow is the content sniffer —
+    # `Image.open` reads magic bytes, never the declared Content-Type — the
+    # decodability check, the dimension reader used to refuse a decompression
+    # bomb before it is decoded, and the lossless PNG re-saver. Writing our own
+    # JPEG and PNG header parsers instead would be more code and less
+    # trustworthy on exactly the input this project must not get wrong.
+    "pillow>=11",
     # Imported directly by database.py and routers/readiness.py, so it is
     # declared directly. Arriving transitively via fastapi/pydantic-settings
     # would let either package's pin silently break those modules.

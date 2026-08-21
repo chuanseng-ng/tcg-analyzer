@@ -98,17 +98,55 @@ def test_openapi_documents_the_analysis_paths() -> None:
     assert "get" in schema["paths"]["/analyses/{analysis_id}"]
 
 
-def test_openapi_documents_the_throttled_response() -> None:
-    """#98 limits the two writes spec §55 names, and says so in the contract.
+def test_openapi_documents_the_image_upload_path() -> None:
+    """Spec §64 names `POST /analyses/{id}/images`; #33 serves it."""
+    schema = create_app().openapi()
 
-    Documented without a model, exactly as the 404 and the 409 are: a 429 is a
-    transport-level failure outside the spec §66 envelope (ADR 0005), so there
-    is no `ErrorResponse` for a generated client to expect.
+    assert "post" in schema["paths"]["/analyses/{analysis_id}/images"]
+
+
+def test_openapi_documents_the_upload_body_as_binary() -> None:
+    """The upload takes the image as the request body, not as a multipart part.
+
+    Declared through `openapi_extra`, because FastAPI has no body parameter to
+    infer it from — the endpoint reads the stream itself so the byte limit
+    applies while the upload arrives. Without this a generated client would have
+    no idea what to send.
+    """
+    operation = create_app().openapi()["paths"]["/analyses/{analysis_id}/images"]["post"]
+
+    body = operation["requestBody"]
+    assert body["required"] is True
+    assert set(body["content"]) == {"image/jpeg", "image/png"}
+    assert body["content"]["image/jpeg"]["schema"] == {"type": "string", "format": "binary"}
+
+
+def test_openapi_documents_the_upload_rejection() -> None:
+    """A rejected upload is `invalid_image` inside the §66 envelope.
+
+    Unlike the 404, the 409 and the 429 on the same router: the taxonomy has a
+    code that says exactly this, so there is no reason to answer outside it.
+    """
+    operation = create_app().openapi()["paths"]["/analyses/{analysis_id}/images"]["post"]
+
+    content = operation["responses"]["400"]["content"]["application/json"]
+    assert content["schema"]["$ref"].endswith("/ErrorResponse")
+
+
+def test_openapi_documents_the_throttled_response() -> None:
+    """#98 limits the three writes spec §55 names, and says so in the contract.
+
+    §55 names analysis endpoints *and image uploads*, so #33's endpoint carries
+    the same dependency and shares the same bucket. Documented without a model,
+    exactly as the 404 and the 409 are: a 429 is a transport-level failure
+    outside the spec §66 envelope (ADR 0005), so there is no `ErrorResponse` for
+    a generated client to expect.
     """
     paths = create_app().openapi()["paths"]
 
     assert "429" in paths["/analyses"]["post"]["responses"]
     assert "429" in paths["/analyses/{analysis_id}/run"]["post"]["responses"]
+    assert "429" in paths["/analyses/{analysis_id}/images"]["post"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
     assert "429" not in paths["/cards/search"]["get"]["responses"]
 

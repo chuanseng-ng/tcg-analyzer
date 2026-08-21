@@ -221,8 +221,31 @@ answer 404 with the same body, so the endpoint cannot be used to discover which
 analyses exist. Sessions expire after `TCG_API_SESSION_TTL_SECONDS`; nothing
 about the caller is recorded.
 
-Both writes — `POST /analyses` and `POST /analyses/{id}/run` — are rate-limited
-per client address (spec §55), `TCG_API_RATE_LIMIT_REQUESTS` per
+`POST /analyses/{id}/images?side=front` uploads one photograph, as the raw
+bytes of the request body rather than as a multipart form. That is deliberate:
+**no client filename ever arrives**, so spec §55's "sanitize filenames" and
+"generate server-side storage paths" are satisfied by construction rather than
+by validation, and the byte limit can be applied while the upload is still
+arriving. Uploaded images are untrusted input (spec §56), so the file is
+accepted only if its **content** — never the type it declares — is a JPEG or a
+PNG, if it is within `TCG_API_UPLOAD_MAX_BYTES` and `TCG_API_UPLOAD_MAX_PIXELS`,
+and if it decodes. The pixel limit is separate from the byte limit because a
+two-kilobyte PNG can declare a bitmap of eleven gigabytes, and it is checked
+from the file's header before anything is decoded. EXIF — including GPS — is
+removed before the image is stored (spec §54), losslessly: a JPEG is rebuilt
+from its own marker segments with the scan copied byte for byte, so the fine
+surface detail the condition models read is never re-compressed. The digest
+recorded on the row is of the bytes that were stored, not of the bytes that
+arrived. A second upload for the same side replaces the first, and the object it
+replaced is deleted. The analysis reaches `uploading` on the first photograph
+and `uploaded` once both sides have arrived, which is the one state
+`POST /analyses/{id}/run` may start from. Every rejection is `invalid_image`
+with a message naming the rule and nothing about the decoder.
+
+The three writes — `POST /analyses`, `POST /analyses/{id}/images` and
+`POST /analyses/{id}/run` — are rate-limited
+per client address (spec §55, which names analysis endpoints *and* image
+uploads), `TCG_API_RATE_LIMIT_REQUESTS` per
 `TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
 runs on so the limit holds across replicas. A throttled request is a 429
 carrying `Retry-After`, deliberately outside the spec §66 error envelope —
