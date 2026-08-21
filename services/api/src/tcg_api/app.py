@@ -96,6 +96,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # A cross-origin response exposes only CORS's six safelisted headers to
+        # script unless it names more, and `allow_headers` is about the
+        # *request*. Without this the browser receives `Retry-After` and refuses
+        # to let `apps/web` read it, so the 429 the limiter raises (ADR 0005)
+        # reaches the user as "too many requests, unknown wait" — and the only
+        # thing left to offer is a button that fires straight back into the
+        # limit. Found in a browser; curl reads every header regardless.
+        expose_headers=["Retry-After"],
     )
 
     install_error_handlers(app)

@@ -38,3 +38,23 @@ def test_cross_origin_requests_from_the_web_shell_are_permitted() -> None:
         response = client.get("/health", headers={"Origin": "http://localhost:3000"})
 
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_retry_after_is_readable_by_the_browser() -> None:
+    """`Retry-After` is useless to `apps/web` unless CORS exposes it.
+
+    A cross-origin response hands script only CORS's six safelisted headers
+    unless the server names more — and `allow_headers` is about the *request*,
+    so it does not help. Without this the 429 the limiter raises (ADR 0005)
+    arrives with no readable wait, and the only thing #34's upload screen could
+    then offer is a button that fires straight back into the limit.
+
+    Found by driving a real browser; `curl` reads every header regardless, which
+    is why no earlier test noticed.
+    """
+    with TestClient(create_app()) as client:
+        response = client.get("/health", headers={"Origin": "http://localhost:3000"})
+
+    exposed = response.headers["access-control-expose-headers"]
+
+    assert "Retry-After" in {header.strip() for header in exposed.split(",")}
