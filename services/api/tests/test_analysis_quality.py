@@ -168,6 +168,27 @@ def test_a_photograph_that_cannot_be_fetched_is_not_quietly_passed(
         run(lambda: quality.assess_analysis(object(), uuid.uuid4()))
 
 
+def test_an_analysis_with_no_photographs_needs_no_object_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Building the client is what raises when storage is unconfigured, so
+    hoisting it above the loop turns "nothing to judge" into a job failure about
+    configuration — which is what it did, and what the migrations CI job (which
+    has PostgreSQL and no MinIO) found."""
+    recorder = _Recorder({})
+
+    def refuse() -> InMemoryObjectStorage:
+        raise RuntimeError("object storage is not configured")
+
+    monkeypatch.setattr(quality, "get_object_storage", refuse)
+    monkeypatch.setattr(quality, "read_v1_image_keys", recorder.read_v1_image_keys)
+    monkeypatch.setattr(quality, "record_quality", recorder.record_quality)
+
+    verdict = run(lambda: quality.assess_analysis(object(), uuid.uuid4()))
+
+    assert verdict is QualityStatus.GOOD
+
+
 # ---------------------------------------------------------------------------
 # The write, against PostgreSQL
 # ---------------------------------------------------------------------------

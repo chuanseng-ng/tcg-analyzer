@@ -55,12 +55,16 @@ async def assess_analysis(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
         UnreadableImage: If a stored image does not decode, which means the
             object is not what its row says it is. Same treatment.
     """
-    storage = get_object_storage()
     keys = await read_v1_image_keys(db, analysis_id)
 
     statuses: list[QualityStatus] = []
     for side in sorted(keys):
-        report = await _assess_one(storage, keys[side])
+        # Built inside the loop, and deliberately not hoisted above it.
+        # `get_object_storage` raises when the store is unconfigured, so
+        # hoisting turns "this analysis has no photographs" — which folds to
+        # `good` and needs no store at all — into a job failure about
+        # configuration. It is `lru_cache`d, so the second side is free.
+        report = await _assess_one(get_object_storage(), keys[side])
         await record_quality(db, analysis_id=analysis_id, side=side, report=report)
         statuses.append(report.status)
         # The verdict and the score, never the URI and never a measurement that

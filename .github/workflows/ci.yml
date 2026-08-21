@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Types
-        run: uv run mypy packages/domain/src packages/shared/src services/api/src
+        run: uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src
 
       # Tests needing a live service are deselected here and covered by the jobs
       # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
@@ -275,7 +275,21 @@ jobs:
       - name: OpenCV is in the worker image and not in the API image
         run: |
           $COMPOSE exec -T worker python -c "import cv2; print(cv2.__version__)"
-          ! $COMPOSE exec -T api python -c "import cv2"
+
+          # Deliberately not `! $COMPOSE exec ... python -c "import cv2"`.
+          # `docker compose exec` does not reliably propagate the remote
+          # command's exit status, so a negation there can report success
+          # whichever way the import went — which is the failure mode this step
+          # exists to catch. Assert on what the interpreter said instead.
+          present=$($COMPOSE exec -T api python -c "
+          try:
+              import cv2
+          except ModuleNotFoundError:
+              print('absent')
+          else:
+              print('present')" | tr -d '\r')
+          echo "api image: OpenCV $present"
+          test "$present" = absent
 
       # The only job where PostgreSQL, MinIO and the API are all real, so the
       # only place the upload path can be proved end to end. The JPEG is made
