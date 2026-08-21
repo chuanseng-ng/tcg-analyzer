@@ -30,12 +30,12 @@ __all__ = ["DEFAULT_THRESHOLDS", "IMAGE_QUALITY_VERSION", "QualityThresholds"]
 
 #: What produced a verdict. Recorded on every image; never a pointer to
 #: "current", per the project's versioning invariant.
-IMAGE_QUALITY_VERSION: Final = "image-quality-heuristic-v0.1.0"
+IMAGE_QUALITY_VERSION: Final = "image-quality-heuristic-v0.2.0"
 
 
 @dataclass(frozen=True, slots=True)
 class QualityThresholds:
-    """Three points on each of the six measurements this gate decides.
+    """Three points on each of the eleven measurements this gate decides.
 
     `unusable` and `poor` are spec §19's two consequential lines. `ideal` is the
     third, and it is a fact about the measurement rather than a tuning knob: it
@@ -47,6 +47,10 @@ class QualityThresholds:
     more Laplacian energy is sharper; `glare_area` runs 0.03 → 0.005 → 0.0
     because less reflection is better. Nothing declares which way is better —
     reading it off the numbers means the two cannot contradict each other.
+
+    The first six are measured from the pixels alone. The last five are measured
+    from the card boundary #37's detector supplies, and are simply not judged
+    when no boundary was found — see :func:`~tcg_ml_image_quality.assess`.
 
     Raises:
         ValueError: If a triple is not strictly ordered, or a positive value is
@@ -106,6 +110,56 @@ class QualityThresholds:
     #: No reflection at all, which is both the ideal and the floor.
     glare_area_ideal: float = 0.0
 
+    # -- severe perspective distortion: opposite-side length ratio -----------
+    #: 1.0 is a photograph taken square-on. A card held at an angle has a near
+    #: edge measurably longer than its far edge, and the ratio between them is
+    #: the distortion — independent of how large the card is in the frame and of
+    #: how it is rotated. Perspective correction can undo a mild one; past the
+    #: unusable line the far edge has too few pixels left to correct back.
+    perspective_ratio_unusable: float = 1.45
+    perspective_ratio_poor: float = 1.12
+    perspective_ratio_ideal: float = 1.0
+
+    # -- card partly outside frame: least corner-to-edge gap -----------------
+    #: As a fraction of the frame's short edge. Exactly 0 means a corner sits on
+    #: the picture's boundary, which is what a clipped card looks like from the
+    #: inside: the detector cannot see the part that is missing, so the boundary
+    #: it finds runs along the edge of the photograph.
+    border_margin_unusable: float = 0.0
+    border_margin_poor: float = 0.005
+    #: A couple of per cent of clear space on every side, which is also what
+    #: perspective correction needs to work with.
+    border_margin_ideal: float = 0.02
+
+    # -- multiple cards: how many card-like quadrilaterals were found --------
+    #: A count, judged by the same machinery as everything else so there is one
+    #: way a condition becomes a finding. **Any** second card is unusable: the
+    #: analysis would not know which card the user is asking about, and picking
+    #: one is exactly the confidently-wrong output spec §2.7 forbids.
+    card_count_unusable: float = 2.0
+    card_count_poor: float = 1.5
+    card_count_ideal: float = 1.0
+
+    # -- sleeve obstruction: the enclosing quadrilateral's area ratio --------
+    #: 1.0 is a bare card. A penny sleeve sits near 1.05 and a top-loader near
+    #: 1.4; the detector reports nothing above 1.5, so **this condition is a
+    #: `poor` finding by construction** — the unusable line sits where a
+    #: "sleeve" would no longer be a sleeve, and exists so that the triple
+    #: declares its direction the way every other one does.
+    sleeve_ratio_unusable: float = 2.0
+    sleeve_ratio_poor: float = 1.02
+    sleeve_ratio_ideal: float = 1.0
+
+    # -- insufficient card size: the card's share of the frame ---------------
+    #: How much of the sensor the card actually got, which is a different
+    #: question from how many megapixels the file has — that is
+    #: `low_resolution`'s, and it is measured separately.
+    card_area_unusable: float = 0.06
+    card_area_poor: float = 0.15
+    #: A card filling most of a portrait frame, which is what the upload screen
+    #: asks for.
+    card_area_ideal: float = 0.45
+
     def __post_init__(self) -> None:
         if self.work_long_edge <= 0:
             raise ValueError(f"work_long_edge must be positive, got {self.work_long_edge!r}")
@@ -161,6 +215,36 @@ class QualityThresholds:
                 self.exposure_range_ideal,
             ),
             ("glare", self.glare_area_unusable, self.glare_area_poor, self.glare_area_ideal),
+            (
+                "severe_perspective_distortion",
+                self.perspective_ratio_unusable,
+                self.perspective_ratio_poor,
+                self.perspective_ratio_ideal,
+            ),
+            (
+                "card_partly_outside_frame",
+                self.border_margin_unusable,
+                self.border_margin_poor,
+                self.border_margin_ideal,
+            ),
+            (
+                "multiple_cards",
+                self.card_count_unusable,
+                self.card_count_poor,
+                self.card_count_ideal,
+            ),
+            (
+                "sleeve_obstruction",
+                self.sleeve_ratio_unusable,
+                self.sleeve_ratio_poor,
+                self.sleeve_ratio_ideal,
+            ),
+            (
+                "insufficient_card_size",
+                self.card_area_unusable,
+                self.card_area_poor,
+                self.card_area_ideal,
+            ),
         )
 
     def as_record(self) -> dict[str, float]:

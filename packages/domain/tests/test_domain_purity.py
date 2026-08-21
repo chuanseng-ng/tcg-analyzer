@@ -67,6 +67,7 @@ def test_the_public_surface_is_explicit() -> None:
         "analysis",
         "annotations",
         "card",
+        "card_geometry",
         "catalog",
         "catalog_version",
         "confidence",

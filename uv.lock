@@ -1343,6 +1343,7 @@ dependencies = [
 
 [package.optional-dependencies]
 worker = [
+    { name = "tcg-ml-card-detection" },
     { name = "tcg-ml-image-quality" },
 ]
 
@@ -1360,6 +1361,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.52" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "tcg-domain", editable = "packages/domain" },
+    { name = "tcg-ml-card-detection", marker = "extra == 'worker'", editable = "ml/card-detection" },
     { name = "tcg-ml-image-quality", marker = "extra == 'worker'", editable = "ml/image-quality" },
     { name = "tcg-shared", editable = "packages/shared" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
@@ -1431,6 +1433,18 @@ source = { editable = "services/market-data" }
 name = "tcg-ml-card-detection"
 version = "0.0.0"
 source = { editable = "ml/card-detection" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "tcg-domain", editable = "packages/domain" },
+]
 
 [[package]]
 name = "tcg-ml-card-identification"

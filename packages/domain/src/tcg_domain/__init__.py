@@ -26,6 +26,7 @@ from tcg_domain.card import (
     Game,
     Language,
 )
+from tcg_domain.card_geometry import CORNER_NAMES, CardGeometry, Corner
 from tcg_domain.catalog import Card, CardExternalId, CardId, Set, SetId
 from tcg_domain.catalog_version import (
     VERSION_PATTERN,
@@ -43,6 +44,7 @@ from tcg_domain.errors import (
     CatalogUnavailable,
     CurrencyMismatch,
     DomainError,
+    InvalidCardGeometry,
     InvalidCardIdentification,
     InvalidCardReference,
     InvalidCardSearch,
@@ -74,6 +76,7 @@ from tcg_domain.repository import (
 )
 
 __all__ = [
+    "CORNER_NAMES",
     "DECIDABLE_WITHOUT_GEOMETRY",
     "DEFAULT_SEARCH_LIMIT",
     "ENGLISH",
@@ -93,6 +96,7 @@ __all__ = [
     "CardDatabaseVersion",
     "CardDatabaseVersionRepository",
     "CardExternalId",
+    "CardGeometry",
     "CardId",
     "CardIdentification",
     "CardPage",
@@ -102,6 +106,7 @@ __all__ = [
     "CatalogUnavailable",
     "ConditionVerdict",
     "Confidence",
+    "Corner",
     "Currency",
     "CurrencyMismatch",
     "DomainError",
@@ -111,6 +116,7 @@ __all__ = [
     "GradeDistribution",
     "ImageSide",
     "InsufficientInformation",
+    "InvalidCardGeometry",
     "InvalidCardIdentification",
     "InvalidCardReference",
     "InvalidCardSearch",

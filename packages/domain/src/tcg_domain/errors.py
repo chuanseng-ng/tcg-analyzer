@@ -25,6 +25,7 @@ __all__ = [
     "CatalogUnavailable",
     "CurrencyMismatch",
     "DomainError",
+    "InvalidCardGeometry",
     "InvalidCardIdentification",
     "InvalidCardReference",
     "InvalidCardSearch",
@@ -106,6 +107,17 @@ class InvalidCardSearch(DomainError, ValueError):
     Covers both directions of :meth:`tcg_domain.repository.CardRepository.search`:
     a filter that is empty rather than absent, and a page whose window does not
     describe the result set it claims.
+    """
+
+
+class InvalidCardGeometry(DomainError, ValueError):
+    """A detected card boundary is not representable — spec §18, #37.
+
+    Covers a quadrilateral that does not have four finite corners, one that is
+    concave, and one whose corners do not run clockwise from the top left.
+    That last is why this is an error rather than a convention: perspective
+    correction reads the corners positionally, so an inconsistent order does
+    not fail — it silently rotates or mirrors the card.
     """
 
 

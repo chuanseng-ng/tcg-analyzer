@@ -34,6 +34,8 @@ from tcg_api.analysis.images import read_quality, record_quality, upsert_image
 from tcg_api.database import create_session_factory
 from tcg_api.version import application_version
 from tcg_domain.analysis import ImageSide, QualityStatus
+from tcg_domain.card_geometry import CardGeometry
+from tcg_domain.confidence import Confidence
 from tcg_domain.image_quality import (
     ConditionVerdict,
     QualityCondition,
@@ -82,8 +84,19 @@ def a_report(status: QualityStatus = QualityStatus.ACCEPTABLE, score: float = 0.
     return QualityReport(
         findings=tuple(findings),
         score=score,
-        version="image-quality-heuristic-v0.1.0",
+        version="image-quality-heuristic-v0.2.0",
         thresholds={"blur_variance_poor": 120.0},
+    )
+
+
+def a_geometry() -> CardGeometry:
+    """A stand-in for what `tcg_ml_card_detection.detect` hands the gate."""
+    return CardGeometry(
+        corners=((10.0, 10.0), (90.0, 10.0), (90.0, 120.0), (10.0, 120.0)),
+        confidence=Confidence.of(0.9),
+        frame_width=100,
+        frame_height=140,
+        detector="card-detection-test-v0",
     )
 
 
@@ -98,6 +111,9 @@ class _Recorder:
     def __init__(self, sides: dict[ImageSide, str]) -> None:
         self.sides = sides
         self.written: dict[ImageSide, QualityReport] = {}
+        #: What each side's photograph was judged *with* — the card geometry the
+        #: detector supplied, or whatever it handed back instead.
+        self.judged: dict[str, object] = {}
 
     async def read_v1_image_keys(self, _db: Any, _analysis_id: UUID) -> dict[ImageSide, str]:
         return self.sides
@@ -121,14 +137,16 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[_Recorder, dict[str
 
     run(put)
 
-    def assess(data: bytes, **_: object) -> QualityReport:
+    def assess(data: bytes, *, geometry: object = None, **_: object) -> QualityReport:
         side = "front" if data == b"front-bytes" else "back"
+        recorder.judged[side] = geometry
         return a_report(verdicts.get(side, QualityStatus.ACCEPTABLE))
 
     monkeypatch.setattr(quality, "get_object_storage", lambda: storage)
     monkeypatch.setattr(quality, "read_v1_image_keys", recorder.read_v1_image_keys)
     monkeypatch.setattr(quality, "record_quality", recorder.record_quality)
     monkeypatch.setattr(quality, "assess", assess)
+    monkeypatch.setattr(quality, "detect", lambda _data: a_geometry())
 
     yield recorder, verdicts
 
@@ -141,6 +159,22 @@ def test_both_photographs_are_judged(
     run(lambda: quality.assess_analysis(object(), uuid.uuid4()))
 
     assert set(recorder.written) == {ImageSide.FRONT, ImageSide.BACK}
+
+
+def test_the_card_is_located_before_the_photograph_is_judged(
+    wired: tuple[_Recorder, dict[str, QualityStatus]],
+) -> None:
+    """Spec §18's fourth stage feeding spec §19's, which is issue #37's whole job.
+
+    Without this the gate answers five of its eleven conditions `undetermined`
+    forever, and no photograph can ever be `good`.
+    """
+    recorder, _ = wired
+
+    run(lambda: quality.assess_analysis(object(), uuid.uuid4()))
+
+    assert set(recorder.judged) == {"front", "back"}
+    assert all(isinstance(geometry, CardGeometry) for geometry in recorder.judged.values())
 
 
 def test_the_analysis_takes_the_worse_of_the_two(

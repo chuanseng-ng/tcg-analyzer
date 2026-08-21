@@ -171,7 +171,7 @@ def test_a_score_outside_the_unit_interval_is_refused() -> None:
 
 def test_a_version_may_not_be_a_pointer_to_whatever_is_current() -> None:
     """The same refusal the card-database version makes, for the same reason."""
-    with pytest.raises(InvalidQualityReport, match="fixed gate"):
+    with pytest.raises(InvalidQualityReport, match="version must name a fixed component"):
         QualityReport(
             findings=tuple(clear(c) for c in QualityCondition),
             score=1.0,

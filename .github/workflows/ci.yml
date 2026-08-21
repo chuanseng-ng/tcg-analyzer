@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Types
-        run: uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src
+        run: uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src ml/card-detection/src
 
       # Tests needing a live service are deselected here and covered by the jobs
       # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
@@ -272,24 +272,32 @@ jobs:
       # proves the request path does not *import* OpenCV; this proves the API
       # image does not *contain* it, which is the half a Python test run in a
       # developer's virtualenv can never see.
-      - name: OpenCV is in the worker image and not in the API image
+      - name: The CV stack is in the worker image and not in the API image
         run: |
-          $COMPOSE exec -T worker python -c "import cv2; print(cv2.__version__)"
+          $COMPOSE exec -T worker python -c "
+          import cv2, tcg_ml_card_detection, tcg_ml_image_quality
+          print(cv2.__version__)"
 
           # Deliberately not `! $COMPOSE exec ... python -c "import cv2"`.
           # `docker compose exec` does not reliably propagate the remote
           # command's exit status, so a negation there can report success
           # whichever way the import went — which is the failure mode this step
           # exists to catch. Assert on what the interpreter said instead.
-          present=$($COMPOSE exec -T api python -c "
+          #
+          # All three, because the split is one `--extra worker` and a package
+          # left out of it is an ImportError the API container only finds at
+          # startup.
+          for module in cv2 tcg_ml_image_quality tcg_ml_card_detection; do
+            present=$($COMPOSE exec -T api python -c "
           try:
-              import cv2
+              import $module
           except ModuleNotFoundError:
               print('absent')
           else:
               print('present')" | tr -d '\r')
-          echo "api image: OpenCV $present"
-          test "$present" = absent
+            echo "api image: $module $present"
+            test "$present" = absent
+          done
 
       # The only job where PostgreSQL, MinIO and the API are all real, so the
       # only place the upload path can be proved end to end. The JPEG is made
@@ -344,8 +352,10 @@ jobs:
           test "$(echo "$analysis" | jq -r '.images | length')" = 2
           test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = unusable
 
-          # Every condition is answered for, and the five that need the card
-          # located say so rather than being left out (#37 supplies them).
+          # Every condition is answered for. There is no card in a 64x48 flat
+          # rectangle, so the detector reports that rather than guessing a
+          # quadrilateral, and the five conditions that need one say so rather
+          # than being left out — which is #37's degradation path, end to end.
           test "$(echo "$analysis" | jq -r '.images[0].findings | length')" = 11
           test "$(echo "$analysis" | jq -r \
             '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
@@ -399,9 +409,64 @@ jobs:
           done
           echo "$analysis"
           test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
-          # `acceptable`, never `good`: five conditions were not checked, and
-          # saying so is the whole point. `good` becomes reachable with #37.
+          # `acceptable`, never `good`: a checkerboard has no card in it, so
+          # five conditions were not checked and saying so is the whole point.
+          # The step below is the one that reaches `good`.
           test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = acceptable
+          test "$(echo "$analysis" | jq -r \
+            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
+
+      # #37's acceptance criterion against the real stack: a photograph with a
+      # card in it, where the boundary is found and all eleven of spec §19's
+      # conditions are therefore answered. This is the only status this project
+      # can now reach that is not `acceptable`, and it is reachable only because
+      # the worker image carries the detector as well as the gate.
+      - name: A photograph of a card reaches the gate with every condition answered
+        run: |
+          $COMPOSE exec -T api python -c "
+          import sys, random
+          from io import BytesIO
+          from PIL import Image, ImageDraw
+          random.seed(1)
+          # A dark surface with a light, printed card on it at roughly a real
+          # card's 63:88 proportions, filling enough of the frame to clear the
+          # insufficient-card-size line and leaving a margin on every side.
+          picture = Image.new('RGB', (1200, 1600), (40, 40, 40))
+          draw = ImageDraw.Draw(picture)
+          for y in range(0, 1600, 16):
+              for x in range(0, 1200, 16):
+                  tone = 40 + random.randint(-8, 8)
+                  draw.point((x, y), fill=(tone, tone, tone))
+          for y in range(360, 1240, 20):
+              for x in range(285, 915, 20):
+                  tone = 230 if ((x // 20 + y // 20) % 2) else 140
+                  draw.rectangle([x, y, x + 19, y + 19], fill=(tone, tone, tone))
+          buffer = BytesIO()
+          picture.save(buffer, 'JPEG', quality=95)
+          sys.stdout.buffer.write(buffer.getvalue())" > card.jpg
+          test -s card.jpg
+
+          id=$(curl -sS -c jar4 -X POST localhost:8000/analyses | jq -r .id)
+          for side in front back; do
+            curl -sS -o /dev/null -b jar4 -X POST \
+              "localhost:8000/analyses/$id/images?side=$side" \
+              -H 'Content-Type: image/jpeg' --data-binary @card.jpg
+          done
+          curl -sS -o /dev/null -b jar4 -X POST "localhost:8000/analyses/$id/run"
+
+          for _ in $(seq 1 30); do
+            analysis=$(curl -sS -b jar4 "localhost:8000/analyses/$id")
+            case "$(echo "$analysis" | jq -r .status)" in
+              uploaded|identifying) sleep 1 ;;
+              *) break ;;
+            esac
+          done
+          echo "$analysis"
+          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
+          test "$(echo "$analysis" | jq -r '.images[0].findings | length')" = 11
+          test "$(echo "$analysis" | jq -r \
+            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 0
+          test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = good
 
       # The primary attack surface, against the real stack: a file is what its
       # bytes say it is, never what the request claims.
