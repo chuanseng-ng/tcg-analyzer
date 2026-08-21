@@ -567,4 +567,30 @@ describe("what the quality gate found", () => {
       expect(push).toHaveBeenCalledWith("/cards");
     });
   });
+
+  it("withdraws the ordinary hand-off once the photographs have been refused", async () => {
+    // A cheerful "Both photographs are stored / Choose which card this is"
+    // sitting under "these cannot be analysed" is a contradiction, and the
+    // button leads back to the same refusal. Found by driving a real browser.
+    readAnalysisMock.mockResolvedValue(analysis("failed", [judged("front", "unusable", ["blur"])]));
+
+    await storeBothAndChoose();
+    await screen.findByRole("alert");
+
+    expect(screen.queryByRole("button", { name: "Choose which card this is" })).toBeNull();
+    // Start over survives: it is true whatever the gate concluded.
+    expect(screen.getByRole("button", { name: "Start over" })).toBeInTheDocument();
+  });
+
+  it("leaves only one way forward when the photographs merely warrant a warning", async () => {
+    readAnalysisMock.mockResolvedValue(
+      analysis("awaiting_confirmation", [judged("front", "poor", ["glare"])]),
+    );
+
+    await storeBothAndChoose();
+    await screen.findByRole("alert");
+
+    expect(screen.queryByRole("button", { name: "Choose which card this is" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Use them anyway" })).toBeInTheDocument();
+  });
 });

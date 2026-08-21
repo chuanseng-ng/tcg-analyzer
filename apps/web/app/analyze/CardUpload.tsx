@@ -345,7 +345,12 @@ export function CardUpload() {
       )}
 
       {stored ? (
-        <Stored busy={busy} onChooseCard={() => void chooseCard()} onStartOver={startOver} />
+        <Stored
+          busy={busy}
+          judged={verdict !== null}
+          onChooseCard={() => void chooseCard()}
+          onStartOver={startOver}
+        />
       ) : (
         <div className={styles.actions}>
           <button
@@ -609,13 +614,21 @@ function QualityVerdict({
  * navigates on its own — it takes this tap — and the analysis is not confirmed
  * here: that is `/identify`'s job, and it is a separate, deliberate answer to a
  * question this screen never asks.
+ *
+ * **Once the gate has spoken, this panel gets out of the way.** The verdict
+ * owns the forward action from then on — it refuses one outright, or offers
+ * "Use them anyway" — and leaving a second, cheerier route to the same place
+ * would be redundant beneath a warning and a plain contradiction beneath a
+ * refusal. What survives is Start over, which is true either way.
  */
 function Stored({
   busy,
+  judged,
   onChooseCard,
   onStartOver,
 }: {
   readonly busy: boolean;
+  readonly judged: boolean;
   readonly onChooseCard: () => void;
   readonly onStartOver: () => void;
 }) {
@@ -626,18 +639,22 @@ function Stored({
   }, []);
 
   return (
-    <div className={styles.done} role="status">
-      <p className={styles.doneHeading} ref={heading} tabIndex={-1}>
-        Both photographs are stored.
-      </p>
-      <p className={styles.note}>
-        Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
-        product will not guess which card you are holding. Reading the card&apos;s condition and the
-        economics of grading it are still being built.
-      </p>
-      <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
-        {busy ? "Getting ready…" : "Choose which card this is"}
-      </button>
+    <div className={styles.done} role="status" data-judged={judged}>
+      {!judged && (
+        <>
+          <p className={styles.doneHeading} ref={heading} tabIndex={-1}>
+            Both photographs are stored.
+          </p>
+          <p className={styles.note}>
+            Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
+            product will not guess which card you are holding. Reading the card&apos;s condition and
+            the economics of grading it are still being built.
+          </p>
+          <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
+            {busy ? "Getting ready…" : "Choose which card this is"}
+          </button>
+        </>
+      )}
       <p className={styles.note}>
         Retake either side above to replace what is stored, or start over with a different card.
       </p>

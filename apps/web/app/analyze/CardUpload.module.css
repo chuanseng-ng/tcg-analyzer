@@ -223,6 +223,13 @@
   background-color: var(--color-surface);
 }
 
+/* Once the quality gate has spoken, this panel holds only Start over — the
+   verdict above owns the forward action. Success green around a lone escape
+   hatch, directly beneath a refusal, would be the wrong signal twice over. */
+.done[data-judged="true"] {
+  border-color: var(--color-border);
+}
+
 .doneHeading {
   font-size: var(--text-lg);
   font-weight: var(--weight-bold);
