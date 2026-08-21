@@ -465,8 +465,8 @@ function Stored({
       </p>
       <p className={styles.note}>
         Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
-        product will not guess which card you are holding. Reading the card&apos;s condition and
-        the economics of grading it are still being built.
+        product will not guess which card you are holding. Reading the card&apos;s condition and the
+        economics of grading it are still being built.
       </p>
       <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
         {busy ? "Getting ready…" : "Choose which card this is"}

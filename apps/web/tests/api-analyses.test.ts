@@ -209,12 +209,14 @@ describe("confirmCard", () => {
   it("carries the spec §66 code off a card the catalog does not hold", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        jsonResponse(
-          { code: "card_not_identified", message: "No card is recorded.", details: {} },
-          404,
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { code: "card_not_identified", message: "No card is recorded.", details: {} },
+            404,
+          ),
         ),
-      ),
     );
 
     const error = await confirmCard(ANALYSIS.id, CARD_ID).catch((caught: unknown) => caught);
