@@ -81,6 +81,17 @@ def pixels_of(data: bytes) -> bytes:
         return image.tobytes()
 
 
+def exif_of(data: bytes) -> dict[int, object]:
+    """The EXIF an image carries, read through a handle that gets closed.
+
+    A helper rather than an expression inside the `assert` it is written for:
+    `python -O` drops assertions, and an assertion that opens a file is one
+    whose side effect disappears with it.
+    """
+    with Image.open(BytesIO(data)) as image:
+        return dict(image.getexif())
+
+
 # ---------------------------------------------------------------------------
 # The type is sniffed, never declared
 # ---------------------------------------------------------------------------
@@ -214,7 +225,8 @@ def test_a_truncated_jpeg_is_refused() -> None:
 # ---------------------------------------------------------------------------
 def test_a_jpegs_gps_coordinates_do_not_survive() -> None:
     carrying = a_jpeg(exif=personal_metadata())
-    assert dict(Image.open(BytesIO(carrying)).getexif()), "the fixture must carry EXIF"
+    attached = exif_of(carrying)
+    assert attached, "the fixture must carry EXIF"
 
     validated = validate_image(carrying, max_pixels=GENEROUS_PIXELS)
 

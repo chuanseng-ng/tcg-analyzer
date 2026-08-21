@@ -147,6 +147,17 @@ def a_photograph(colour: tuple[int, int, int] = (200, 40, 40), *, located: bool 
     return buffer.getvalue()
 
 
+def exif_of(data: bytes) -> dict[int, object]:
+    """The EXIF an image carries, read through a handle that gets closed.
+
+    A helper rather than an expression inside the `assert` it is written for:
+    `python -O` drops assertions, and an assertion that opens a file is one
+    whose side effect disappears with it.
+    """
+    with Image.open(BytesIO(data)) as image:
+        return dict(image.getexif())
+
+
 def send(client: TestClient, analysis_id: str, side: str, body: bytes) -> Any:
     return client.post(
         f"/analyses/{analysis_id}/images",
@@ -354,7 +365,8 @@ def test_the_stored_bytes_are_the_stripped_bytes(
 ) -> None:
     """The privacy claim, end to end rather than in the validator alone."""
     located = a_photograph(located=True)
-    assert dict(Image.open(BytesIO(located)).getexif()), "the fixture must carry EXIF"
+    attached = exif_of(located)
+    assert attached, "the fixture must carry EXIF"
     created = client.post("/analyses").json()
 
     body = send(client, created["id"], "front", located).json()
