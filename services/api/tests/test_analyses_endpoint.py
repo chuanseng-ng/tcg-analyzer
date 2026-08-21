@@ -39,7 +39,9 @@ from tcg_api.config import get_settings
 from tcg_api.database import get_engine, get_session_factory
 from tcg_api.errors import ErrorCode
 from tcg_api.routers.analyses import SESSION_COOKIE
+from tcg_api.routers.cards import card_repository
 from tcg_api.storage import get_object_storage
+from tcg_domain.errors import CatalogUnavailable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -577,6 +579,245 @@ def test_an_unreachable_queue_is_a_503(client: TestClient, monkeypatch: pytest.M
     body = response.json()
     assert body["code"] == ErrorCode.PROVIDER_ERROR.value
     assert body["details"]["reason"] == "job_queue_unreachable"
+
+
+# ---------------------------------------------------------------------------
+# Confirming the card — issue #104
+#
+# The card is real, because the foreign key is: `analyses.card_id` references
+# `cards.id` with `RESTRICT`, so a fake repository saying "yes" to an identifier
+# no row carries would be testing the fake and then failing on the constraint.
+# One set and one card are inserted for the module, and the real
+# `PostgresCardRepository` resolves them.
+#
+# The state is written directly, exactly as `uploaded()` above does. `worked()`
+# would also reach it, but through a worker this endpoint's contract does not
+# depend on.
+# ---------------------------------------------------------------------------
+
+CARD_ID = uuid.UUID("11111111-1111-5111-8111-111111111111")
+SET_ID = uuid.UUID("22222222-2222-5222-8222-222222222222")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def catalogued(migrated: None) -> None:
+    """One card for confirmations to name, inserted past the API.
+
+    Takes `migrated` rather than trusting definition order: two autouse fixtures
+    of the same scope are not ordered by where they appear, and this one writes
+    to a table that one creates.
+
+    Idempotent, because the module fixture that empties the session tree does
+    not touch the catalog and a developer may run this file twice.
+    """
+    if not DATABASE_URL:
+        return
+
+    executing(
+        "INSERT INTO sets (id, game, language, set_code, name) "
+        "VALUES (:id, 'pokemon', 'en', 'CONF', 'Confirmation Test Set') "
+        "ON CONFLICT (id) DO NOTHING",
+        id=SET_ID,
+    )
+    executing(
+        "INSERT INTO cards (id, game, language, set_id, card_number, name, variant) "
+        "VALUES (:id, 'pokemon', 'en', :set_id, '1/1', 'Confirmation Test Card', 'holo') "
+        "ON CONFLICT (id) DO NOTHING",
+        id=CARD_ID,
+        set_id=SET_ID,
+    )
+
+
+def confirmable(analysis_id: str) -> None:
+    """Put an analysis where a confirmation may be recorded from."""
+    executing(
+        "UPDATE analyses SET status = 'awaiting_confirmation' WHERE id = :id",
+        id=uuid.UUID(analysis_id),
+    )
+
+
+def at_the_gate(client: TestClient) -> str:
+    """An analysis of this client's, waiting for its card."""
+    created = client.post("/analyses").json()
+    confirmable(created["id"])
+    return str(created["id"])
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_confirming_records_the_card_and_moves_the_analysis_on(client: TestClient) -> None:
+    """The acceptance criterion: the analysis records which card it is."""
+    analysis_id = at_the_gate(client)
+
+    response = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["card_id"] == str(CARD_ID)
+    assert body["status"] == "analyzing"
+    # Past the API, because the response could agree with itself while the row
+    # said something else.
+    assert querying("SELECT card_id FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id)) == (
+        CARD_ID
+    )
+    assert (
+        querying("SELECT status FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id))
+        == "analyzing"
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_confirmed_analysis_reports_its_card_when_polled(client: TestClient) -> None:
+    """§65's poll is where a client learns this, so it has to carry it."""
+    analysis_id = at_the_gate(client)
+    client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    polled = client.get(f"/analyses/{analysis_id}").json()
+
+    assert polled["card_id"] == str(CARD_ID)
+    assert polled["status"] == "analyzing"
+    assert polled["completed_at"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+@pytest.mark.parametrize("state", ["created", "uploading", "uploaded", "analyzing", "failed"])
+def test_only_an_analysis_waiting_for_a_card_takes_one(client: TestClient, state: str) -> None:
+    """Spec §20 makes confirmation a step, not something available at any moment."""
+    created = client.post("/analyses").json()
+    executing(
+        "UPDATE analyses SET status = :state WHERE id = :id",
+        state=state,
+        id=uuid.UUID(created["id"]),
+    )
+
+    response = client.post(
+        f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
+    )
+
+    assert response.status_code == 409
+    assert state in response.json()["detail"]
+    assert querying("SELECT card_id FROM analyses WHERE id = :id", id=uuid.UUID(created["id"])) is (
+        None
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_confirming_twice_is_refused(client: TestClient) -> None:
+    """Decided rather than left open: §65 moves forwards only, so there is no
+    second confirmation and no changing the card afterwards. Starting over is
+    how a mistake is corrected."""
+    analysis_id = at_the_gate(client)
+    first = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    second = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert querying("SELECT card_id FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id)) == (
+        CARD_ID
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_card_the_catalog_does_not_hold_is_refused(client: TestClient) -> None:
+    """Spec §55: the identifier comes from a client and is not trusted.
+
+    The same `card_not_identified` `GET /cards/{id}` answers with, so "no card
+    is recorded under that identifier" means one thing across the product.
+    """
+    analysis_id = at_the_gate(client)
+
+    response = client.post(
+        f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(uuid.uuid4())}
+    )
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == ErrorCode.CARD_NOT_IDENTIFIED.value
+    # Nothing was written, and the analysis is still confirmable.
+    assert (
+        querying("SELECT status FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id))
+        == "awaiting_confirmation"
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_another_sessions_analysis_cannot_be_confirmed(client: TestClient) -> None:
+    """The same 404, with the same body, for the same reason as the read."""
+    analysis_id = at_the_gate(client)
+    client.cookies.clear()
+    client.post("/analyses")
+
+    response = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == NOT_FOUND
+    assert querying("SELECT card_id FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id)) is (
+        None
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_confirming_without_a_session_is_the_same_404(client: TestClient) -> None:
+    analysis_id = at_the_gate(client)
+    client.cookies.clear()
+
+    response = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == NOT_FOUND
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_unreachable_catalog_is_a_503_naming_the_catalog(client: TestClient) -> None:
+    """A fourth `details.reason`, because a confirmation reads a fourth dependency.
+
+    An operator reading a 503 from this endpoint should be told whether it is
+    the analysis store or the catalog that is not answering, rather than
+    guessing between them.
+    """
+    analysis_id = at_the_gate(client)
+
+    class Refusing:
+        """`get` is what raises, exactly as `PostgresCardRepository`'s does.
+
+        A dependency that raised instead would be testing FastAPI's resolution
+        rather than the route's `except` clause.
+        """
+
+        async def get(self, card_id: object) -> None:
+            raise CatalogUnavailable("nope")
+
+    client.app.dependency_overrides[card_repository] = Refusing
+    try:
+        response = client.post(
+            f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)}
+        )
+    finally:
+        client.app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == ErrorCode.PROVIDER_ERROR.value
+    assert body["details"]["reason"] == "catalog_unreachable"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_malformed_card_id_is_a_validation_error(client: TestClient) -> None:
+    """FastAPI's own 422, on the same terms a malformed path identifier gets."""
+    analysis_id = at_the_gate(client)
+
+    response = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": "not-a-uuid"})
+
+    assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------

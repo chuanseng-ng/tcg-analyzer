@@ -51,6 +51,7 @@ __all__ = [
     "new_session_token",
     "read_analysis",
     "resolve_session",
+    "set_confirmed_card",
 ]
 
 #: How much entropy a session token carries. 256 bits, rendered by
@@ -229,3 +230,32 @@ async def read_analysis(
     result = await execute(db, statement)
     row = result.one_or_none()
     return None if row is None else _record(row)
+
+
+async def set_confirmed_card(
+    db: AsyncSession,
+    analysis_id: UUID,
+    card_id: UUID,
+) -> AnalysisRecord:
+    """Record the card the user confirmed against `analysis_id` — spec §20, #104.
+
+    `RETURNING` rather than a second read, on `create_analysis`'s precedent: the
+    record this answers with is the row PostgreSQL wrote, including the status
+    the transition alongside it has already set, rather than a copy assembled
+    here from what the caller believes it did.
+
+    Does not commit, and does not check anything. The caller has established
+    ownership through :func:`read_analysis` and legality through
+    `state.transition`, whose conditional `UPDATE` is the arbiter; this is the
+    write that accompanies it inside the same transaction. `card_id` is a
+    catalog identifier the router has already resolved — the `RESTRICT` foreign
+    key is the backstop, not the check.
+    """
+    statement = (
+        sa.update(analyses)
+        .where(analyses.c.id == analysis_id)
+        .values(card_id=card_id)
+        .returning(*_ANALYSIS_COLUMNS)
+    )
+    result = await execute(db, statement)
+    return _record(result.one())

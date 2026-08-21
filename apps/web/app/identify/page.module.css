@@ -303,3 +303,10 @@
   font-weight: var(--weight-medium);
   cursor: pointer;
 }
+
+/* A confirmation being recorded. The button stays in place rather than being
+   swapped for a spinner, so nothing moves under a thumb mid-tap. */
+.confirm:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, startAnalysis, uploadImage } from "@/lib/api";
+import { ApiError, confirmCard, runAnalysis, startAnalysis, uploadImage } from "@/lib/api";
 
 const ANALYSIS = {
   id: "33333333-3333-3333-3333-333333333333",
@@ -160,6 +160,71 @@ function pending() {
   const xhr = FakeXhr.last as FakeXhr;
   return { file, progress, result, xhr };
 }
+
+describe("runAnalysis", () => {
+  it("POSTs with the session cookie and reads the acknowledgement", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ analysis_id: ANALYSIS.id, status: "queued" }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(runAnalysis(ANALYSIS.id)).resolves.toEqual({
+      analysis_id: ANALYSIS.id,
+      status: "queued",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe(`/analyses/${ANALYSIS.id}/run`);
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+  });
+
+  it("refuses an acknowledgement that does not say queued", async () => {
+    // `queued` is the only thing this endpoint answers; anything else means the
+    // contract has moved and the caller must not carry on as though it had not.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ analysis_id: ANALYSIS.id })));
+
+    await expect(runAnalysis(ANALYSIS.id)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("confirmCard", () => {
+  const CARD_ID = "22222222-2222-2222-2222-222222222222";
+
+  it("sends the card as JSON, with the session cookie", async () => {
+    const confirmed = { ...ANALYSIS, status: "analyzing", card_id: CARD_ID };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(confirmed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(confirmCard(ANALYSIS.id, CARD_ID)).resolves.toEqual(confirmed);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new URL(url).pathname).toBe(`/analyses/${ANALYSIS.id}/confirm-card`);
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(JSON.parse(String(init.body))).toEqual({ card_id: CARD_ID });
+  });
+
+  it("carries the spec §66 code off a card the catalog does not hold", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { code: "card_not_identified", message: "No card is recorded.", details: {} },
+            404,
+          ),
+        ),
+    );
+
+    const error = await confirmCard(ANALYSIS.id, CARD_ID).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("card_not_identified");
+  });
+});
 
 describe("uploadImage", () => {
   it("POSTs the raw file to the side's URL with the session cookie", async () => {

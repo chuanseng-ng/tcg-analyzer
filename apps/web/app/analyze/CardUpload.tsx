@@ -1,8 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { startAnalysis, uploadImage, type UploadSide } from "@/lib/api";
+import { forgetAnalysis, rememberAnalysis } from "@/lib/analysis-session";
+import { ApiError, runAnalysis, startAnalysis, uploadImage, type UploadSide } from "@/lib/api";
 import { classifyUploadFailure, type UploadFailure } from "@/lib/upload-errors";
 import {
   ACCEPT_ATTRIBUTE,
@@ -53,8 +55,11 @@ const SIDE_COPY: Readonly<Record<UploadSide, { title: string; hint: string; alt:
  * trying again re-sends only the side that is not stored — and never opens a
  * second analysis, because the identifier is kept.
  *
- * There is deliberately no `useRouter` here and no link onward: nothing yet
- * consumes an uploaded analysis. Confirming which card it is arrives with #104.
+ * **Where it leads.** Once both photographs are stored the screen hands off to
+ * the catalog: the analysis is run (spec §65) and the identifier is kept in
+ * `sessionStorage`, so `/identify` can record the card the user picks against
+ * it (#104). That is the only navigation this component performs, and it
+ * happens on an explicit tap.
  */
 export function CardUpload() {
   const [slots, setSlots] = useState<Slots>(EMPTY_SLOTS);
@@ -66,6 +71,7 @@ export function CardUpload() {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<UploadFailure | null>(null);
   const [waitSeconds, setWaitSeconds] = useState(0);
+  const router = useRouter();
 
   // Every object URL this component has minted. Revoked on replacement, on
   // removal, and on unmount — a preview that outlives its slot holds the whole
@@ -137,6 +143,7 @@ export function CardUpload() {
     // and #41's retention sweep deletes its images; there is no endpoint that
     // removes one, and inventing a request here would not make that true.
     setAnalysisId(null);
+    forgetAnalysis();
     setFailure(null);
   }, [dropPreview]);
 
@@ -152,6 +159,10 @@ export function CardUpload() {
     try {
       const id = analysisId ?? (await startAnalysis()).id;
       setAnalysisId(id);
+      // Kept where `/identify` can find it after the user has been through the
+      // catalog. The API scopes the analysis to the session cookie, so this is
+      // a convenience rather than anything that grants access.
+      rememberAnalysis(id);
 
       for (const side of pending) {
         const slot = slots[side];
@@ -197,6 +208,30 @@ export function CardUpload() {
     }
   }, [analysisId, slots]);
 
+  const chooseCard = useCallback(async () => {
+    if (analysisId === null) return;
+
+    setBusy(true);
+    setFailure(null);
+    try {
+      await runAnalysis(analysisId);
+    } catch (error: unknown) {
+      // A 409 means the analysis is already past `uploaded` — it has been run
+      // before, which is exactly where this button was trying to get it. Going
+      // on to the catalog is the right answer, not an error.
+      if (!(error instanceof ApiError) || error.status !== 409) {
+        const classified = classifyUploadFailure(error);
+        setFailure(classified);
+        if (classified.retryAfterSeconds !== undefined) {
+          setWaitSeconds(classified.retryAfterSeconds);
+        }
+        setBusy(false);
+        return;
+      }
+    }
+    router.push("/cards");
+  }, [analysisId, router]);
+
   const ready = SIDES.every((side) => slots[side].status !== "empty");
   const stored = SIDES.every((side) => slots[side].status === "stored");
   const started = analysisId !== null;
@@ -226,7 +261,7 @@ export function CardUpload() {
       {failure !== null && <Failure failure={failure} waitSeconds={waitSeconds} />}
 
       {stored ? (
-        <Stored onStartOver={startOver} />
+        <Stored busy={busy} onChooseCard={() => void chooseCard()} onStartOver={startOver} />
       ) : (
         <div className={styles.actions}>
           <button
@@ -400,13 +435,23 @@ function Failure({
 }
 
 /**
- * Both photographs are on the server. This is the end of what is built.
+ * Both photographs are on the server, and the next thing the product needs is
+ * the one thing it cannot work out for itself: which card this is.
  *
- * It leads nowhere on purpose. Confirming which card this is writes to the
- * analysis (#104) and running the pipeline needs that confirmation first, so a
- * link onward from here today would be a link to a dead end.
+ * The button runs the analysis (spec §65) and goes to the catalog. Nothing
+ * navigates on its own — it takes this tap — and the analysis is not confirmed
+ * here: that is `/identify`'s job, and it is a separate, deliberate answer to a
+ * question this screen never asks.
  */
-function Stored({ onStartOver }: { readonly onStartOver: () => void }) {
+function Stored({
+  busy,
+  onChooseCard,
+  onStartOver,
+}: {
+  readonly busy: boolean;
+  readonly onChooseCard: () => void;
+  readonly onStartOver: () => void;
+}) {
   const heading = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -419,14 +464,17 @@ function Stored({ onStartOver }: { readonly onStartOver: () => void }) {
         Both photographs are stored.
       </p>
       <p className={styles.note}>
-        Nothing has been analysed yet. Confirming which card these show, checking the photographs
-        are usable, reading the card&apos;s condition and the economics of grading it are still
-        being built.
+        Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
+        product will not guess which card you are holding. Reading the card&apos;s condition and the
+        economics of grading it are still being built.
       </p>
+      <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
+        {busy ? "Getting ready…" : "Choose which card this is"}
+      </button>
       <p className={styles.note}>
         Retake either side above to replace what is stored, or start over with a different card.
       </p>
-      <button className={styles.startOver} type="button" onClick={onStartOver}>
+      <button className={styles.startOver} type="button" onClick={onStartOver} disabled={busy}>
         Start over
       </button>
     </div>

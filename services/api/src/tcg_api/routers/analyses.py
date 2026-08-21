@@ -1,8 +1,8 @@
-"""Starting an analysis, and asking how it is going — spec §64, §53.
+"""Starting an analysis, feeding it, and asking how it is going — spec §64, §53.
 
-Two endpoints, and the first thing in this product that belongs to somebody. V1
-requires no login (spec §53), so an anonymous session is the whole of a user's
-continuity: `POST /analyses` opens one if the caller has none, and every later
+The analysis surface, and the first thing in this product that belongs to
+somebody. V1 requires no login (spec §53), so an anonymous session is the whole
+of a user's continuity: `POST /analyses` opens one if the caller has none, and every later
 read is scoped to it.
 
 **The session token travels in an HTTP-only cookie.** It is the only thing
@@ -37,6 +37,14 @@ it would throttle the product's own progress reporting. A throttled request is a
 429 with `Retry-After`, outside the §66 envelope for the same reason the 404 and
 the 409 above are (ADR 0005).
 
+**A confirmation is a step, not a field.** Spec §20 requires the user to confirm
+the card, so `POST /analyses/{id}/confirm-card` is only accepted from
+`awaiting_confirmation` and moves the analysis to `analyzing`. The `card_id` it
+takes comes from a client and is therefore resolved against the catalog before
+it is written (spec §55): the `RESTRICT` foreign key is the backstop, not the
+check. §65's states move forwards only and there are no self-edges, so a second
+confirmation — and a change of card — is a 409 rather than an overwrite.
+
 **The upload takes the image as the request body, not as a multipart part.**
 `POST /analyses/{id}/images?side=front` with the bytes and their type in the
 body is what a browser sends with `fetch(url, {method: "POST", body: file})`,
@@ -61,6 +69,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 from tcg_domain.analysis import V1_SIDES, AnalysisStatus, ImageSide
+from tcg_domain.catalog import CardId
+from tcg_domain.errors import CatalogUnavailable
+from tcg_domain.repository import CardRepository
 from tcg_shared.storage import ObjectStorage, StorageError, StorageKey, generate_key
 
 from tcg_api.analysis.image_validation import InvalidImage, ValidatedImage, validate_image
@@ -74,12 +85,14 @@ from tcg_api.analysis.sessions import (
     new_session_token,
     read_analysis,
     resolve_session,
+    set_confirmed_card,
 )
 from tcg_api.analysis.state import transition
 from tcg_api.config import get_settings
 from tcg_api.database import get_session_factory
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
 from tcg_api.rate_limit import analysis_rate_limit
+from tcg_api.routers.cards import card_repository
 from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
 
@@ -88,6 +101,7 @@ __all__ = [
     "UPLOAD_NAMESPACE",
     "AnalysisResponse",
     "AnalysisRunResponse",
+    "CardConfirmationRequest",
     "ImageResponse",
     "UploadSide",
     "analysis_session",
@@ -120,6 +134,23 @@ _NOT_FOUND = "No analysis is recorded under that identifier."
 #: /analyses/{id}/images` is what puts an analysis here, once both of spec §11's
 #: V1 sides have arrived.
 _RUNNABLE: Final = AnalysisStatus.UPLOADED
+
+#: The one state a confirmation may be recorded from. Spec §20 makes confirming
+#: a step in the pipeline rather than something a user may do at any moment, and
+#: §65 gives that step a state of its own — this is it. #35's worker is what
+#: puts an analysis here.
+_CONFIRMABLE: Final = AnalysisStatus.AWAITING_CONFIRMATION
+
+#: The catalog could not be reached. A fourth `details.reason` on this router,
+#: because a confirmation touches a dependency the other routes do not: the
+#: card is resolved against the catalog before it is written.
+_CATALOG_UNREACHABLE = "The card catalog could not be reached."
+
+#: Two requests confirmed the same analysis and this one lost. Its own message
+#: rather than `_not_confirmable`'s, which would name the state this caller read
+#: rather than the state the analysis is now in — true a moment ago, and a lie
+#: by the time it is read.
+_ALREADY_CONFIRMED = "This analysis has already been confirmed."
 
 #: The object store could not be reached, or is not configured. A third
 #: `details.reason`, distinct from the store's and the queue's, so an operator
@@ -201,6 +232,22 @@ class AnalysisRunResponse(BaseModel):
             "it is not one of spec §65's nine states and no analysis ever holds "
             "it. Poll `GET /analyses/{id}` for the state the analysis is in."
         ),
+    )
+
+
+class CardConfirmationRequest(BaseModel):
+    """Which card the user says they are holding — spec §20, §64.
+
+    One field, and deliberately only one. The catalog record is the truth about
+    what that card is, so a client that also sent a name, a set or a variant
+    would be sending something this service must not believe (spec §55: never
+    trust client-side card metadata). The identifier is resolved against the
+    catalog before it is written, which is what makes it a card rather than a
+    string the caller chose.
+    """
+
+    card_id: UUID = Field(
+        description="The card the user confirmed, from `GET /cards/search` or `GET /cards/{id}`.",
     )
 
 
@@ -293,6 +340,22 @@ def _images_unreachable() -> ApiError:
         _IMAGES_UNREACHABLE,
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         details={"reason": "image_store_unreachable"},
+    )
+
+
+def _catalog_unreachable() -> ApiError:
+    """The 503 for a catalog that is down, on `routers/cards.py`'s own terms.
+
+    Its own `details.reason`, distinct from the store's, the queue's and the
+    image store's: a confirmation reads the catalog as well as writing the
+    analysis, and an operator reading a 503 should be told which of the four
+    dependencies is not answering rather than guessing.
+    """
+    return ApiError(
+        ErrorCode.PROVIDER_ERROR,
+        _CATALOG_UNREACHABLE,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        details={"reason": "catalog_unreachable"},
     )
 
 
@@ -544,6 +607,129 @@ async def run_one_analysis(
 
     logger.info("analysis.queued", analysis_id=str(record.id), job_id=job_id)
     return AnalysisRunResponse(analysis_id=record.id, status="queued")
+
+
+@router.post(
+    "/{analysis_id}/confirm-card",
+    response_model=AnalysisResponse,
+    dependencies=[Depends(analysis_rate_limit)],
+    summary="Confirm which card the analysis is of",
+    description=(
+        "Records the card the user has confirmed they are holding (spec §20) "
+        "and moves the analysis on from `awaiting_confirmation`.\n\n"
+        "**The card is resolved against the catalog before it is written.** The "
+        "identifier arrives from a client and is therefore not trusted (spec "
+        "§55); one that names no card is refused with the same "
+        "`card_not_identified` that `GET /cards/{id}` answers with.\n\n"
+        "Only an analysis waiting for a confirmation can take one, and there is "
+        "no way back: spec §65's states move forwards only, so confirming twice "
+        "— or confirming a different card afterwards — is a 409. A card chosen "
+        "in error is corrected by starting a new analysis."
+    ),
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "No analysis is recorded under that identifier — for this "
+                "caller — or no card is recorded under the one in the body. The "
+                "first is the bare 404 `GET /analyses/{id}` answers with; the "
+                "second carries the spec §66 envelope with `card_not_identified`."
+            ),
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "The analysis is not waiting for a confirmation. Outside the "
+                "spec §66 taxonomy, which has no code meaning 'conflict'."
+            ),
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": (
+                "Too many requests from this client (spec §55). Carries "
+                "`Retry-After`. Outside the spec §66 taxonomy — see ADR 0005."
+            ),
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "The analysis store or the card catalog could not be reached.",
+        },
+    },
+)
+async def confirm_card(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(analysis_session)],
+    repository: Annotated[CardRepository, Depends(card_repository)],
+    body: CardConfirmationRequest,
+    analysis_id: Annotated[
+        UUID,
+        Path(description="The identifier `POST /analyses` answered with."),
+    ],
+) -> AnalysisResponse:
+    """Write the confirmed card onto the analysis, and move it on.
+
+    Ownership comes from `read_analysis`, so an unknown identifier, another
+    session's analysis, a missing cookie and an expired one are the one 404 the
+    other routes answer with.
+
+    The transition is performed *before* the card is written, and both are one
+    transaction. `transition` is the arbiter — its conditional `UPDATE` is what
+    refuses a second confirmation and settles two concurrent ones — so a caller
+    that loses that race has written nothing.
+    """
+    try:
+        session_id = await resolve_session(db, request.cookies.get(SESSION_COOKIE))
+        record = None if session_id is None else await read_analysis(db, analysis_id, session_id)
+    except AnalysisStoreUnavailable as error:
+        logger.warning("analysis.could_not_be_read", exc_info=True)
+        raise _unreachable() from error
+
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
+
+    if record.status != _CONFIRMABLE:
+        # Safe to name the state: ownership is established, and the caller can
+        # already see it by polling.
+        raise HTTPException(status.HTTP_409_CONFLICT, _not_confirmable(record.status))
+
+    try:
+        card = await repository.get(CardId(body.card_id))
+    except CatalogUnavailable as error:
+        logger.warning("analysis.catalog_unavailable", exc_info=True)
+        raise _catalog_unreachable() from error
+
+    if card is None:
+        raise ApiError(
+            ErrorCode.CARD_NOT_IDENTIFIED,
+            "No card is recorded under that identifier.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            details={"card_id": str(body.card_id)},
+        )
+
+    try:
+        if not await transition(db, record.id, to=AnalysisStatus.ANALYZING):
+            # Somebody moved it between the read above and this statement. The
+            # state it is in now is not worth a second query: the answer to the
+            # caller is the same either way, and the poll endpoint has it.
+            await db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, _ALREADY_CONFIRMED)
+        confirmed = await set_confirmed_card(db, record.id, body.card_id)
+        await db.commit()
+    except AnalysisStoreUnavailable as error:
+        logger.warning("analysis.card_not_confirmed", exc_info=True)
+        raise _unreachable() from error
+
+    # Internal identifiers only. A card is a catalog fact rather than anything
+    # about the person holding it, so it may be logged; nothing else here may.
+    logger.info(
+        "analysis.card_confirmed",
+        analysis_id=str(record.id),
+        card_id=str(body.card_id),
+        status=confirmed.status,
+    )
+    return _response(confirmed)
+
+
+def _not_confirmable(current: str) -> str:
+    """Why a confirmation was refused, in the terms `run`'s 409 uses."""
+    return f"A card is confirmed while the analysis is waiting for one, and this one is {current}."
 
 
 async def _read_body(request: Request, max_bytes: int) -> bytes:

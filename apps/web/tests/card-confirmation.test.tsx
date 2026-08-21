@@ -2,13 +2,15 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardConfirmation } from "@/app/identify/CardConfirmation";
-import { ApiError, type CardResponse } from "@/lib/api";
+import { rememberAnalysis } from "@/lib/analysis-session";
+import { ApiError, type AnalysisResponse, type CardResponse } from "@/lib/api";
 
 // `ApiError` stays real: the gate tells a missing card from an outage with
 // `instanceof` and the spec §66 code, exactly as the detail view does.
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   getCard: vi.fn(),
+  confirmCard: vi.fn(),
 }));
 
 let currentParams = new URLSearchParams();
@@ -17,8 +19,26 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => currentParams,
 }));
 
-const { getCard } = await import("@/lib/api");
+const { getCard, confirmCard } = await import("@/lib/api");
 const getCardMock = vi.mocked(getCard);
+const confirmCardMock = vi.mocked(confirmCard);
+
+const ANALYSIS_ID = "33333333-3333-3333-3333-333333333333";
+
+/** What `/analyze` leaves behind for this screen (#104). */
+function withPhotographs(): void {
+  rememberAnalysis(ANALYSIS_ID);
+}
+
+function confirmed(): AnalysisResponse {
+  return {
+    id: ANALYSIS_ID,
+    status: "analyzing",
+    created_at: "2026-08-21T00:00:00Z",
+    completed_at: null,
+    card_id: CARD_ID,
+  };
+}
 
 const CARD_ID = "22222222-2222-2222-2222-222222222222";
 
@@ -49,6 +69,11 @@ beforeEach(() => {
   // renders, so both of these reset together.
   currentParams = new URLSearchParams(`card_id=${CARD_ID}`);
   getCardMock.mockReset();
+  // An analysis left over from a previous test would silently move every
+  // confirmation onto the saved branch, so this resets with the mocks.
+  window.sessionStorage.clear();
+  confirmCardMock.mockReset();
+  confirmCardMock.mockResolvedValue(confirmed());
 });
 
 describe("the confirmation gate", () => {
@@ -126,15 +151,86 @@ describe("the confirmation gate", () => {
     expect(getCardMock).toHaveBeenCalledTimes(1);
   });
 
-  it("is honest that a confirmation is not saved anywhere", async () => {
+  it("is honest that a confirmation with no photographs is saved nowhere", async () => {
+    // Arriving from the catalog with nothing uploaded is still a legitimate
+    // path, and then there is no analysis to record anything against.
     getCardMock.mockResolvedValue(card());
 
     render(<CardConfirmation />);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
     await screen.findByRole("heading", { name: /^Confirmed/ });
 
-    expect(screen.getByText(/it is not saved/i)).toBeInTheDocument();
-    expect(screen.getByText(/arrive in M2/i)).toBeInTheDocument();
+    expect(screen.getByText(/no photographs in this tab/i)).toBeInTheDocument();
+    expect(confirmCardMock).not.toHaveBeenCalled();
+  });
+
+  it("records the card against the analysis the tab is working on", async () => {
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+
+    await screen.findByRole("heading", { name: /^Confirmed/ });
+    expect(confirmCardMock).toHaveBeenCalledWith(ANALYSIS_ID, CARD_ID);
+    expect(screen.getByText(/recorded as being of this card/i)).toBeInTheDocument();
+  });
+
+  it("says nothing is analysing the photographs yet", async () => {
+    // The analysis rests in `analyzing` until the condition stages exist, so
+    // this screen must not imply that work is under way.
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+    await screen.findByRole("heading", { name: /^Confirmed/ });
+
+    expect(screen.getByText(/nothing has analysed them yet/i)).toBeInTheDocument();
+  });
+
+  it("does not claim a confirmation the service refused", async () => {
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+    confirmCardMock.mockRejectedValue(new ApiError("down", { status: undefined }));
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("heading", { name: /^Confirmed/ })).not.toBeInTheDocument();
+    // Back to the question, with the tap still available.
+    expect(screen.getByRole("button", { name: "Confirm this card" })).toBeEnabled();
+  });
+
+  it("waits rather than offering a button when throttled", async () => {
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+    confirmCardMock.mockRejectedValue(
+      new ApiError("slow down", { status: 429, retryAfterSeconds: 30 }),
+    );
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+
+    await screen.findByRole("alert");
+    // Pressing a retry would fire straight back into the limit (ADR 0005).
+    expect(screen.queryByRole("button", { name: "Confirm this card" })).not.toBeInTheDocument();
+    expect(screen.getByText(/30 more seconds/)).toBeInTheDocument();
+  });
+
+  it("stops offering the tap when there is nothing left to confirm against", async () => {
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+    confirmCardMock.mockRejectedValue(new ApiError("gone", { status: 404 }));
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+
+    await screen.findByRole("alert");
+    expect(screen.getByText(/no longer available/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm this card" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Change card" })).toBeInTheDocument();
   });
 
   it("routes Change back into the catalog search, before and after confirming", async () => {
