@@ -235,6 +235,33 @@ class Settings(BaseSettings):
     """
 
     # ----------------------------------------------------------------
+    # Image uploads — spec §55, §56, #33.
+    #
+    # Two limits rather than one, because they defend against different things.
+    # A byte limit bounds what crosses the network; a pixel limit bounds what a
+    # decoder allocates, and a small file can declare an enormous bitmap. Both
+    # are policy, so both are configuration a reviewer can see.
+    # ----------------------------------------------------------------
+
+    upload_max_bytes: int = Field(default=15 * 1024 * 1024, gt=0)
+    """The largest image body the upload endpoint will accept, in bytes.
+
+    Fifteen mebibytes. A twelve-megapixel phone photograph is three to eight,
+    and a forty-eight-megapixel one is around twelve. Enforced while the body is
+    still being read, so an oversized upload is refused rather than buffered.
+    """
+
+    upload_max_pixels: int = Field(default=50_000_000, gt=0)
+    """The largest decoded bitmap the upload endpoint will produce, in pixels.
+
+    The decompression-bomb ceiling (spec §55). Checked against the dimensions in
+    the file's header *before* anything is decoded, so a two-kilobyte PNG
+    declaring 60000 by 60000 costs nothing to refuse. Fifty megapixels is
+    comfortably above any camera a user will hold and comfortably below what
+    would exhaust a container.
+    """
+
+    # ----------------------------------------------------------------
     # Object storage — the S3-compatible adapter in tcg_shared.storage.s3.
     #
     # These name S3 concepts because an adapter's configuration legitimately

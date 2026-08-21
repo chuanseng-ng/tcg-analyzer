@@ -240,6 +240,40 @@ The link into shared reference data points the other way and is `RESTRICT`:
 `analyses.card_id` is nullable until the user confirms an identification, and a
 catalog re-import can never delete a card an analysis names.
 
+### Uploaded images are untrusted input
+
+The upload endpoint is the product's primary attack surface, so what it refuses
+matters more than what it accepts. Four rules, and each defends against
+something the others do not.
+
+The **type is sniffed, not declared**. `POST /analyses/{id}/images` takes the
+image as the raw request body and is never given a filename — there is no
+parameter through which one could arrive — so "sanitize filenames" and "generate
+server-side storage paths" (spec §55) are properties of the endpoint's shape
+rather than of a validator somebody has to keep correct. What is recorded as the
+image's type is what a decoder read out of its bytes.
+
+The **byte limit and the pixel limit are separate**. A byte limit bounds what
+crosses the network; it is no defence at all against a two-kilobyte PNG that
+declares sixty thousand pixels square and costs eleven gigabytes to decode. The
+dimensions are read from the file's header and compared *before* anything is
+decoded, and the decode is what proves the file is an image at all rather than a
+header that parses.
+
+**Personal metadata does not survive, and no pixel changes.** Spec §54 notes
+these photographs may contain hands, backgrounds and personal surroundings; EXIF
+GPS is worse, because it is exact. It is removed before anything is stored — but
+by rebuilding the JPEG from its own marker segments with the entropy-coded scan
+copied byte for byte, not by re-saving through a decoder. A re-encode would
+degrade precisely the fine surface and edge signal the condition models exist to
+measure.
+
+The **digest is over the bytes that were stored**, not the bytes that arrived,
+so the content-hash preprocessing cache keys on something that exists and the
+retention sweep can verify what it deleted. A retake replaces its predecessor
+and the superseded object is deleted, because an object no row names is one a
+sweep working from rows will never find.
+
 ### Uncertainty is a valid output
 
 `insufficient_information` is a legitimate result for a surface analysis and for
@@ -298,7 +332,9 @@ exactly once. The frontend obtains its API types by generating them from the
 FastAPI OpenAPI schema — see
 [ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md).
 
-The endpoints that create work are rate-limited per client address (spec §55),
+The endpoints that create work — starting an analysis, adding a photograph to
+one, running it — are rate-limited per client address (spec §55, which names
+analysis endpoints *and* image uploads),
 counted in that same Redis so one limit holds across replicas. A throttled
 request is a 429 with `Retry-After` and sits outside the spec §66 envelope, as
 the 404 and the 409 already do — see
