@@ -337,11 +337,11 @@ def _run_with_gate(
         moves.append(to)
         return True
 
-    async def assess_analysis(_db: Any, _id: Any) -> QualityStatus:
+    async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
         return verdict
 
     gate = types.ModuleType("tcg_api.analysis.quality")
-    gate.assess_analysis = assess_analysis  # type: ignore[attr-defined]
+    gate.prepare_images = prepare_images  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
     monkeypatch.setattr(jobs, "create_engine", lambda: engine)
@@ -402,12 +402,12 @@ def test_the_gate_runs_after_the_claim_rather_than_before_it(
     async def refuse_to_claim(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
         return False
 
-    async def assess_analysis(_db: Any, _id: Any) -> QualityStatus:
+    async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
         assessed.append(True)
         return QualityStatus.GOOD
 
     gate = types.ModuleType("tcg_api.analysis.quality")
-    gate.assess_analysis = assess_analysis  # type: ignore[attr-defined]
+    gate.prepare_images = prepare_images  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
     monkeypatch.setattr(jobs, "create_engine", _FakeEngine)

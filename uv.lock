@@ -28,6 +28,7 @@ members = [
     "tcg-ml-grading-psa",
     "tcg-ml-grading-tag",
     "tcg-ml-image-quality",
+    "tcg-ml-normalization",
     "tcg-ml-surface",
     "tcg-shared",
 ]
@@ -1345,6 +1346,7 @@ dependencies = [
 worker = [
     { name = "tcg-ml-card-detection" },
     { name = "tcg-ml-image-quality" },
+    { name = "tcg-ml-normalization" },
 ]
 
 [package.metadata]
@@ -1363,6 +1365,7 @@ requires-dist = [
     { name = "tcg-domain", editable = "packages/domain" },
     { name = "tcg-ml-card-detection", marker = "extra == 'worker'", editable = "ml/card-detection" },
     { name = "tcg-ml-image-quality", marker = "extra == 'worker'", editable = "ml/image-quality" },
+    { name = "tcg-ml-normalization", marker = "extra == 'worker'", editable = "ml/normalization" },
     { name = "tcg-shared", editable = "packages/shared" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]
@@ -1495,6 +1498,23 @@ source = { editable = "ml/grading/tag" }
 name = "tcg-ml-image-quality"
 version = "0.0.0"
 source = { editable = "ml/image-quality" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "tcg-domain", editable = "packages/domain" },
+]
+
+[[package]]
+name = "tcg-ml-normalization"
+version = "0.0.0"
+source = { editable = "ml/normalization" }
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python-headless" },

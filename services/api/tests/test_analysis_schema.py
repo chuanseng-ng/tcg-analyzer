@@ -512,15 +512,25 @@ def test_a_zero_dimension_is_refused(column: str) -> None:
 
 
 def test_an_image_has_no_dimensions_until_it_is_normalized() -> None:
-    """Normalization writes `normalized_uri`, `width` and `height` together."""
+    """Normalization writes all four of these together, or none of them.
+
+    NULL means the stage has not run — which stays true after it has, for a
+    photograph no card was located in: there was nothing to straighten, so there
+    is no artifact, no size and no transform.
+    """
     insert_session()
     insert_analysis()
 
     insert_image()
 
-    assert query(sa.select(images.c.normalized_uri, images.c.width, images.c.height)) == [
-        (None, None, None)
-    ]
+    assert query(
+        sa.select(
+            images.c.normalized_uri,
+            images.c.width,
+            images.c.height,
+            images.c.normalization_details,
+        )
+    ) == [(None, None, None, None)]
 
 
 def test_an_image_cannot_exist_without_an_analysis() -> None:

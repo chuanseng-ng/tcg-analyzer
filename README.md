@@ -159,7 +159,7 @@ in the pipeline is a step you cannot reproduce yourself.
 ```bash
 uv run ruff check .                     # lint
 uv run ruff format --check .            # formatting
-uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src ml/card-detection/src
+uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src
 uv run pytest -m "not integration and not object_storage"   # both need Docker
 
 pnpm --filter @tcg/web lint
@@ -447,8 +447,8 @@ an acknowledgement rather than a state, and no analysis ever holds it.
 
 The same `up` starts Redis and the worker. The worker runs the same application
 with a different command, from an image of its own — the API's plus the `worker`
-extra, which brings the image-quality gate and the card detector, and with them
-OpenCV:
+extra, which brings the image-quality gate, the card detector and perspective
+normalization, and with them OpenCV:
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml logs -f worker
@@ -525,6 +525,37 @@ Three things about it are deliberate and easy to undo by accident:
   The spread between them is what answers sleeve obstruction instead — the
   weakest heuristic in the pipeline, and one that costs a `poor` rather than a
   refusal.
+
+#### Perspective correction and normalization
+
+`ml/normalization` warps the detected quadrilateral into the standardized
+artifact every later stage reads — spec §18, and M2's acceptance criterion. It
+is a **756 x 1056 PNG**: 12 pixels per millimetre of a 63 x 88 mm card, so the
+output is exactly a real card's proportions with no rounding and a centering
+ratio measured on it means what it says. The transform that produced it is
+persisted alongside, because spec §51's post-V1 defect visualisation draws boxes
+on the *original* photograph and that mapping is not recoverable afterwards.
+
+Four things about it are deliberate:
+
+- **Nothing is enhanced.** No sharpening, no denoising, no contrast stretching,
+  no white balance. Every stage downstream exists to measure scratches,
+  whitening and print lines; a denoised scratch is one the model cannot see and
+  a sharpened edge is whitening that was never there.
+- **The resampling is two steps.** `warpPerspective` has no area filter, so
+  warping a 4000-pixel card straight down to 1056 point-samples it, and the
+  moire that comes back is fabricated surface texture. The warp goes to an
+  integer multiple of the output instead and one box filter takes it down.
+- **The artifact is aspect-normalized, not upright.** The detector anchors its
+  traversal at the corner nearest the frame origin, so a card photographed on
+  its side is rotated a quarter turn to put its short edge first — which fixes
+  the proportions. Which of two rotations puts the printed top at the top needs
+  the artwork read, and that is card identification's question. The quarter turn
+  applied is recorded.
+- **No card located means no artifact.** `normalized_uri` stays NULL rather than
+  holding a resized whole frame, which would be a standardized artifact of the
+  table the card was lying on. The gate degrades the same way, capping such a
+  photograph at `acceptable`. The original is always kept unmodified.
 
 ## Contributing
 

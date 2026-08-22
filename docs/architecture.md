@@ -317,9 +317,9 @@ a schema or a code path.
 ```text
 apps/           web, annotation
 services/       api, analysis, market-data, ingestion
-ml/             card-detection, card-identification, image-quality, centering,
-                corners, edges, surface, condition, grading/{psa,tag,bgs},
-                evaluation
+ml/             card-detection, card-identification, image-quality,
+                normalization, centering, corners, edges, surface, condition,
+                grading/{psa,tag,bgs}, evaluation
 packages/       domain, grading-companies, market-data, economic-engine, shared
 database/       migrations, seeds, fixtures
 datasets/       schemas, manifests, documentation
@@ -335,13 +335,19 @@ that runs a job cannot drift from the code that enqueued it. Its isolation
 (spec §56) is the container's — no published port, every capability dropped.
 
 It has its own image since the image-quality gate (#36), and the two differ by
-exactly one uv extra — which since card boundary detection (#37) carries two ml
-packages rather than one. Both bring OpenCV; a CV stack decoding untrusted
-photographs does not belong in the container answering HTTP. What holds that
-split up is a lazy import — the API imports `tcg_api.analysis.jobs` merely to
-enqueue, so the wiring for both stages is imported inside the function that runs
-a job, and a purity test asserts that importing the application reaches neither
-`cv2` nor either package.
+exactly one uv extra — which since card boundary detection (#37) and
+normalization (#38) carries three ml packages rather than one. All three bring
+OpenCV; a CV stack decoding untrusted photographs does not belong in the
+container answering HTTP. What holds that split up is a lazy import — the API
+imports `tcg_api.analysis.jobs` merely to enqueue, so the wiring for all three
+stages is imported inside the function that runs a job, and a purity test
+asserts that importing the application reaches neither `cv2` nor any of them.
+
+`ml/normalization` is not one of spec §7's names. §18 makes perspective
+correction and normalization a stage of its own, and it got a package of its own
+on the rule the two siblings above are shaped by: one stage, one package, and no
+dependency between siblings — the card's quadrilateral crosses from the detector
+to the normalizer as a domain type, so neither imports the other.
 
 The split by language is not decorative either. `apps/*` is a pnpm/TypeScript
 workspace; `packages/*`, `services/*` and `ml/*` are a uv/Python workspace,
