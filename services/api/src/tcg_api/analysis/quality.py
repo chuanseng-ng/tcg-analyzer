@@ -37,6 +37,7 @@ will not start.
 from __future__ import annotations
 
 from functools import partial
+from typing import Final
 from uuid import UUID
 
 import anyio.to_thread
@@ -45,14 +46,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import ImageSide, QualityStatus
 from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.image_quality import QualityReport, worst_status
-from tcg_ml_card_detection import detect
-from tcg_ml_image_quality import assess
-from tcg_ml_normalization import MEDIA_TYPE, Normalized, normalize
+from tcg_ml_card_detection import CARD_DETECTION_VERSION, detect
+from tcg_ml_image_quality import IMAGE_QUALITY_VERSION, assess
+from tcg_ml_normalization import (
+    MEDIA_TYPE,
+    NORMALIZATION_VERSION,
+    Normalized,
+    normalize,
+)
 from tcg_shared.storage.errors import StorageError
 from tcg_shared.storage.keys import StorageKey, generate_key
 from tcg_shared.storage.port import ObjectStorage
 
-from tcg_api.analysis.images import read_v1_image_keys, record_normalization, record_quality
+from tcg_api.analysis.images import (
+    apply_cached_pipeline_result,
+    read_cached_pipeline_result,
+    read_v1_image_keys,
+    record_normalization,
+    record_quality,
+)
 from tcg_api.storage import get_object_storage
 
 __all__ = ["prepare_images"]
@@ -65,6 +77,22 @@ logger = structlog.get_logger(__name__)
 #: irreplaceable.
 NORMALIZED_NAMESPACE = "normalized"
 
+#: Which pipeline produced a row's derived columns — issue #39's cache key,
+#: alongside the content digest. Composed from the three stage constants rather
+#: than hand-maintained, so a package bump cannot be forgotten and go on serving
+#: its predecessor's work; `ml/*/thresholds.py` already requires a threshold
+#: change to move the version it belongs to, which is what makes each of these
+#: three name a fixed set of numbers.
+#:
+#: ponytail: an OpenCV upgrade that changes what the stages output must bump the
+#: affected stage's version, by the same rule as a threshold change. Folding
+#: `cv2.__version__` in here would make that automatic and would also discard
+#: every cached artifact on any dependency refresh, patch releases included —
+#: which is most of what a cache is for. The lockfile diff is the review gate.
+PIPELINE_VERSION: Final = "+".join(
+    (IMAGE_QUALITY_VERSION, CARD_DETECTION_VERSION, NORMALIZATION_VERSION)
+)
+
 
 async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
     """Judge every photograph of `analysis_id`, straighten it, and record both.
@@ -72,6 +100,14 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
     Returns the analysis's verdict: the worst of its images', because spec §19's
     rules are about whether the *analysis* may proceed and one unusable
     photograph is enough to stop it.
+
+    A photograph whose bytes have been through this pipeline before is served
+    from what that run recorded rather than processed again (#39). The saving is
+    the CPU, which is the constrained resource here — the whole of detection,
+    the gate and the warp — and the price is one copy of the artifact, since a
+    served row must own its object rather than share one. A photograph the gate
+    refused is served too, and refuses the analysis again without touching
+    storage at all.
 
     Does not commit — the caller owns the transaction, so the verdicts, the
     artifacts and the transition they cause land together.
@@ -89,6 +125,14 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
 
     statuses: list[QualityStatus] = []
     for side in sorted(keys):
+        # Before the store is built, not after. A served verdict with no
+        # artifact needs no object store at all, so asking the cache first keeps
+        # the property the placement below was written for.
+        served = await _serve_from_cache(db, analysis_id=analysis_id, side=side)
+        if served is not None:
+            statuses.append(served)
+            continue
+
         # Built inside the loop, and deliberately not hoisted above it.
         # `get_object_storage` raises when the store is unconfigured, so
         # hoisting turns "this analysis has no photographs" — which folds to
@@ -96,22 +140,22 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
         # configuration. It is `lru_cache`d, so the second side is free.
         storage = get_object_storage()
         report, artifact = await _prepare_one(storage, keys[side])
-        await record_quality(db, analysis_id=analysis_id, side=side, report=report)
+        await record_quality(
+            db,
+            analysis_id=analysis_id,
+            side=side,
+            report=report,
+            pipeline_version=PIPELINE_VERSION,
+        )
         statuses.append(report.status)
-        # The verdict and the score, never the URI and never a measurement that
-        # could describe the photograph itself (spec §54).
-        logger.info(
-            "image.assessed",
-            analysis_id=str(analysis_id),
-            side=str(side),
-            quality_status=str(report.status),
-            quality_score=round(report.score, 3),
+        _log_assessed(
+            analysis_id,
+            side,
+            status=str(report.status),
+            score=report.score,
             gate=report.version,
-            # Whether the card was located at all, which is the difference
-            # between five answered conditions and five undetermined ones — and
-            # therefore the first thing to look at when a photograph nobody can
-            # fault comes back `acceptable`.
             detector=report.detector,
+            cached=False,
         )
         if artifact is not None:
             await _store_artifact(
@@ -119,6 +163,113 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
             )
 
     return worst_status(statuses)
+
+
+def _log_assessed(
+    analysis_id: UUID,
+    side: ImageSide,
+    *,
+    status: str,
+    score: float,
+    gate: object,
+    detector: object,
+    cached: bool,
+) -> None:
+    """The verdict and the score, never the URI and never a measurement that
+    could describe the photograph itself (spec §54).
+
+    One function for both paths so a served verdict and a computed one cannot
+    drift into different shapes — `cached` is what separates them, and the
+    hit rate spec §67 asks for is a count over this one event.
+    """
+    logger.info(
+        "image.assessed",
+        analysis_id=str(analysis_id),
+        side=str(side),
+        quality_status=status,
+        quality_score=round(score, 3),
+        gate=gate,
+        # Whether the card was located at all, which is the difference between
+        # five answered conditions and five undetermined ones — and therefore
+        # the first thing to look at when a photograph nobody can fault comes
+        # back `acceptable`.
+        detector=detector,
+        cached=cached,
+    )
+
+
+async def _serve_from_cache(
+    db: AsyncSession, *, analysis_id: UUID, side: ImageSide
+) -> QualityStatus | None:
+    """Replay what an earlier run derived from these exact bytes — issue #39.
+
+    Returns the verdict when this side was served, or None when it was not — a
+    miss, and also a hit whose artifact could not be copied, because a pointer at
+    an object a retention sweep has already taken must never fail an analysis
+    that can still compute the answer itself.
+
+    The lookup is kept out of :func:`_locate_judge_and_straighten`, which stays a
+    pure `bytes -> (report, artifact)` and never learns that a cache exists.
+    """
+    cached = await read_cached_pipeline_result(
+        db, analysis_id=analysis_id, side=side, pipeline_version=PIPELINE_VERSION
+    )
+    if cached is None:
+        return None
+
+    normalized_uri: str | None = None
+    if cached.normalized_uri is not None:
+        try:
+            normalized_uri = str(await _copy_artifact(cached.normalized_uri))
+        except StorageError:
+            # Its own event rather than `cached=False`: a cache whose copies
+            # always fail would otherwise read as a cache that is merely cold.
+            logger.warning(
+                "image.cache_copy_failed",
+                analysis_id=str(analysis_id),
+                side=str(side),
+                exc_info=True,
+            )
+            return None
+
+    await apply_cached_pipeline_result(
+        db,
+        analysis_id=analysis_id,
+        side=side,
+        cached=cached,
+        normalized_uri=normalized_uri,
+    )
+    _log_assessed(
+        analysis_id,
+        side,
+        status=cached.quality_status,
+        score=cached.quality_score,
+        # Read defensively: this is the application's own document, but it came
+        # back out of the database and a missing key is not worth a job failure.
+        gate=cached.quality_details.get("version"),
+        detector=cached.quality_details.get("detector"),
+        cached=True,
+    )
+    return QualityStatus(cached.quality_status)
+
+
+async def _copy_artifact(source: str) -> StorageKey:
+    """Give the served row an artifact of its very own.
+
+    Never a shared `normalized_uri`. `images.analysis_id` cascades and the
+    retention sweep (#41) works from rows, so two rows naming one object means
+    expiring either analysis deletes the other's artifact — spec §54's failure
+    reached through spec §54's mechanism.
+
+    The store is built here rather than in the caller because a served result
+    with no artifact needs none, and `get_object_storage` raises when it is
+    unconfigured.
+    """
+    storage = get_object_storage()
+    data = await storage.get(StorageKey(source))
+    key = generate_key(NORMALIZED_NAMESPACE)
+    await storage.put(key, data, content_type=MEDIA_TYPE)
+    return key
 
 
 async def _prepare_one(storage: ObjectStorage, key: str) -> tuple[QualityReport, Normalized | None]:
@@ -181,6 +332,9 @@ async def _store_artifact(
     task's retry limit, since each attempt mints a fresh key. Handling it means
     threading the written keys out to the one place that commits, which is a
     larger change than the leak is worth; sweep by prefix and age if it ever is.
+    :func:`_copy_artifact` reaches the same leak by a second path, at the same
+    bound and for the same reason, which is the one thing #39 makes marginally
+    harder for #41 rather than easier.
     """
     key = generate_key(NORMALIZED_NAMESPACE)
     try:

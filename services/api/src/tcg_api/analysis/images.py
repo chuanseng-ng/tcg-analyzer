@@ -20,6 +20,12 @@ unreferenced.
 Nothing here writes `original_uri` from anything a client sent: the caller
 generates the key. See `tcg_shared.storage.keys.generate_key`, which takes no
 filename argument for the same reason.
+
+**This table is also the preprocessing cache** (#39). Nothing else stores what
+the pipeline derives, `ix_images_sha256` already indexes the lookup, and an
+entry expiring with its source image — spec §54 — is then a property of the
+existing cascade rather than a second policy somebody has to keep in step. See
+:func:`read_cached_pipeline_result`.
 """
 
 from __future__ import annotations
@@ -39,8 +45,12 @@ from tcg_api.analysis.sessions import execute
 from tcg_api.analysis.tables import images
 
 __all__ = [
+    "PIPELINE_KEY",
+    "CachedPipelineResult",
     "ImageQuality",
     "ImageRecord",
+    "apply_cached_pipeline_result",
+    "read_cached_pipeline_result",
     "read_image_objects",
     "read_quality",
     "read_v1_image_keys",
@@ -49,6 +59,15 @@ __all__ = [
     "upsert_image",
     "v1_sides_present",
 ]
+
+#: Where `quality_details` carries the identifier of the pipeline that produced
+#: a row's derived columns — issue #39. In the document rather than in a column
+#: of its own because `record_quality` writes it for *every* processed
+#: photograph, artifact or not, which is exactly the set of rows the cache
+#: predicate has to cover; and because `upsert_image` already nulls
+#: `quality_details` on a retake, which makes "new bytes inherit the previous
+#: run's version" unrepresentable rather than merely handled.
+PIPELINE_KEY: Final = "pipeline"
 
 #: The columns a caller of this module gets back. Deliberately not the whole
 #: row: the derived columns are NULL at upload time and a response that carried
@@ -145,7 +164,10 @@ async def upsert_image(
             # attempt at this side did.
             "created_at": sa.func.now(),
             # Everything a later stage computes describes the bytes that have
-            # just been replaced. See the module docstring.
+            # just been replaced. See the module docstring. `quality_details`
+            # carries the pipeline identifier (#39), so clearing it here is also
+            # what stops the replaced photograph's row from being served as a
+            # cache entry for bytes it no longer holds.
             "normalized_uri": None,
             "width": None,
             "height": None,
@@ -198,6 +220,7 @@ async def record_quality(
     analysis_id: UUID,
     side: ImageSide,
     report: QualityReport,
+    pipeline_version: str,
 ) -> None:
     """Write the gate's verdict onto one image — spec §19, #36.
 
@@ -205,6 +228,12 @@ async def record_quality(
     :attr:`~tcg_domain.image_quality.QualityReport.status` is derived from the
     findings: a row saying `good` while its details carry a detected blur is not
     something a caller should be able to construct.
+
+    `pipeline_version` names every stage that ran, and is stored under
+    :data:`PIPELINE_KEY` inside the same document — see #39. A plain string
+    rather than anything from `ml/*`, for :func:`record_normalization`'s reason:
+    `routers/analyses.py` imports this module, so a signature naming a type from
+    beside OpenCV would put the CV stack in the API image.
 
     Does not commit. The caller owns the transaction, so the verdict and the
     state transition it causes land together or not at all.
@@ -215,7 +244,141 @@ async def record_quality(
         .values(
             quality_score=report.score,
             quality_status=report.status.value,
-            quality_details=report.as_record(),
+            quality_details={**report.as_record(), PIPELINE_KEY: pipeline_version},
+        )
+    )
+    await execute(db, statement)
+
+
+@dataclass(frozen=True, slots=True)
+class CachedPipelineResult:
+    """Everything an earlier run derived from bytes identical to this row's.
+
+    `normalized_uri` names the object *that* run wrote, which the caller copies
+    rather than reuses — two rows must never point at one object, or the
+    row-driven retention sweep (#41) deletes an artifact another analysis still
+    names. NULL is legitimate and means two different things — the photograph
+    was refused, or no card was located in it — and neither is a failure.
+    """
+
+    quality_score: float
+    quality_status: str
+    quality_details: dict[str, Any]
+    normalized_uri: str | None
+    width: int | None
+    height: int | None
+    normalization_details: dict[str, Any] | None
+
+
+async def read_cached_pipeline_result(
+    db: AsyncSession,
+    *,
+    analysis_id: UUID,
+    side: ImageSide,
+    pipeline_version: str,
+) -> CachedPipelineResult | None:
+    """What has already been computed from the bytes this row holds — #39.
+
+    **The cache is this table.** `images` already persists every artifact the
+    preprocessing cache would hold and `ix_images_sha256` already indexes the
+    lookup, so an entry is simply a row processed earlier from the same content.
+    That is also what makes spec §54's "cache entries must expire with their
+    source image" true by construction rather than by a second mechanism: an
+    entry cascades away with its session, so there is no TTL to keep in step and
+    nothing that can outlive what it describes.
+
+    A self-join rather than a digest parameter, so no caller has to handle one —
+    and so nothing is tempted to log it, which would correlate two analyses as
+    the same photograph and leak the cross-user deduplication that is explicitly
+    not a product feature.
+
+    Three predicates carry the correctness:
+
+    * ``src.id <> target.id`` excludes the row itself and **nothing else**. The
+      same analysis's other side is a legitimate entry, and a live one: sides are
+      processed in sorted order, so `back` runs before `front` and a caller who
+      uploaded one file twice serves the second from the first inside a single
+      uncommitted transaction.
+    * ``quality_status IS NOT NULL`` refuses a row that carries a version without
+      a verdict, whatever brought it about. Serving one would put NULL where the
+      fold expects a status.
+    * the :data:`PIPELINE_KEY` comparison is the invalidation. A stage bump
+      changes the identifier, so every entry made by an earlier pipeline stops
+      matching at once and nothing has to be swept.
+    """
+    source = images.alias("src")
+    statement = (
+        sa.select(
+            source.c.quality_score,
+            source.c.quality_status,
+            source.c.quality_details,
+            source.c.normalized_uri,
+            source.c.width,
+            source.c.height,
+            source.c.normalization_details,
+        )
+        .select_from(images.join(source, source.c.sha256 == images.c.sha256))
+        .where(
+            images.c.analysis_id == analysis_id,
+            images.c.side == side.value,
+            source.c.id != images.c.id,
+            source.c.quality_status.is_not(None),
+            source.c.quality_details[PIPELINE_KEY].astext == pipeline_version,
+        )
+        # Every match is equivalent by definition, so this is for determinism
+        # rather than for preference — a test that gets a different row on every
+        # run is a test nobody trusts.
+        .order_by(source.c.created_at.desc())
+        .limit(1)
+    )
+    result = await execute(db, statement)
+    row = result.one_or_none()
+    if row is None:
+        return None
+    return CachedPipelineResult(
+        quality_score=row.quality_score,
+        quality_status=row.quality_status,
+        quality_details=row.quality_details,
+        normalized_uri=row.normalized_uri,
+        width=row.width,
+        height=row.height,
+        normalization_details=row.normalization_details,
+    )
+
+
+async def apply_cached_pipeline_result(
+    db: AsyncSession,
+    *,
+    analysis_id: UUID,
+    side: ImageSide,
+    cached: CachedPipelineResult,
+    normalized_uri: str | None,
+) -> None:
+    """Write an earlier run's conclusions onto this row — #39.
+
+    One statement rather than :func:`record_quality` plus
+    :func:`record_normalization`, because a served result has no
+    `QualityReport` to derive a status from — it has a document that already
+    round-tripped through the database, and reconstructing the report to take
+    it apart again would be inventing a chance to disagree.
+
+    `normalized_uri` is the caller's **new** key, never `cached.normalized_uri`;
+    the object is copied before this runs, so a committed row always names bytes
+    that are there.
+
+    Does not commit. The caller owns the transaction.
+    """
+    statement = (
+        sa.update(images)
+        .where(images.c.analysis_id == analysis_id, images.c.side == side.value)
+        .values(
+            quality_score=cached.quality_score,
+            quality_status=cached.quality_status,
+            quality_details=cached.quality_details,
+            normalized_uri=normalized_uri,
+            width=cached.width,
+            height=cached.height,
+            normalization_details=cached.normalization_details,
         )
     )
     await execute(db, statement)
