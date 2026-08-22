@@ -44,10 +44,13 @@ Six things about this schema are load-bearing:
   *normalized* artifact's, which is what the normalization issue's own scope
   says it writes.
 
-Spec §57's reproducibility record is **not** pre-empted here. §12's own column
-list is transcribed and stops; `card_database_version` and
-`grading_rules_version` are their own issue, and must hold a published
-identifier resolved when the analysis ran rather than a pointer to "current".
+Spec §57's reproducibility record lives on `analyses`, and three of its columns
+are beyond §12's own list: `application_version`, `card_database_version` and
+`grading_rules_version`. §12 puts the application version on the *session*,
+which is not the same fact — a session lives for days and a deployment can
+happen inside one. Every one of the six is a value resolved when the analysis
+ran, never a pointer to "current", and a trigger refuses to change one once it
+has been written; see the DDL at the foot of this module.
 """
 
 from __future__ import annotations
@@ -74,7 +77,13 @@ from tcg_domain.analysis import (
 from tcg_api.catalog.tables import cards
 from tcg_api.tables import PRINTED, metadata
 
-__all__ = ["TABLES", "analyses", "analysis_sessions", "images"]
+__all__ = [
+    "REPRODUCIBILITY_COLUMNS",
+    "TABLES",
+    "analyses",
+    "analysis_sessions",
+    "images",
+]
 
 
 def _one_of(column: str, values: Iterable[str]) -> str:
@@ -261,6 +270,43 @@ analyses = sa.Table(
         nullable=True,
         comment="The fee and cost configuration used. No foreign key yet, as above.",
     ),
+    sa.Column(
+        "application_version",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "The version of this service that ran the analysis, resolved when the "
+            "job claimed it. Not a duplicate of analysis_sessions.application_version: "
+            "a session lives for days and a deployment can happen inside one, so the "
+            "version that opened the session is not necessarily the version that "
+            "produced the result. Spec §57 wants the one that produced it. NULL until "
+            "a run has claimed the analysis."
+        ),
+    ),
+    sa.Column(
+        "card_database_version",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "Which published card_database_versions.version was current when the "
+            "analysis ran — the identifier itself, resolved at execution time, never "
+            "a pointer to whatever is current now. No foreign key: a version record "
+            "must be able to outlive nothing and an analysis must not be blocked by "
+            "one, and the identifier is the fact worth keeping. NULL when no catalog "
+            "version had been published, which is a fact rather than a gap."
+        ),
+    ),
+    sa.Column(
+        "grading_rules_version",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "Which grading-rule version the prediction was made under — spec §57. "
+            "Always NULL in V1: no grading rules exist yet, and the column is here so "
+            "the absence is documented rather than indistinguishable from a bug when "
+            "they do. The milestone that introduces them fills it at run time."
+        ),
+    ),
     sa.CheckConstraint(
         _one_of("status", AnalysisStatus),
         name="status_is_a_known_analysis_state",
@@ -277,9 +323,9 @@ analyses = sa.Table(
     # card. No index on `status` either — the job runner's pick-up query is its
     # own issue, and should add the partial index that query actually wants.
     comment=(
-        "One analysis of one card — spec §12. Its reproducibility record is only "
-        "partly here: §57's card database and grading rules versions are their own "
-        "issue."
+        "One analysis of one card — spec §12, plus spec §57's reproducibility record. "
+        "The six version columns are write-once: a trigger refuses to change one that "
+        "already holds a value, so a re-run is a new analysis rather than an edit."
     ),
 )
 
@@ -467,3 +513,97 @@ images = sa.Table(
 #: the schema can still be asserted as a closed set now that the `MetaData` is
 #: shared between two domains.
 TABLES: Final = (analysis_sessions, analyses, images)
+
+
+# ---------------------------------------------------------------------------
+# Spec §57's reproducibility record is immutable once written
+# ---------------------------------------------------------------------------
+# The same mechanism `catalog/tables.py` uses for `card_database_versions`, with
+# three differences that are load-bearing rather than incidental:
+#
+# * **`BEFORE UPDATE` only, never `DELETE`.** A published version record is kept
+#   forever; an analysis is not. `analysis_sessions → analyses` is
+#   `ON DELETE CASCADE` and spec §54 makes expiry the default, so guarding
+#   `DELETE` here would make the retention sweep impossible.
+# * **NULL → value is allowed, once.** All six columns start empty and are
+#   filled by the stage that resolves them — this milestone writes two of them
+#   at the claim, and M3, M5 and M7 write the rest. Refusing every change would
+#   mean refusing the only write there is.
+# * **`IS DISTINCT FROM`, not `<>`.** Writing the same value again is a no-op
+#   rather than a violation, which is what makes a retried transaction safe.
+#
+# `status`, `card_id` and `completed_at` are untouched by this and go on moving
+# for the life of the analysis; the `WHEN` clause means the function is not even
+# called for an ordinary transition.
+#
+# As with the version record: TRUNCATE bypasses row-level triggers, which is what
+# lets the integration fixtures reset, and Alembic compares no triggers at all —
+# so `test_analysis_schema.py`'s refusal tests are the only guard against this
+# and the migration drifting apart.
+def _ddl(statement: str) -> sa.DDL:
+    """`sa.DDL` is unannotated in SQLAlchemy's own types, and mypy runs strict here."""
+    return sa.DDL(statement)  # type: ignore[no-untyped-call]
+
+
+#: The columns a written reproducibility record is made of — spec §57, minus the
+#: three fields that are not columns here (`analysis_id` is the primary key and
+#: the image hashes are `images.sha256`). Rendered into the trigger's `WHEN`
+#: clause, so a seventh field added to the record is guarded by adding it here.
+REPRODUCIBILITY_COLUMNS: Final = (
+    "application_version",
+    "model_bundle_version",
+    "card_database_version",
+    "grading_rules_version",
+    "market_snapshot_id",
+    "economic_configuration_id",
+)
+
+_CHANGED: Final = "\n      OR ".join(
+    f"(OLD.{column} IS NOT NULL AND NEW.{column} IS DISTINCT FROM OLD.{column})"
+    for column in REPRODUCIBILITY_COLUMNS
+)
+
+# `RAISE USING MESSAGE = ...`, concatenated, rather than `RAISE EXCEPTION 'x %',
+# arg`: `sa.DDL` runs its statement through Python's `%` interpolation, so a
+# format specifier in the body fails at compile time. Do not "simplify" it back.
+_IMMUTABLE_FUNCTION: Final = _ddl(
+    """
+    CREATE OR REPLACE FUNCTION analyses_reproducibility_is_immutable()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        RAISE USING
+            ERRCODE = 'restrict_violation',
+            MESSAGE = 'the reproducibility record of analysis ' || OLD.id
+                      || ' is immutable and was already written',
+            HINT    = 'Run a new analysis rather than rewriting an old one.';
+    END;
+    $$;
+    """
+)
+
+_IMMUTABLE_TRIGGER: Final = _ddl(
+    f"""
+    CREATE TRIGGER trg_analyses_reproducibility_immutable
+    BEFORE UPDATE ON analyses
+    FOR EACH ROW
+    WHEN ({_CHANGED})
+    EXECUTE FUNCTION analyses_reproducibility_is_immutable();
+    """
+)
+
+# Two statements, two DDL objects: the asyncpg driver prepares each statement it
+# is handed, and a prepared statement may not contain more than one.
+_DROP_IMMUTABLE_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_analyses_reproducibility_immutable ON analyses"
+)
+
+_DROP_IMMUTABLE_FUNCTION: Final = _ddl(
+    "DROP FUNCTION IF EXISTS analyses_reproducibility_is_immutable()"
+)
+
+sa.event.listen(analyses, "after_create", _IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"))
+sa.event.listen(analyses, "after_create", _IMMUTABLE_TRIGGER.execute_if(dialect="postgresql"))
+sa.event.listen(analyses, "before_drop", _DROP_IMMUTABLE_TRIGGER.execute_if(dialect="postgresql"))
+sa.event.listen(analyses, "before_drop", _DROP_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"))

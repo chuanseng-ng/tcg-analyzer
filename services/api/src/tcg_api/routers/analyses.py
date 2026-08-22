@@ -112,6 +112,7 @@ __all__ = [
     "AnalysisRunResponse",
     "CardConfirmationRequest",
     "ImageResponse",
+    "ReproducibilityResponse",
     "UploadSide",
     "analysis_session",
     "object_storage",
@@ -248,6 +249,83 @@ class ImageQualityResponse(BaseModel):
     )
 
 
+class ReproducibilityResponse(BaseModel):
+    """What this analysis was computed against — spec §57's record, whole.
+
+    Every field is read from the row rather than resolved here. That is the
+    point of the record: the versions are the ones that were in force when the
+    run claimed the analysis, and a value worked out at read time would describe
+    whichever versions happen to be current now. They are written once and a
+    database trigger refuses to change them, so re-reading this a year later
+    answers what it answered on the day.
+
+    Two of §57's eight fields are not here because they are already elsewhere in
+    the response: `analysis_id` is the analysis's own `id`, and the input image
+    hashes are :attr:`image_sha256`.
+
+    A null is a documented absence, never an omission. Each field below says
+    what its own null means, because "no model bundle exists yet" and "the field
+    was not sent" must not look the same to a reader a year from now.
+    """
+
+    application_version: str | None = Field(
+        description=(
+            "The version of this service that ran the analysis. Null until a "
+            "run has claimed it — which is also the marker that no "
+            "reproducibility record has been written yet. Deliberately not the "
+            "version that opened the session: a session lives for days, and a "
+            "deployment can happen inside one."
+        ),
+        examples=["0.1.0"],
+    )
+    model_bundle_version: str | None = Field(
+        description=(
+            "The model bundle that produced the condition and grade "
+            "predictions. Always null in V1: no model exists yet, and an "
+            "explicit identifier — never `/latest/` — is what will go here when "
+            "one does (spec §31)."
+        ),
+    )
+    card_database_version: str | None = Field(
+        description=(
+            "The published card catalog the analysis ran against, as the "
+            "identifier `GET /catalog/version` reports — captured at execution "
+            "time, never a pointer to whatever is current now. Null when no run "
+            "has claimed the analysis, or when no catalog version had been "
+            "published when one did."
+        ),
+        examples=["pokemon-catalog-v0.3.0"],
+    )
+    grading_rules_version: str | None = Field(
+        description=(
+            "The grading-rule version the prediction was made under. Always "
+            "null in V1: no grading rules exist yet."
+        ),
+    )
+    market_snapshot_id: UUID | None = Field(
+        description=(
+            "The pre-ingested market snapshot the economics were computed "
+            "against. Always null in V1: market data arrives with its own "
+            "milestone."
+        ),
+    )
+    economic_configuration_id: UUID | None = Field(
+        description=(
+            "The fee and cost configuration used. Always null in V1: the "
+            "economic engine arrives with its own milestone."
+        ),
+    )
+    image_sha256: dict[ImageSide, str] = Field(
+        description=(
+            "§57's input image hashes, by side — the digest of the bytes that "
+            "were *stored*, computed at upload. Empty before the first upload. "
+            "A photograph cannot be replaced once an analysis has left "
+            "`uploaded`, so these no longer change by the time a run records "
+            "the rest of this."
+        ),
+    )
+
+
 class AnalysisResponse(BaseModel):
     """One analysis, as the API reports it.
 
@@ -255,10 +333,11 @@ class AnalysisResponse(BaseModel):
     names are a public contract.
 
     Deliberately small. `session_id` is absent because it is ours and internal —
-    the client holds a token, not a row id — and every §57 reproducibility field
-    is absent because nothing writes one yet; a column that is always NULL in a
-    response is an invitation to render an empty value. #35 adds the states this
-    can hold, #104 fills `card_id`.
+    the client holds a token, not a row id. Spec §57's reproducibility record is
+    reported whole, in one nested object, rather than as fields scattered
+    through this one: it is a single claim about how an answer was produced, and
+    a caller checking whether an analysis can be reproduced should not have to
+    assemble it. #35 adds the states this can hold, #104 fills `card_id`.
     """
 
     id: UUID = Field(description="This service's identifier for the analysis.")
@@ -287,6 +366,13 @@ class AnalysisResponse(BaseModel):
             "Empty before the first upload. This is how a `poor` verdict reaches "
             "the user, which §19 requires — a gate whose warning nothing surfaces "
             "is not a gate."
+        ),
+    )
+    reproducibility: ReproducibilityResponse = Field(
+        description=(
+            "Spec §57's record: which versions of everything this answer was "
+            "produced against, captured when the run claimed the analysis and "
+            "immutable afterwards."
         ),
     )
 
@@ -375,6 +461,18 @@ def _response(record: AnalysisRecord, images: Sequence[ImageQuality] = ()) -> An
         completed_at=record.completed_at,
         card_id=record.card_id,
         images=[_image_response(image) for image in images],
+        reproducibility=ReproducibilityResponse(
+            application_version=record.application_version,
+            model_bundle_version=record.model_bundle_version,
+            card_database_version=record.card_database_version,
+            grading_rules_version=record.grading_rules_version,
+            market_snapshot_id=record.market_snapshot_id,
+            economic_configuration_id=record.economic_configuration_id,
+            # From the rows `read_quality` already returned, so the hashes cost
+            # no second query. A response with no images carries an empty map
+            # rather than a missing field.
+            image_sha256={ImageSide(image.side): image.sha256 for image in images},
+        ),
     )
 
 

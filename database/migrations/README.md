@@ -122,10 +122,18 @@ are load-bearing:
   a session one statement. **Cascading the rows does not delete the objects** —
   the retention job must read `original_uri` and `normalized_uri` before the
   `DELETE`, or every expired photograph is orphaned in object storage.
-- **§12 verbatim, and §57 not pre-empted.** `card_database_version` and
-  `grading_rules_version` are deliberately absent; they belong to the
-  reproducibility-record issue, and must hold an identifier resolved when the
-  analysis ran rather than a pointer to "current".
+- **Spec §57's reproducibility record is six columns on `analyses`, and is
+  immutable.** `application_version`, `card_database_version` and
+  `grading_rules_version` join the three §12 already listed;
+  `trg_analyses_reproducibility_immutable` fires `BEFORE UPDATE` and refuses to
+  change any of them that already holds a value, so a re-run is a new analysis
+  rather than an edit. `UPDATE` **only** — `analysis_sessions → analyses` is
+  `ON DELETE CASCADE`, so guarding `DELETE` as `card_database_versions` does
+  would make the retention sweep above impossible. NULL → value passes, since
+  every column is filled once by the stage that resolves it, and
+  `IS DISTINCT FROM` keeps a replayed write a no-op rather than a failure.
+  Alembic compares no triggers, so `test_analysis_schema.py`'s refusal tests are
+  the only guard against this drifting from `tables.py`.
 
 The remaining domain table — `market_observations` — arrives in its own
 milestone.

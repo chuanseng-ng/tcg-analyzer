@@ -40,6 +40,18 @@ function analysis(status = "created", images: AnalysisResponse["images"] = []): 
     completed_at: null,
     card_id: null,
     images,
+    // Spec §57's record. Nothing in the web app reads it (#40 is API-only),
+    // but the field is required, so a fixture that omitted it would be a
+    // response the service never sends.
+    reproducibility: {
+      application_version: null,
+      model_bundle_version: null,
+      card_database_version: null,
+      grading_rules_version: null,
+      market_snapshot_id: null,
+      economic_configuration_id: null,
+      image_sha256: {},
+    },
   };
 }
 

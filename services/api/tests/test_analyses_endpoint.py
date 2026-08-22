@@ -41,6 +41,7 @@ from tcg_api.errors import ErrorCode
 from tcg_api.routers.analyses import SESSION_COOKIE
 from tcg_api.routers.cards import card_repository
 from tcg_api.storage import get_object_storage
+from tcg_api.version import application_version
 from tcg_domain.errors import CatalogUnavailable
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +74,12 @@ def migrated() -> None:
     ordering between files, so the migration cannot be assumed. The TRUNCATE is
     for the same reason `test_catalog_cards.py` truncates: these tests count
     rows, and a developer's database may hold sessions from a manual run.
+
+    `card_database_versions` is emptied for a second reason, on the precedent
+    `test_catalog_versions.py` sets: spec §57's record names the *published*
+    catalog, so these tests publish one — and the table's own trigger refuses
+    `DELETE`, which makes TRUNCATE the only way not to leave a fabricated
+    version in a developer's database forever.
     """
     if not DATABASE_URL:
         return
@@ -91,7 +98,10 @@ def migrated() -> None:
         try:
             async with engine.begin() as connection:
                 await connection.execute(
-                    sa.text("TRUNCATE analysis_sessions RESTART IDENTITY CASCADE")
+                    sa.text(
+                        "TRUNCATE analysis_sessions, card_database_versions "
+                        "RESTART IDENTITY CASCADE"
+                    )
                 )
         finally:
             await engine.dispose()
@@ -522,6 +532,140 @@ def test_a_run_reaches_the_confirmation_gate_and_stops(
     assert polled["status"] == "awaiting_confirmation"
     assert polled["completed_at"] is None
     assert polled["card_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# Spec §57's reproducibility record — issue #40
+#
+# The record is captured by the *worker*, at the moment it claims the analysis,
+# so these drive `worked()` rather than the endpoint. What the endpoint owes is
+# the other half: reporting what was stored, without resolving anything itself.
+# ---------------------------------------------------------------------------
+
+CATALOG_VERSION = "pokemon-catalog-v9.9.9"
+
+
+def publish_catalog_version(version: str = CATALOG_VERSION) -> None:
+    """Register a card database version, past the import pipeline.
+
+    Straight SQL for the reason the run states are written straight: what is
+    being tested is that the run captures whatever is published, not how a
+    version comes to be published.
+    """
+    executing(
+        "INSERT INTO card_database_versions "
+        "(id, version, source, generated_at, set_count, card_count, external_id_count) "
+        "VALUES (:id, :version, 'manual', now(), 0, 0, 0) "
+        "ON CONFLICT (version) DO NOTHING",
+        id=uuid.uuid5(uuid.NAMESPACE_URL, version),
+        version=version,
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_run_records_what_it_was_computed_against(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """Spec §57, the whole record, on an analysis that has actually run.
+
+    `application_version` is the running application's, resolved by the process
+    that did the work; `card_database_version` is the published identifier that
+    was current at that moment. The four that name components no milestone has
+    built yet are null, and null here means "does not exist", not "not sent".
+    """
+    publish_catalog_version()
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+
+    worked(created["id"])
+
+    record = client.get(f"/analyses/{created['id']}").json()["reproducibility"]
+    assert record["application_version"] == application_version()
+    # Read back rather than compared to the literal, so this says "the catalog
+    # that was current" rather than "the string this test happened to publish".
+    assert record["card_database_version"] == querying(
+        "SELECT version FROM card_database_versions ORDER BY ordinal DESC LIMIT 1"
+    )
+    assert record["model_bundle_version"] is None
+    assert record["grading_rules_version"] is None
+    assert record["market_snapshot_id"] is None
+    assert record["economic_configuration_id"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_analysis_that_has_not_run_carries_an_empty_record(client: TestClient) -> None:
+    """Every field null, and the object present rather than omitted.
+
+    The record is captured at execution time, so an analysis nothing has run has
+    nothing to record — and says so, rather than reporting the versions that
+    happen to be current when it is polled.
+    """
+    created = client.post("/analyses").json()
+
+    record = client.get(f"/analyses/{created['id']}").json()["reproducibility"]
+
+    assert record["application_version"] is None
+    assert record["card_database_version"] is None
+    assert record["image_sha256"] == {}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_stored_record_does_not_follow_the_running_version(
+    client: TestClient, enqueued: list[uuid.UUID], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deploying a new version must not rewrite what an old analysis recorded.
+
+    This is the property the whole issue exists for: a record that tracked the
+    current version would say the same thing as no record at all. Asserted by
+    moving the version *after* the run and polling again — the answer must be
+    the version that ran.
+    """
+    publish_catalog_version()
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+    worked(created["id"])
+    ran_as = client.get(f"/analyses/{created['id']}").json()["reproducibility"]
+
+    monkeypatch.setattr("tcg_api.routers.analyses.application_version", lambda: "99.0.0")
+    publish_catalog_version("pokemon-catalog-v9.9.10")
+
+    polled = client.get(f"/analyses/{created['id']}").json()["reproducibility"]
+    assert polled == ran_as
+    assert polled["card_database_version"] != "pokemon-catalog-v9.9.10"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_recorded_hashes_are_the_hashes_of_the_stored_images(client: TestClient) -> None:
+    """§57's input image hashes, and the same digests the upload answered with.
+
+    Read from `images.sha256`, which is a digest of the bytes that were *stored*
+    rather than the bytes that arrived — the distinction #33 made so that a
+    cache key names bytes somebody kept.
+    """
+    created = client.post("/analyses").json()
+    digests = {"front": "a" * 64, "back": "b" * 64}
+    for side, digest in digests.items():
+        # Written straight, as the run states above are: what is under test is
+        # that the response reports `images.sha256`, not how a row gets there.
+        executing(
+            "INSERT INTO images (id, analysis_id, side, original_uri, mime_type, sha256) "
+            "VALUES (:id, :analysis_id, :side, :uri, 'image/jpeg', :sha256)",
+            id=uuid.uuid4(),
+            analysis_id=uuid.UUID(created["id"]),
+            side=side,
+            uri=f"uploads/{created['id']}/{side}.jpg",
+            sha256=digest,
+        )
+
+    record = client.get(f"/analyses/{created['id']}").json()["reproducibility"]
+
+    assert record["image_sha256"] == digests
 
 
 @pytest.mark.integration

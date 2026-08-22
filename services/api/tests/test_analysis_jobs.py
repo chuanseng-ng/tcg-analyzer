@@ -28,6 +28,7 @@ from kombu.serialization import dumps, loads, prepare_accept_content
 from structlog.testing import CapturingLogger
 from tcg_api.analysis import jobs
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
+from tcg_api.version import application_version
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 
 BROKER = "redis://:local@localhost:6379/0"
@@ -321,17 +322,44 @@ class _FakeEngine:
         self.disposed = True
 
 
+class _FakeCatalogVersions:
+    """Enough of `PostgresCardDatabaseVersionRepository` for the record's sake.
+
+    `_advance` asks it for the published catalog identifier and nothing else, so
+    a class holding one string is the whole of what has to be stood in for — and
+    standing it in keeps these tests free of a database, which is what lets CI
+    run them on every push.
+    """
+
+    published: str | None = "pokemon-catalog-v0.3.0"
+
+    def __init__(self, _db: Any) -> None:
+        pass
+
+    async def current(self) -> Any:
+        if self.published is None:
+            return None
+        return types.SimpleNamespace(version=self.published)
+
+
 def _run_with_gate(
-    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus
+    monkeypatch: pytest.MonkeyPatch,
+    verdict: QualityStatus,
+    *,
+    recorded: list[dict[str, Any]] | None = None,
+    catalog_version: str | None = "pokemon-catalog-v0.3.0",
 ) -> tuple[list[AnalysisStatus], _FakeEngine]:
-    """Drive `_advance` with a stubbed store and a stubbed gate.
+    """Drive `_advance` with a stubbed store, a stubbed gate and a stubbed catalog.
 
     Returns the transitions it attempted, in order, and the engine it built —
-    the second so that a test can assert the connection is always released.
+    the second so that a test can assert the connection is always released. A
+    caller that cares about spec §57's record passes `recorded`, which collects
+    the keyword arguments each write was made with; most callers do not.
     """
     engine = _FakeEngine()
     session = _FakeSession()
     moves: list[AnalysisStatus] = []
+    writes = recorded if recorded is not None else []
 
     async def transition(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
         moves.append(to)
@@ -340,13 +368,23 @@ def _run_with_gate(
     async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
         return verdict
 
+    async def record_reproducibility(_db: Any, _id: Any, **values: Any) -> None:
+        # The moves so far travel with the write, which is what lets a test
+        # assert the record is captured *inside* the claim rather than merely
+        # at some point during the run.
+        writes.append({**values, "after": list(moves)})
+
     gate = types.ModuleType("tcg_api.analysis.quality")
     gate.prepare_images = prepare_images  # type: ignore[attr-defined]
+
+    versions = type("_Versions", (_FakeCatalogVersions,), {"published": catalog_version})
 
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
     monkeypatch.setattr(jobs, "create_engine", lambda: engine)
     monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: lambda: session)
     monkeypatch.setattr(jobs, "transition", transition)
+    monkeypatch.setattr(jobs, "record_reproducibility", record_reproducibility)
+    monkeypatch.setattr(jobs, "PostgresCardDatabaseVersionRepository", versions)
 
     assert asyncio.run(jobs._advance(uuid.uuid4())) is True
     return moves, engine
@@ -416,6 +454,85 @@ def test_the_gate_runs_after_the_claim_rather_than_before_it(
 
     assert asyncio.run(jobs._advance(uuid.uuid4())) is False
     assert assessed == []
+
+
+# ---------------------------------------------------------------------------
+# Spec §57's reproducibility record — issue #40
+# ---------------------------------------------------------------------------
+
+
+def test_the_reproducibility_record_is_written_inside_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§57's values must be the ones in force when the run began.
+
+    "Inside the claim" is asserted through the moves made so far: the record is
+    written after the analysis has been moved to `identifying` and before
+    anything else happens, which is the only moment at which the versions in
+    force are the versions this analysis was computed against.
+    """
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
+
+    assert len(recorded) == 1
+    assert recorded[0]["after"] == [AnalysisStatus.IDENTIFYING]
+    assert recorded[0]["card_database_version"] == "pokemon-catalog-v0.3.0"
+    assert recorded[0]["application_version"] == application_version()
+
+
+def test_a_refused_photograph_still_carries_its_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An analysis that failed the gate is still an analysis somebody may ask about.
+
+    The record says what the refusal was computed against, so it is written
+    before the gate runs rather than on the way to a result the run may never
+    reach.
+    """
+    recorded: list[dict[str, Any]] = []
+    moves, _ = _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, recorded=recorded)
+
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.FAILED]
+    assert len(recorded) == 1
+
+
+def test_no_published_catalog_is_recorded_as_none_rather_than_invented(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deployment with no catalog version published records that, honestly.
+
+    The alternative — a placeholder identifier, or the string "current" — is the
+    one thing §57 forbids: a record naming a moving target is worse than a
+    record naming nothing.
+    """
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded, catalog_version=None)
+
+    assert recorded[0]["card_database_version"] is None
+
+
+def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A duplicate delivery must not overwrite the record the first run captured.
+
+    The trigger would refuse it, but a job that reaches the write at all has
+    already read the catalog and would fail with an `IntegrityError` rather than
+    a quiet no-op. Both the read and the write are inside the claim.
+    """
+    written = []
+
+    async def refuse_to_claim(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
+        return False
+
+    async def record_reproducibility(_db: Any, _id: Any, **_values: Any) -> None:
+        written.append(True)
+
+    monkeypatch.setattr(jobs, "create_engine", _FakeEngine)
+    monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: _FakeSession)
+    monkeypatch.setattr(jobs, "transition", refuse_to_claim)
+    monkeypatch.setattr(jobs, "record_reproducibility", record_reproducibility)
+
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is False
+    assert written == []
 
 
 def test_the_connection_is_released_however_the_gate_answers(

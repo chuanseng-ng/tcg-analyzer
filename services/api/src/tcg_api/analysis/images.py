@@ -278,6 +278,10 @@ class ImageQuality:
     quality_score: float | None
     quality_status: str | None
     details: dict[str, Any] | None
+    #: The digest of the stored bytes, from the upload. Spec §57's record names
+    #: the input image hashes, and this is the query that already reads a row
+    #: per side — a second one for one column would be a round trip for nothing.
+    sha256: str
 
 
 async def read_quality(db: AsyncSession, analysis_id: UUID) -> list[ImageQuality]:
@@ -293,6 +297,7 @@ async def read_quality(db: AsyncSession, analysis_id: UUID) -> list[ImageQuality
             images.c.quality_score,
             images.c.quality_status,
             images.c.quality_details,
+            images.c.sha256,
         )
         .where(images.c.analysis_id == analysis_id)
         .order_by(images.c.side)
@@ -304,6 +309,7 @@ async def read_quality(db: AsyncSession, analysis_id: UUID) -> list[ImageQuality
             quality_score=row.quality_score,
             quality_status=row.quality_status,
             details=row.quality_details,
+            sha256=row.sha256,
         )
         for row in result
     ]

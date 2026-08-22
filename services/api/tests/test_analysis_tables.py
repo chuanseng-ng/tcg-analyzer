@@ -17,7 +17,14 @@ from __future__ import annotations
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from tcg_api.analysis.tables import TABLES, analyses, analysis_sessions, images
+from tcg_api.analysis import tables
+from tcg_api.analysis.tables import (
+    REPRODUCIBILITY_COLUMNS,
+    TABLES,
+    analyses,
+    analysis_sessions,
+    images,
+)
 from tcg_api.table_registry import DECLARED_TABLES, metadata
 from tcg_domain.analysis import AnalysisStatus, ImageSide, QualityStatus, SessionStatus
 
@@ -91,6 +98,15 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 "model_bundle_version",
                 "market_snapshot_id",
                 "economic_configuration_id",
+                # Spec §57 beyond §12's list, on `quality_details`'s precedent:
+                # the specification's schema section says what a table is
+                # *about*, and §57's reproducibility record needs somewhere to
+                # live. `application_version` is not a duplicate of the
+                # session's — a session lives for days, and the version that
+                # opened one is not necessarily the version that ran this.
+                "application_version",
+                "card_database_version",
+                "grading_rules_version",
             },
         ),
         (
@@ -127,15 +143,48 @@ def test_columns_match_the_specification(table: sa.Table, expected: set[str]) ->
     assert set(table.columns.keys()) == expected
 
 
-@pytest.mark.parametrize("column", ["card_database_version", "grading_rules_version"])
-def test_the_reproducibility_fields_this_issue_does_not_own_are_absent(column: str) -> None:
-    """Spec §57 has seven fields; §12's column list has these two nowhere.
+@pytest.mark.parametrize("column", REPRODUCIBILITY_COLUMNS)
+def test_every_field_of_the_reproducibility_record_is_a_column(column: str) -> None:
+    """Spec §57's record is six columns on `analyses`, and starts empty.
 
-    They belong to the reproducibility-record issue, and must hold a published
-    identifier resolved when the analysis ran — never a pointer to "current".
-    Adding them here would ship two columns nothing knows how to fill.
+    The other two of §57's eight fields are elsewhere by nature: `analysis_id`
+    is the primary key, and the input image hashes are `images.sha256`.
+
+    Nullable, all of them, because each is filled by the stage that resolves it
+    — and a column that cannot yet be filled is still created, so that a null a
+    year from now reads as a documented absence rather than as a field somebody
+    forgot.
     """
-    assert column not in analyses.columns
+    assert column in analyses.columns
+    assert analyses.columns[column].nullable
+
+
+def test_the_reproducibility_record_is_declared_immutable() -> None:
+    """A record that can be edited records nothing.
+
+    The guard is a trigger rather than a convention, declared here as well as in
+    the migration because `env.py` compares this metadata against a database —
+    but **not** its triggers, which is why `test_analysis_schema.py` asserts the
+    refusal against a real one.
+
+    Three properties, all of which a plausible-looking rewrite would break:
+
+    * `BEFORE UPDATE`, and deliberately **not** `DELETE`. `analysis_sessions →
+      analyses` is `ON DELETE CASCADE` and spec §54 makes expiry the default, so
+      guarding `DELETE` would make the retention sweep impossible.
+    * every one of the six columns is guarded, so a seventh field added to the
+      record cannot quietly go unguarded;
+    * `IS NOT NULL` before `IS DISTINCT FROM`, which is what lets the one write
+      there is happen at all.
+    """
+    trigger = " ".join(str(tables._IMMUTABLE_TRIGGER).split())
+
+    assert "BEFORE UPDATE ON analyses" in trigger
+    assert "DELETE" not in trigger
+    for column in REPRODUCIBILITY_COLUMNS:
+        assert (
+            f"(OLD.{column} IS NOT NULL AND NEW.{column} IS DISTINCT FROM OLD.{column})" in trigger
+        )
 
 
 # ---------------------------------------------------------------------------
