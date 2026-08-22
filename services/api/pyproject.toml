@@ -51,7 +51,8 @@ dependencies = [
 
 # The analysis worker's extras, and nothing the HTTP surface needs.
 #
-# `tcg-ml-image-quality` and `tcg-ml-card-detection` both bring OpenCV, and
+# `tcg-ml-image-quality`, `tcg-ml-card-detection` and `tcg-ml-normalization`
+# all bring OpenCV, and
 # OpenCV has no business in an internet-facing web server:
 # `infrastructure/docker/api.Dockerfile` syncs `--package tcg-api` and gets
 # none of it, while `worker.Dockerfile` adds `--extra worker` and gets all of
@@ -65,12 +66,13 @@ dependencies = [
 # member declares OpenCV itself, and extras are only about what *this* package
 # pulls in.
 [project.optional-dependencies]
-worker = ["tcg-ml-card-detection", "tcg-ml-image-quality"]
+worker = ["tcg-ml-card-detection", "tcg-ml-image-quality", "tcg-ml-normalization"]
 
 [tool.uv.sources]
 tcg-domain = { workspace = true }
 tcg-ml-card-detection = { workspace = true }
 tcg-ml-image-quality = { workspace = true }
+tcg-ml-normalization = { workspace = true }
 tcg-shared = { workspace = true }
 
 # `apps/web` generates its API types from this schema (ADR 0001), so producing

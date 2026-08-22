@@ -10,9 +10,12 @@ one place in the analysis domain where a driver failure becomes
 `UNIQUE (analysis_id, side)` on the table precisely so nothing downstream has to
 decide which of two fronts is the real one, so the write here is an upsert. The
 update clears every column a later pipeline stage fills — `normalized_uri`,
-`width`, `height`, `quality_score`, `quality_status` — because those describe
-the photograph that has just been superseded, and a quality verdict about bytes
-that no longer exist is worse than no verdict at all.
+`width`, `height`, `quality_score`, `quality_status` and the two detail
+documents — because those describe the photograph that has just been
+superseded, and a quality verdict about bytes that no longer exist is worse
+than no verdict at all. The superseded *objects* are a separate matter, and
+:func:`read_image_objects` is how the caller gets at them before they are
+unreferenced.
 
 Nothing here writes `original_uri` from anything a client sent: the caller
 generates the key. See `tcg_shared.storage.keys.generate_key`, which takes no
@@ -38,9 +41,10 @@ from tcg_api.analysis.tables import images
 __all__ = [
     "ImageQuality",
     "ImageRecord",
-    "read_image_key",
+    "read_image_objects",
     "read_quality",
     "read_v1_image_keys",
+    "record_normalization",
     "record_quality",
     "upsert_image",
     "v1_sides_present",
@@ -79,20 +83,34 @@ def _record(row: sa.Row[Any]) -> ImageRecord:
     )
 
 
-async def read_image_key(db: AsyncSession, analysis_id: UUID, side: ImageSide) -> str | None:
-    """The storage key currently recorded for this side, or None if there is none.
+async def read_image_objects(
+    db: AsyncSession, analysis_id: UUID, side: ImageSide
+) -> tuple[str, ...]:
+    """Every storage key this side currently holds, in no particular order.
 
-    Read *before* an upsert so that a retake's superseded object can be deleted
+    Read *before* an upsert so that a retake's superseded objects can be deleted
     from storage afterwards. Cascading a row away does not delete an object, and
     an orphan is invisible to a retention sweep that works from rows (#41) — so
     an object nobody points at is one nobody will ever delete.
+
+    **Both URIs, not just the original**, even though today's flow cannot reach
+    a row that has one. Uploads are refused once an analysis has left
+    `uploaded`, and normalization does not write until the job has claimed it,
+    so no artifact is currently superseded by a retake. This is the guard rather
+    than the repair: the upsert nulls `normalized_uri` along with the rest, so
+    the moment any stage writes an artifact to a row that can still take an
+    upload, reading one column here leaks an object no row names — permanently,
+    and invisibly to a sweep that works from rows.
     """
-    statement = sa.select(images.c.original_uri).where(
+    statement = sa.select(images.c.original_uri, images.c.normalized_uri).where(
         images.c.analysis_id == analysis_id,
         images.c.side == side.value,
     )
     result = await execute(db, statement)
-    return result.scalar_one_or_none()
+    row = result.one_or_none()
+    if row is None:
+        return ()
+    return tuple(uri for uri in (row.original_uri, row.normalized_uri) if uri is not None)
 
 
 async def upsert_image(
@@ -134,6 +152,7 @@ async def upsert_image(
             "quality_score": None,
             "quality_status": None,
             "quality_details": None,
+            "normalization_details": None,
         },
     )
     result = await execute(db, statement.returning(*_IMAGE_COLUMNS))
@@ -159,7 +178,7 @@ async def v1_sides_present(db: AsyncSession, analysis_id: UUID) -> int:
 async def read_v1_image_keys(db: AsyncSession, analysis_id: UUID) -> dict[ImageSide, str]:
     """The storage keys of this analysis's front and back, in one round trip.
 
-    Separate from :func:`read_image_key` rather than replacing it: the upload
+    Separate from :func:`read_image_objects` rather than replacing it: the upload
     path wants exactly one side, and the quality gate wants both. Restricted to
     :data:`~tcg_domain.analysis.V1_SIDES` for the reason
     :func:`v1_sides_present` gives — the column admits all six of spec §11's
@@ -197,6 +216,50 @@ async def record_quality(
             quality_score=report.score,
             quality_status=report.status.value,
             quality_details=report.as_record(),
+        )
+    )
+    await execute(db, statement)
+
+
+async def record_normalization(
+    db: AsyncSession,
+    *,
+    analysis_id: UUID,
+    side: ImageSide,
+    normalized_uri: str,
+    width: int,
+    height: int,
+    details: dict[str, Any],
+) -> None:
+    """Write the standardized artifact onto one image — spec §18, #38.
+
+    The four columns move together: `normalized_uri` names an object, `width`
+    and `height` describe *that* object rather than the original photograph, and
+    `normalization_details` says how it was produced.
+
+    Plain values rather than the artifact itself, which is the one place this
+    module deviates from :func:`record_quality`'s shape. `record_quality` can
+    take a `QualityReport` because #36 put that type in the stdlib-only domain;
+    `Normalized` lives in `ml/normalization` beside OpenCV, and
+    `routers/analyses.py` imports this module — so a signature naming that type
+    would put the CV stack in the API image. The caller is one line long and
+    `tests/test_import_purity.py` is what would find the mistake.
+
+    A sibling of :func:`record_quality` rather than an extra clause inside it,
+    because the two stages write independently: the gate runs on every stored
+    photograph, and normalization does not run at all when no card was located.
+
+    Does not commit. The caller owns the transaction, so the artifact's row and
+    the state transition it causes land together or not at all.
+    """
+    statement = (
+        sa.update(images)
+        .where(images.c.analysis_id == analysis_id, images.c.side == side.value)
+        .values(
+            normalized_uri=normalized_uri,
+            width=width,
+            height=height,
+            normalization_details=details,
         )
     )
     await execute(db, statement)

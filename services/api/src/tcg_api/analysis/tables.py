@@ -405,6 +405,21 @@ images = sa.Table(
         ),
     ),
     sa.Column(
+        "normalization_details",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "How `normalized_uri` was produced: the projective transform from the "
+            "original photograph, the quarter-turn applied, the output size, the "
+            "stage version and the thresholds it ran with. NULL until normalization "
+            "has run — and still NULL afterwards when no card was located, because "
+            "there was nothing to straighten. A column beyond §11's list, on "
+            "`quality_details`'s reasoning: spec §51's post-V1 defect visualisation "
+            "draws boxes on the original, and without the transform that mapping is "
+            "unrecoverable. JSONB rather than a table because nothing joins it."
+        ),
+    ),
+    sa.Column(
         "created_at",
         sa.TIMESTAMP(timezone=True),
         nullable=False,

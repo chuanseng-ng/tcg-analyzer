@@ -112,6 +112,11 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 # to be told *what* was wrong with a photograph, and neither the
                 # status nor the score can name a condition.
                 "quality_details",
+                # Also beyond §11's list, on `quality_details`'s precedent: spec
+                # §51's post-V1 defect visualisation draws boxes on the original
+                # photograph, and without the transform that produced the
+                # normalized artifact that mapping is unrecoverable.
+                "normalization_details",
                 "created_at",
             },
         ),
@@ -323,13 +328,23 @@ def test_a_stored_image_knows_its_key_its_type_and_its_digest() -> None:
 
 @pytest.mark.parametrize(
     "column",
-    ["normalized_uri", "width", "height", "quality_score", "quality_status", "quality_details"],
+    [
+        "normalized_uri",
+        "width",
+        "height",
+        "normalization_details",
+        "quality_score",
+        "quality_status",
+        "quality_details",
+    ],
 )
 def test_what_a_later_stage_computes_starts_empty(column: str) -> None:
-    """Normalization writes the first three; the quality gate writes the last three.
+    """Normalization writes four of these; the quality gate writes the other three.
 
     NULL has to keep meaning "not assessed": an empty details object would claim
-    eleven conditions were looked at and found clear.
+    eleven conditions were looked at and found clear, and a `normalized_uri`
+    naming nothing would claim an artifact exists for a photograph no card was
+    found in.
     """
     assert images.columns[column].nullable is True
 

@@ -221,9 +221,9 @@ async def _advance(analysis_id: UUID) -> bool:
             # imports this file to enqueue, so a module-level import would drag
             # OpenCV into the API image, which does not have it. See
             # `tcg_api.analysis.quality`.
-            from tcg_api.analysis.quality import assess_analysis
+            from tcg_api.analysis.quality import prepare_images
 
-            verdict = await assess_analysis(db, analysis_id)
+            verdict = await prepare_images(db, analysis_id)
             if verdict is QualityStatus.UNUSABLE:
                 # §19: "If unusable, analysis should stop." The findings are
                 # already written, so the refusal can be explained; the status

@@ -8,9 +8,10 @@ what that adapter already wrote. Nothing about serving a card should require an
 HTTP client, and an accidental re-export in `tcg_api.catalog.__init__` is all it
 would take to acquire one — at which point the boundary is decorative.
 
-#36 added the second, and #37 widened it to a second package. The image-quality
-gate lives in `ml/image-quality` and the card detector in `ml/card-detection`;
-both bring OpenCV, `infrastructure/docker/worker.Dockerfile` is the only image
+#36 added the second, and #37 and #38 widened it to three packages. The
+image-quality gate lives in `ml/image-quality`, the card detector in
+`ml/card-detection` and perspective correction in `ml/normalization`; all three
+bring OpenCV, `infrastructure/docker/worker.Dockerfile` is the only image
 that installs either, and `tcg_api.analysis.jobs` therefore imports their wiring
 *inside* `_advance` rather than at module scope — the API imports `jobs` merely
 to enqueue. Moving that import to the top of the file looks like tidying and
@@ -73,25 +74,29 @@ def test_the_tcgdex_adapter_is_the_module_that_binds_to_the_http_client() -> Non
 
 
 def test_serving_the_api_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
-    """The whole reason there are two images (#36, #37).
+    """The whole reason there are two images (#36, #37, #38).
 
-    `api.Dockerfile` installs neither `tcg-ml-image-quality` nor
-    `tcg-ml-card-detection`, so this is not merely about image size: a
-    module-level import on the request path is an `ImportError` at startup in
-    the deployed API container, and it would be found in a deployment rather
-    than here.
+    `api.Dockerfile` installs none of `tcg-ml-image-quality`,
+    `tcg-ml-card-detection` or `tcg-ml-normalization`, so this is not merely
+    about image size: a module-level import on the request path is an
+    `ImportError` at startup in the deployed API container, and it would be
+    found in a deployment rather than here.
+
+    `analysis/images.py` is the near miss worth naming. It is imported by
+    `routers/analyses.py`, and `record_normalization` writes what
+    `ml/normalization` produced — so a signature naming that package's
+    `Normalized` would land here rather than in review.
     """
     cv = _modules_matching("cv2", after_importing="tcg_api.main")
-    gate = _modules_matching("tcg_ml_image_quality", after_importing="tcg_api.main")
-    detector = _modules_matching("tcg_ml_card_detection", after_importing="tcg_api.main")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.main")
 
     assert cv == [], (
-        f"importing tcg_api.main pulled in {cv}. The gate and the detector run "
-        "in the worker image; the API image does not install OpenCV and would "
-        "fail to start. Keep the import inside `jobs._advance`."
+        f"importing tcg_api.main pulled in {cv}. The gate, the detector and "
+        "perspective correction run in the worker image; the API image does not "
+        "install OpenCV and would fail to start. Keep the import inside "
+        "`jobs._advance`."
     )
-    assert gate == [], gate
-    assert detector == [], detector
+    assert stages == [], stages
 
 
 def test_enqueueing_a_job_does_not_pull_in_the_analysis_stages() -> None:
@@ -112,4 +117,8 @@ def test_the_quality_wiring_is_the_module_that_binds_to_opencv() -> None:
     stages = _modules_matching("tcg_ml_", after_importing="tcg_api.analysis.quality")
 
     assert "cv2" in pulled
-    assert {"tcg_ml_card_detection", "tcg_ml_image_quality"} <= set(stages), stages
+    assert {
+        "tcg_ml_card_detection",
+        "tcg_ml_image_quality",
+        "tcg_ml_normalization",
+    } <= set(stages), stages

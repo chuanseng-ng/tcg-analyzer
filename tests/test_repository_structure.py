@@ -90,6 +90,11 @@ PYTHON_PACKAGES: dict[str, tuple[str, str]] = {
     "ml/card-detection": ("tcg-ml-card-detection", "tcg_ml_card_detection"),
     "ml/card-identification": ("tcg-ml-card-identification", "tcg_ml_card_identification"),
     "ml/image-quality": ("tcg-ml-image-quality", "tcg_ml_image_quality"),
+    # Not one of spec §7's names. Spec §18 makes perspective correction and
+    # normalization a stage of its own, and #38 gave it a package of its own on
+    # the reasoning the two siblings above are shaped by — one stage, one
+    # package, no sibling dependency.
+    "ml/normalization": ("tcg-ml-normalization", "tcg_ml_normalization"),
     "ml/centering": ("tcg-ml-centering", "tcg_ml_centering"),
     "ml/corners": ("tcg-ml-corners", "tcg_ml_corners"),
     "ml/edges": ("tcg-ml-edges", "tcg_ml_edges"),

@@ -80,7 +80,7 @@ from tcg_api.analysis.image_validation import InvalidImage, ValidatedImage, vali
 from tcg_api.analysis.images import (
     ImageQuality,
     ImageRecord,
-    read_image_key,
+    read_image_objects,
     read_quality,
     upsert_image,
     v1_sides_present,
@@ -1055,7 +1055,8 @@ async def upload_image(
     a committed row always names bytes that are there; if the commit then fails
     the object is deleted, because an object no row points at is invisible to a
     retention sweep that works from rows (spec §54, #41). A retake's superseded
-    object is deleted after the commit, for the same reason.
+    objects — the photograph *and* the normalized artifact made from it — are
+    deleted after the commit, for the same reason.
     """
     settings = get_settings()
     try:
@@ -1097,7 +1098,7 @@ async def upload_image(
     image_side = ImageSide(side)
     key = generate_key(UPLOAD_NAMESPACE)
     try:
-        superseded = await read_image_key(db, record.id, image_side)
+        superseded = await read_image_objects(db, record.id, image_side)
     except AnalysisStoreUnavailable as error:
         logger.warning("image.could_not_be_recorded", exc_info=True)
         raise _unreachable() from error
@@ -1133,8 +1134,12 @@ async def upload_image(
         await _discard(storage, key)
         raise
 
-    if superseded is not None and superseded != str(key):
-        await _discard(storage, StorageKey(superseded))
+    # Every object the row used to point at: the photograph it replaced, and the
+    # normalized artifact that was made from it, which describes bytes nobody
+    # holds any more.
+    for stale in superseded:
+        if stale != str(key):
+            await _discard(storage, StorageKey(stale))
 
     # The internal identifiers and the digest; nothing about the caller and
     # nothing about the picture (spec §53, §54).
