@@ -15,7 +15,8 @@ published port, no capabilities, `no-new-privileges`.
 
 **What the harness actually does, and what it deliberately does not.** There is
 one pipeline stage here, spec §19's image-quality gate, and no ML. A run claims
-an analysis whose images have arrived, judges them, and — unless they are
+an analysis whose images have arrived, records spec §57's reproducibility
+values as part of claiming it, judges them, and — unless they are
 unusable — advances to `awaiting_confirmation`, where it rests. That is not a
 stub standing in for a result: spec §20 forbids acting on an identification the
 user has not confirmed, no milestone yet produces a candidate, and #104 is the
@@ -61,9 +62,12 @@ from celery.exceptions import OperationalError
 from celery.utils.time import get_exponential_backoff_interval
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 
+from tcg_api.analysis.sessions import record_reproducibility
 from tcg_api.analysis.state import transition
+from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.database import create_engine, create_session_factory
+from tcg_api.version import application_version
 
 __all__ = [
     "QUEUE",
@@ -203,14 +207,34 @@ async def _advance(analysis_id: UUID) -> bool:
             # The claim. Also the idempotency check and the concurrency guard —
             # see `state.transition`. Everything below is inside the claim, so a
             # second delivery reaches none of it.
-            #
-            # #40's seam: this is the one place a run begins, and therefore the
-            # one place it should resolve and record the card database and
-            # grading rules versions it is running against (spec §57).
             claimed = await transition(db, analysis_id, to=AnalysisStatus.IDENTIFYING)
             if not claimed:
                 await db.rollback()
                 return False
+
+            # Spec §57, immediately after the claim and inside it. This is the
+            # one place a run begins, so it is the one moment at which "which
+            # versions is this analysis being computed against" has an answer —
+            # resolved to explicit values and written once. Only the run that
+            # won the claim reaches this, so the record has exactly one writer,
+            # and `trg_analyses_reproducibility_immutable` refuses a second.
+            #
+            # `current()` yields the identifier of a published catalog, never a
+            # pointer to whichever is current later; None means none had been
+            # published, which is a fact rather than a gap. An unreachable
+            # catalog raises `CatalogUnavailable` and is left to propagate: the
+            # store is down, so the run should fail, roll the claim back and be
+            # retried.
+            current_catalog = await PostgresCardDatabaseVersionRepository(db).current()
+            await record_reproducibility(
+                db,
+                analysis_id,
+                # The *worker's* version, which is the process producing the
+                # result — not the API's, and not the one that opened the
+                # session days ago.
+                application_version=application_version(),
+                card_database_version=None if current_catalog is None else current_catalog.version,
+            )
 
             # Spec §18 puts the quality gate here, before anything looks for a
             # card: refusing a photograph nothing could be read from costs one

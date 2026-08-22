@@ -35,7 +35,12 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
-from tcg_api.analysis.tables import analyses, analysis_sessions, images
+from tcg_api.analysis.tables import (
+    REPRODUCIBILITY_COLUMNS,
+    analyses,
+    analysis_sessions,
+    images,
+)
 from tcg_api.catalog.tables import cards, sets
 from tcg_domain.analysis import AnalysisStatus, ImageSide, QualityStatus, SessionStatus
 
@@ -133,6 +138,27 @@ SESSION_ID = uuid.UUID("44444444-4444-5444-8444-444444444444")
 ANALYSIS_ID = uuid.UUID("55555555-5555-5555-8555-555555555555")
 
 DIGEST = "a" * 64
+
+#: One legal value per reproducibility column, and a second, different one.
+#: Two of the six are UUIDs and four are printed identifiers, so the pair cannot
+#: be a single literal reused across the parametrisation.
+VALUE_FOR: dict[str, Any] = {
+    "application_version": "0.1.0",
+    "model_bundle_version": "pokemon-condition-v0.3.0",
+    "card_database_version": "pokemon-catalog-v0.3.0",
+    "grading_rules_version": "psa-rules-v1.0.0",
+    "market_snapshot_id": uuid.UUID("66666666-6666-5666-8666-666666666666"),
+    "economic_configuration_id": uuid.UUID("77777777-7777-5777-8777-777777777777"),
+}
+
+OTHER_VALUE_FOR: dict[str, Any] = {
+    "application_version": "0.2.0",
+    "model_bundle_version": "pokemon-condition-v0.4.0",
+    "card_database_version": "pokemon-catalog-v0.4.0",
+    "grading_rules_version": "psa-rules-v2.0.0",
+    "market_snapshot_id": uuid.UUID("88888888-8888-5888-8888-888888888888"),
+    "economic_configuration_id": uuid.UUID("99999999-9999-5999-8999-999999999999"),
+}
 NOW = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
 
 
@@ -574,28 +600,120 @@ def test_a_failed_analysis_need_not_have_a_completion_time() -> None:
 
 
 # ---------------------------------------------------------------------------
-# What this issue deliberately does not carry
+# Spec §57's reproducibility record — issue #40
 # ---------------------------------------------------------------------------
-def test_the_reproducibility_versions_are_recorded_where_the_specification_puts_them() -> None:
-    """§12's three version columns exist and start empty; §57's other two do not exist.
+RECORD = tuple(analyses.c[column] for column in REPRODUCIBILITY_COLUMNS)
 
-    They belong to the reproducibility-record issue, which must resolve a
-    published identifier at run time rather than store a pointer to "current".
+
+def set_record(**values: Any) -> None:
+    """Write part of the reproducibility record onto the fixture analysis."""
+    write([(sa.update(analyses).where(analyses.c.id == ANALYSIS_ID).values(**values), None)])
+
+
+def test_the_reproducibility_record_is_six_columns_and_starts_empty() -> None:
+    """§57's eight fields, less the two that are elsewhere by nature.
+
+    `analysis_id` is the primary key and the input image hashes are
+    `images.sha256`; the rest are columns here, and every one of them is empty
+    until the stage that resolves it has run. An empty column is a documented
+    absence — which is the whole reason `grading_rules_version` exists now,
+    years before anything can fill it.
     """
     insert_session()
     insert_analysis()
 
-    row = query(
-        sa.select(
-            analyses.c.model_bundle_version,
-            analyses.c.market_snapshot_id,
-            analyses.c.economic_configuration_id,
-        )
+    assert query(sa.select(*RECORD)) == [(None,) * len(REPRODUCIBILITY_COLUMNS)]
+
+
+@pytest.mark.parametrize("column", REPRODUCIBILITY_COLUMNS)
+def test_a_reproducibility_field_may_be_written_once(column: str) -> None:
+    """NULL → value is the one write there is, and it must not be refused.
+
+    Every column starts empty and is filled by the stage that resolves it, so a
+    trigger refusing all change would refuse the only write the record ever
+    gets.
+    """
+    insert_session()
+    insert_analysis()
+
+    set_record(**{column: VALUE_FOR[column]})
+
+    assert query(sa.select(analyses.c[column])) == [(VALUE_FOR[column],)]
+
+
+@pytest.mark.parametrize("column", REPRODUCIBILITY_COLUMNS)
+def test_a_written_reproducibility_field_cannot_be_changed(column: str) -> None:
+    """The record is immutable, and the database is what makes that true.
+
+    A re-run is a new analysis rather than an edit — spec §57. `restrict_violation`
+    is SQLSTATE class 23, so this reaches a caller as an `IntegrityError`, the
+    same shape as every other constraint in this schema.
+    """
+    insert_session()
+    insert_analysis()
+    set_record(**{column: VALUE_FOR[column]})
+
+    with pytest.raises(IntegrityError, match="immutable"):
+        set_record(**{column: OTHER_VALUE_FOR[column]})
+
+
+@pytest.mark.parametrize("column", REPRODUCIBILITY_COLUMNS)
+def test_rewriting_a_reproducibility_field_with_its_own_value_is_allowed(column: str) -> None:
+    """`IS DISTINCT FROM`, not `<>`, and the difference is a retried transaction.
+
+    Writing the same value again changes nothing, so refusing it would turn a
+    replayed write into a failure rather than a no-op.
+    """
+    insert_session()
+    insert_analysis()
+    set_record(**{column: VALUE_FOR[column]})
+
+    set_record(**{column: VALUE_FOR[column]})
+
+    assert query(sa.select(analyses.c[column])) == [(VALUE_FOR[column],)]
+
+
+def test_an_analysis_still_moves_after_its_record_is_written() -> None:
+    """The trigger guards six columns and nothing else.
+
+    An analysis with a record still has a pipeline to run: `status` and
+    `completed_at` change repeatedly afterwards, and `card_id` is written when
+    the user confirms. A `WHEN` clause on the trigger means the function is not
+    even called for one of those.
+    """
+    insert_session()
+    insert_analysis()
+    set_record(application_version="0.1.0")
+
+    write(
+        [
+            (
+                sa.update(analyses)
+                .where(analyses.c.id == ANALYSIS_ID)
+                .values(status=AnalysisStatus.FAILED.value, completed_at=sa.func.now()),
+                None,
+            )
+        ]
     )
 
-    assert row == [(None, None, None)]
-    assert "card_database_version" not in analyses.columns
-    assert "grading_rules_version" not in analyses.columns
+    assert query(sa.select(analyses.c.status)) == [(AnalysisStatus.FAILED.value,)]
+
+
+def test_expiring_a_session_still_reaches_an_analysis_that_has_a_record() -> None:
+    """`BEFORE UPDATE` only — spec §54's retention sweep is a `DELETE`.
+
+    The card-database-version trigger guards `DELETE` as well, and copying that
+    here would have made every analysis with a reproducibility record
+    undeletable — which is to say it would have made expiry, the default this
+    product promises, impossible.
+    """
+    insert_session()
+    insert_analysis()
+    set_record(application_version="0.1.0")
+
+    write([(sa.delete(analysis_sessions).where(analysis_sessions.c.id == SESSION_ID), None)])
+
+    assert query(sa.select(sa.func.count()).select_from(analyses)) == [(0,)]
 
 
 def test_the_schema_still_needs_no_postgresql_extension() -> None:

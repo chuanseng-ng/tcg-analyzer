@@ -50,6 +50,7 @@ __all__ = [
     "execute",
     "new_session_token",
     "read_analysis",
+    "record_reproducibility",
     "resolve_session",
     "set_confirmed_card",
 ]
@@ -91,6 +92,15 @@ class AnalysisRecord:
     created_at: datetime
     completed_at: datetime | None
     card_id: UUID | None
+    #: Spec §57's reproducibility record, as stored. Read from the row rather
+    #: than resolved here: the record is what the run captured, and a value the
+    #: HTTP layer worked out at read time would be a description of *now*.
+    application_version: str | None
+    model_bundle_version: str | None
+    card_database_version: str | None
+    grading_rules_version: str | None
+    market_snapshot_id: UUID | None
+    economic_configuration_id: UUID | None
 
 
 def new_session_token() -> str:
@@ -110,6 +120,12 @@ _ANALYSIS_COLUMNS: Final = (
     analyses.c.created_at,
     analyses.c.completed_at,
     analyses.c.card_id,
+    analyses.c.application_version,
+    analyses.c.model_bundle_version,
+    analyses.c.card_database_version,
+    analyses.c.grading_rules_version,
+    analyses.c.market_snapshot_id,
+    analyses.c.economic_configuration_id,
 )
 
 
@@ -120,6 +136,12 @@ def _record(row: sa.Row[Any]) -> AnalysisRecord:
         created_at=row.created_at,
         completed_at=row.completed_at,
         card_id=row.card_id,
+        application_version=row.application_version,
+        model_bundle_version=row.model_bundle_version,
+        card_database_version=row.card_database_version,
+        grading_rules_version=row.grading_rules_version,
+        market_snapshot_id=row.market_snapshot_id,
+        economic_configuration_id=row.economic_configuration_id,
     )
 
 
@@ -259,3 +281,44 @@ async def set_confirmed_card(
     )
     result = await execute(db, statement)
     return _record(result.one())
+
+
+async def record_reproducibility(
+    db: AsyncSession,
+    analysis_id: UUID,
+    *,
+    application_version: str,
+    card_database_version: str | None,
+) -> None:
+    """Write spec §57's reproducibility record onto `analysis_id`.
+
+    Called once, by the run that claimed the analysis, inside the claim's
+    transaction. That placement is the whole point of the record: §57's values
+    must be the ones that were in force when the analysis executed, and a
+    resolution done later — at read time, or by a second job — would describe
+    whichever versions happen to be current then.
+
+    Takes plain values rather than a :class:`CardDatabaseVersion`, on
+    `images.record_normalization`'s precedent: the caller has already resolved
+    them, and a signature naming a catalog type would make this module import
+    the catalog to write two strings.
+
+    `grading_rules_version` is deliberately not a parameter. No grading rules
+    exist in V1, so the column stays NULL and the milestone that introduces them
+    adds the argument — an explicit absence rather than a `None` this caller has
+    to keep passing.
+
+    Does not commit; the caller owns the transaction. Writing twice is refused
+    by `trg_analyses_reproducibility_immutable` rather than by a check here,
+    which is what makes the record immutable against every writer rather than
+    against this one.
+    """
+    statement = (
+        sa.update(analyses)
+        .where(analyses.c.id == analysis_id)
+        .values(
+            application_version=application_version,
+            card_database_version=card_database_version,
+        )
+    )
+    await execute(db, statement)

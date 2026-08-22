@@ -216,12 +216,25 @@ database guarantee rather than a convention: a trigger refuses `UPDATE` and
 `DELETE`, so a re-import publishes a new version instead of editing an old one,
 and the identifier an analysis recorded still finds what it recorded.
 
-`analyses` now carries three more of the seven — `model_bundle_version`,
-`market_snapshot_id` and `economic_configuration_id` — and the session carries
-the application version. All of them are explicit values resolved when the
-analysis ran, never a pointer to whatever is current. The last two,
-`card_database_version` and `grading_rules_version`, arrive with the
-reproducibility record itself.
+`analyses` carries the rest of the record: `model_bundle_version`,
+`market_snapshot_id`, `economic_configuration_id`, `application_version`,
+`card_database_version` and `grading_rules_version`. `application_version` is on
+the analysis as well as on the session, and the duplication is the point — a
+session lives for days, so the version that opened one is not necessarily the
+version that ran this. Every value is resolved when the analysis ran, never a
+pointer to whatever is current: the worker captures them at the moment it claims
+the analysis, which is the one moment at which "what is this being computed
+against" has an answer. Four of the six are null through V1, because no model
+bundle, grading rules, market snapshot or economic configuration exist yet — a
+documented absence rather than a gap.
+
+Immutability is a database guarantee here too. A `BEFORE UPDATE` trigger refuses
+to change any of those six once it holds a value, so a re-run is a new analysis
+rather than an edit. It guards `UPDATE` only, and deliberately not `DELETE`: an
+analysis expires with its session, and a trigger that made a recorded analysis
+undeletable would make expiry impossible. `GET /analyses/{id}` reports the whole
+record — including §57's input image hashes, which are `images.sha256` — read
+from the row rather than resolved when the request arrives.
 
 ### Analyses expire by default
 

@@ -557,6 +557,42 @@ Four things about it are deliberate:
   table the card was lying on. The gate degrades the same way, capping such a
   photograph at `acceptable`. The original is always kept unmodified.
 
+#### The reproducibility record
+
+Spec §57 requires every analysis to record what it was computed against, so a
+historical answer can be re-derived rather than re-guessed. Eight fields, and
+`GET /analyses/{id}` reports them together under `reproducibility`:
+
+| field | in V1 |
+| --- | --- |
+| `analysis_id` | the analysis's own `id` |
+| `application_version` | the version of the service that ran it |
+| `card_database_version` | the published catalog identifier that was current |
+| `image_sha256` | a digest per side, of the bytes that were *stored* |
+| `model_bundle_version` | null — no model exists yet |
+| `grading_rules_version` | null — no grading rules exist yet |
+| `market_snapshot_id` | null — market data is a later milestone |
+| `economic_configuration_id` | null — the economic engine is a later milestone |
+
+Three things about it are load-bearing:
+
+- **The values are captured when the run claims the analysis**, not when the
+  analysis is created and not when it is read. A record resolved at read time
+  would describe whatever is current now, which is the one thing §57 forbids —
+  and it is why `application_version` is on the analysis as well as on the
+  session: a session lives for days, and a deployment can happen inside one.
+- **They are explicit identifiers, never pointers.** `card_database_version`
+  holds the identifier `GET /catalog/version` reports, resolved at that moment;
+  "current" and `/latest/` are not values.
+- **A written field cannot be changed.** A `BEFORE UPDATE` trigger refuses it,
+  so a re-run is a new analysis rather than an edit. `UPDATE` only — an analysis
+  still expires with its session, and guarding `DELETE` would make that
+  impossible.
+
+A null is a documented absence, not an omission. The four components that do not
+exist yet have columns anyway, so that a null years from now reads as "there was
+nothing to record" rather than as a field somebody forgot to write.
+
 ## Contributing
 
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has the working conventions: one primary
