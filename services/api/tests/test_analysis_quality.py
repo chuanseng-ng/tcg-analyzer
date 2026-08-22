@@ -665,24 +665,23 @@ def two_analyses() -> Iterator[tuple[UUID, UUID]]:
         finally:
             await engine.dispose()
 
+    async def delete() -> None:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    sa.text("DELETE FROM analysis_sessions WHERE id = ANY(:ids)").bindparams(
+                        ids=list(sessions)
+                    )
+                )
+        finally:
+            await engine.dispose()
+
     run(insert)
     try:
         yield analyses
     finally:
-        run(lambda: _delete_sessions(sessions))
-
-
-async def _delete_sessions(sessions: tuple[UUID, ...]) -> None:
-    engine = create_async_engine(DATABASE_URL or "")
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(
-                sa.text("DELETE FROM analysis_sessions WHERE id = ANY(:ids)").bindparams(
-                    ids=list(sessions)
-                )
-            )
-    finally:
-        await engine.dispose()
+        run(delete)
 
 
 def _store_side(db: Any, analysis_id: UUID, side: ImageSide, *, digest: str = "a" * 64) -> Any:
