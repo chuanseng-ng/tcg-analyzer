@@ -468,6 +468,75 @@ jobs:
             '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 0
           test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = good
 
+      # Spec §54, the acceptance criterion of #41: expired photographs are gone
+      # from BOTH stores. This is the only place that claim can be made — the
+      # `integration` and `object_storage` pytest markers run in jobs that have
+      # PostgreSQL and MinIO respectively, and never both.
+      - name: An expired session's photographs are deleted from object storage
+        run: |
+          psql() { $COMPOSE exec -T postgres psql -tAqX -U tcg -d tcg "$@"; }
+
+          id=$(curl -sS -c jar5 -X POST localhost:8000/analyses | jq -r .id)
+          for side in front back; do
+            curl -sS -o /dev/null -b jar5 -X POST \
+              "localhost:8000/analyses/$id/images?side=$side" \
+              -H 'Content-Type: image/jpeg' --data-binary @card.jpg
+          done
+          curl -sS -o /dev/null -b jar5 -X POST "localhost:8000/analyses/$id/run"
+
+          # Wait for normalization, so there are artifacts to delete as well as
+          # originals — the derived image is as much a photograph of a room.
+          for _ in $(seq 1 30); do
+            status=$(curl -sS -b jar5 "localhost:8000/analyses/$id" | jq -r .status)
+            case "$status" in uploaded|identifying) sleep 1 ;; *) break ;; esac
+          done
+          test "$status" = awaiting_confirmation
+
+          keys=$(psql -c "SELECT original_uri FROM images
+                          UNION ALL
+                          SELECT normalized_uri FROM images WHERE normalized_uri IS NOT NULL")
+          echo "$keys"
+          test "$(echo "$keys" | wc -l)" -ge 4
+
+          # Both columns, or `expires_after_it_was_created` refuses the update —
+          # a row cannot exist having expired before it was made.
+          psql -c "UPDATE analysis_sessions
+                      SET created_at = now() - interval '8 days',
+                          expires_at = now() - interval '1 day'"
+
+          $COMPOSE exec -T worker celery --app tcg_api.analysis.worker \
+            call tcg_api.analysis.purge_expired
+
+          for _ in $(seq 1 30); do
+            remaining=$(psql -c "SELECT count(*) FROM analysis_sessions")
+            test "$remaining" = 0 && break
+            sleep 1
+          done
+          test "$remaining" = 0
+          test "$(psql -c "SELECT count(*) FROM images")" = 0
+
+          # Verified against storage, which is the whole point: a deleted row is
+          # not a deleted photograph. Asserted on what the interpreter printed
+          # rather than on its exit status, which `compose exec` does not
+          # reliably propagate — see the CV-stack step above.
+          verdicts=$($COMPOSE exec -T api python -c "
+          import asyncio, sys
+          from tcg_api.storage import get_object_storage
+          from tcg_shared.storage import ObjectNotFound, StorageKey
+          async def main():
+              storage = get_object_storage()
+              for key in sys.argv[1:]:
+                  try:
+                      await storage.get(StorageKey(key))
+                  except ObjectNotFound:
+                      print('gone')
+                  else:
+                      print('PRESENT', key)
+          asyncio.run(main())" $keys)
+          echo "$verdicts"
+          test "$(echo "$verdicts" | grep -c '^gone$')" -ge 4
+          test "$(echo "$verdicts" | grep -c PRESENT)" = 0
+
       # The primary attack surface, against the real stack: a file is what its
       # bytes say it is, never what the request claims.
       - name: A non-image is refused as invalid_image
