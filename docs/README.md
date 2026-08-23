@@ -6,6 +6,7 @@ Project documentation.
 | --- | --- |
 | [`architecture.md`](architecture.md) | Domain architecture, the analysis pipeline, and the architectural invariants |
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
+| [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
 | [`adr/`](adr) | Architecture decision records, one numbered file per decision |
 | [`adr/template.md`](adr/template.md) | Starting point for a new ADR |
 
