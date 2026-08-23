@@ -256,6 +256,11 @@ database. A sweep that only deletes rows leaves every expired photograph in
 object storage forever, which is the failure the policy exists to prevent,
 reached through the mechanism meant to prevent it.
 
+The sweep that does this runs hourly inside the analysis worker, and deletes the
+objects before the rows for exactly that reason.
+[`retention.md`](retention.md) is the written policy — what is kept, for how
+long, what is deliberately not covered, and how to run and verify a sweep.
+
 The link into shared reference data points the other way and is `RESTRICT`:
 `analyses.card_id` is nullable until the user confirms an identification, and a
 catalog re-import can never delete a card an analysis names. The confirmation

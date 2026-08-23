@@ -39,6 +39,7 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "CONTRIBUTING.md",
     "docs/README.md",
     "docs/architecture.md",
+    "docs/retention.md",
 )
 
 _BASH_BLOCK = re.compile(r"^```bash\n(.*?)^```", re.MULTILINE | re.DOTALL)

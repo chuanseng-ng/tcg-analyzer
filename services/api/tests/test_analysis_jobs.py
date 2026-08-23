@@ -184,6 +184,33 @@ def test_there_is_no_result_backend(configured: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The retention sweep's schedule — issue #41, spec §54
+# ---------------------------------------------------------------------------
+def test_the_retention_sweep_is_scheduled(configured: Any) -> None:
+    """Spec §54 needs the sweep to run without anybody remembering to run it.
+
+    The schedule lives in this configuration rather than in the Compose command
+    so that a deployment which starts a worker gets retention with it; `--beat`
+    only decides which process the scheduler runs in.
+    """
+    entry = configured.conf.beat_schedule["purge-expired-sessions"]
+
+    assert entry["task"] == jobs.PURGE_EXPIRED
+    assert entry["options"]["queue"] == jobs.QUEUE
+    assert 0 < entry["schedule"] <= 24 * 60 * 60
+
+
+def test_the_sweep_is_registered_under_its_wire_name(configured: Any) -> None:
+    """`celery call tcg_api.analysis.purge_expired` is how one is run by hand."""
+    assert jobs.PURGE_EXPIRED in configured.tasks
+
+
+def test_the_sweep_is_not_retried(configured: Any) -> None:
+    """The next tick is a gentler retry than any backoff, and the rows stay due."""
+    assert configured.tasks[jobs.PURGE_EXPIRED].max_retries == 0
+
+
+# ---------------------------------------------------------------------------
 # Retry and the dead-letter path — rule 3
 # ---------------------------------------------------------------------------
 

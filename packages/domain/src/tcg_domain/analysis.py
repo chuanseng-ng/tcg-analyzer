@@ -79,10 +79,15 @@ class SessionStatus(StrEnum):
     """
 
     ACTIVE = "active"
+    #: Neither of these is written in V1, and that is #41's decision rather than
+    #: an omission. The retention sweep *deletes* an expired session — the row's
+    #: `anonymous_session_id` is the browser's bearer token, so keeping it to
+    #: record that its images were deleted keeps a per-browser identifier
+    #: forever, which is what spec §53 and §54 argue against. What is audited is
+    #: the `retention.swept` log line. They stay in the vocabulary because
+    #: "lapsed" and "emptied" are states this schema admits, and because
+    #: removing a value from the CHECK costs a migration and buys nothing.
     EXPIRED = "expired"
-    #: The retention job has deleted the session's images from object storage.
-    #: The row survives so the deletion is auditable without re-recording what
-    #: was deleted — spec §54.
     PURGED = "purged"
 
 

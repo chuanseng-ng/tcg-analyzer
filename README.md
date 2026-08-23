@@ -610,6 +610,7 @@ not merely out of the working tree.
 | | |
 | --- | --- |
 | [`docs/architecture.md`](docs/architecture.md) | Domain architecture, the analysis pipeline, the invariants |
+| [`docs/retention.md`](docs/retention.md) | How long uploaded photographs are kept, and what deletes them |
 | [`docs/adr/`](docs/adr) | Why things are the way they are, one decision per file |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Commits, pull requests, Definition of Done |
 | [`.env.example`](.env.example) | Every variable the stack reads |

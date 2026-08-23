@@ -62,19 +62,28 @@ from celery.exceptions import OperationalError
 from celery.utils.time import get_exponential_backoff_interval
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 
+from tcg_api.analysis.retention import (
+    SWEEP_INTERVAL_SECONDS,
+    SWEEP_LIMIT,
+    Swept,
+    purge_expired,
+)
 from tcg_api.analysis.sessions import record_reproducibility
 from tcg_api.analysis.state import transition
 from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.database import create_engine, create_session_factory
+from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
 
 __all__ = [
+    "PURGE_EXPIRED",
     "QUEUE",
     "RUN_ANALYSIS",
     "JobQueueUnavailable",
     "enqueue_analysis",
     "get_celery_app",
+    "purge_expired_sessions",
     "run_analysis",
 ]
 
@@ -89,6 +98,10 @@ QUEUE = "analysis"
 #: path, because it is a contract between two processes: renaming the module
 #: must not silently strand messages already in the queue.
 RUN_ANALYSIS = "tcg_api.analysis.run"
+
+#: The retention sweep's name on the wire (#41). Same contract as the above, and
+#: the name `celery call` takes to run one by hand.
+PURGE_EXPIRED = "tcg_api.analysis.purge_expired"
 
 #: How many times a failing run is retried before it is dead-lettered. Four
 #: attempts in total.
@@ -159,6 +172,19 @@ def get_celery_app() -> Celery:
         worker_hijack_root_logger=False,
         timezone="UTC",
         enable_utc=True,
+        # Spec §54's retention sweep (#41). Beat is embedded in the worker with
+        # `--beat` rather than given a service of its own — see the Compose
+        # file. The schedule is here rather than there so that a deployment
+        # cannot forget it, and `options` names the queue explicitly even though
+        # `task_default_queue` would already route it: the sweep and the
+        # analysis run share a worker today and need not always.
+        beat_schedule={
+            "purge-expired-sessions": {
+                "task": PURGE_EXPIRED,
+                "schedule": SWEEP_INTERVAL_SECONDS,
+                "options": {"queue": QUEUE},
+            },
+        },
     )
     return app
 
@@ -358,3 +384,29 @@ def _fail_quietly(analysis_id: UUID) -> None:
         asyncio.run(_fail(analysis_id))
     except Exception:  # see the docstring; there is nothing better to do here
         logger.error("analysis.failure_not_recorded", analysis_id=str(analysis_id), exc_info=True)
+
+
+async def _purge(limit: int) -> Swept:
+    """Run one sweep. Engine built and disposed here, for `_advance`'s reason."""
+    engine = create_engine()
+    try:
+        async with create_session_factory(engine)() as db:
+            return await purge_expired(db, get_object_storage(), limit=limit)
+    finally:
+        await engine.dispose()
+
+
+# No retries. A tick that cannot reach PostgreSQL or the object store is far
+# more likely to be an outage than a fluke, and the next tick is an hour away —
+# which is a gentler retry than any backoff, and leaves the rows due until it
+# succeeds. `acks_late` still applies, so a worker killed mid-sweep leaves the
+# message on the queue; the sweep is re-runnable by construction.
+@shared_task(name=PURGE_EXPIRED, max_retries=0, acks_late=True)
+def purge_expired_sessions() -> None:
+    """Delete everything belonging to sessions past their expiry — spec §54.
+
+    Scheduled hourly by the beat embedded in the worker. It takes no arguments:
+    what is due is a fact about the database's clock, not something a caller
+    gets to assert.
+    """
+    asyncio.run(_purge(SWEEP_LIMIT))

@@ -147,10 +147,10 @@ analysis_sessions = sa.Table(
         nullable=False,
         server_default=sa.text(f"'{SessionStatus.ACTIVE.value}'"),
         comment=(
-            "active, expired, or purged once the retention job has deleted the "
-            "images and kept the row so the deletion itself is auditable. Spec §12 "
-            "names this column and never says what may go in it; these three are "
-            "this project's, not the specification's."
+            "active, expired, or purged. Spec §12 names this column and never "
+            "says what may go in it; these three are this project's, not the "
+            "specification's — and only active is written, because #41's "
+            "retention sweep deletes an expired session rather than emptying it."
         ),
     ),
     sa.Column(

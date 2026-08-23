@@ -270,6 +270,18 @@ services:
       - --app
       - tcg_api.analysis.worker
       - worker
+      # Spec §54's retention sweep (#41) is scheduled by Celery beat, embedded
+      # in this worker rather than given a service of its own: the schedule is
+      # one entry, and a standalone `celery beat` does not answer the image's
+      # `inspect ping` healthcheck. The schedule file goes to /tmp because the
+      # image runs as the unprivileged `tcg` user.
+      #
+      # ponytail: two worker replicas would run two schedulers. The sweep is
+      # idempotent so that is survivable, but a deployment that scales the
+      # worker out should give beat a process.
+      - --beat
+      - --schedule
+      - /tmp/celerybeat-schedule
       - --queues
       - analysis
       - --concurrency
