@@ -212,6 +212,18 @@ and works for Japanese; `card_number` matches as a prefix, so `25`, `025` and
 `(set_code, card_number, variant, id)` — a total order, so paging neither drops
 nor duplicates a row. Nothing matching is an empty page, never a 404.
 
+`GET /grading-companies` lists the grading companies the product supports, each
+with the exact grades it can issue and the version of its published standard in
+force today (spec §23), so a result can be tied back to it. **Render the scale
+from what this endpoint returns rather than hard-coding one**: PSA and TAG issue
+eighteen grades and no 9.5, BGS issues nineteen and has one, and all three issue
+half grades everywhere else — a picker built on a single shared scale misrenders
+one of them, and refuses a PSA 8.5. A company added after V1 appears here with no
+frontend change at all. The response is slow-moving reference data and says so
+with `Cache-Control: public, max-age=3600`. It carries no grading fees: spec §45
+makes those configurable economic inputs, so they belong to the economic engine's
+configuration rather than to a table here that would go stale quarterly.
+
 `POST /analyses` starts an analysis. There is no login and no registration:
 V1 identifies a user by an anonymous session token only (spec §53), returned in
 an HTTP-only cookie that every later call must carry. `GET /analyses/{id}`

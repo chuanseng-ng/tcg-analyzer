@@ -332,6 +332,29 @@ jobs:
           echo "$overlap"
           echo "$overlap" | grep -q "uq_grading_rules_company_effective_from"
 
+      # Runs after the seed, so the versions it reports are rows the deployed
+      # database actually holds. That is the claim the unit tests cannot make:
+      # they override the resolver, so nothing there proves the route queries
+      # `grading_rules` rather than reading the adapters' constants.
+      - name: The grading companies endpoint reports the seeded versions
+        run: |
+          companies=$(curl -sS -D headers.txt localhost:8000/grading-companies)
+          echo "$companies" | jq .
+          for company in psa tag bgs; do
+            stored=$($COMPOSE exec -T postgres psql -tAqX -U tcg -d tcg \
+              -c "SELECT version FROM grading_rules WHERE company = '$company'")
+            served=$(echo "$companies" | jq -r --arg c "$company" \
+              '.companies[] | select(.company == $c) | .rules.version')
+            echo "$company: stored=$stored served=$served"
+            test -n "$stored"
+            test "$stored" = "$served"
+          done
+          # The scales differ, and that is the reason the endpoint exists: a
+          # frontend rendering one shared scale misrenders one of the three.
+          test "$(echo "$companies" | jq '[.companies[] | select(.grades | index("9.5"))] | length')" = 1
+          test "$(echo "$companies" | jq '[.companies[] | select(.grades | index("8.5"))] | length')" = 3
+          grep -qi '^cache-control: public, max-age=3600' headers.txt
+
       - name: A photograph uploads, validates and reaches uploaded
         run: |
           $COMPOSE exec -T api python -c "

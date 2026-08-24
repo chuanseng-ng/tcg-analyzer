@@ -176,6 +176,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/grading-companies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the grading companies and their grade scales
+         * @description Spec §64's grading endpoint. Returns every supported company with the exact grades it can issue and the version of its published standard in force today (spec §23), so a result can be tied back to it. **Render the scale from `grades` rather than hard-coding one**: PSA and TAG issue no 9.5 and BGS does, so a shared scale misrenders one of them, and a company added post-V1 appears here with no frontend change. Slow-moving reference data — the response carries `Cache-Control: public, max-age=3600`. No fees: spec §45's grading costs are user-configured economic inputs, not fetched here.
+         */
+        get: operations["list_grading_companies_grading_companies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -649,6 +669,91 @@ export interface components {
              * @description Human-readable summary. Safe to show a user; never contains internal detail.
              */
             message: string;
+        };
+        /**
+         * GradingCompaniesResponse
+         * @description The body of a successful `GET /grading-companies`.
+         */
+        GradingCompaniesResponse: {
+            /**
+             * Companies
+             * @description Every company the product supports, in a stable order. A company added post-V1 appends to it.
+             */
+            companies: components["schemas"]["GradingCompanyResponse"][];
+        };
+        /**
+         * GradingCompanyResponse
+         * @description One grading company, as a client needs to render it.
+         */
+        GradingCompanyResponse: {
+            /**
+             * Company
+             * @description The company's lowercase slug. The key a graded price is stored under.
+             * @example psa
+             */
+            company: string;
+            /**
+             * Display Name
+             * @description What to show a user.
+             * @example PSA
+             */
+            display_name: string;
+            /**
+             * Grades
+             * @description Every grade this company can issue, ascending. Not shared between companies: PSA and TAG have no 9.5 and BGS does. Render from this list rather than from a hard-coded scale.
+             * @example [
+             *       "1",
+             *       "1.5",
+             *       "2",
+             *       "8.5",
+             *       "9",
+             *       "10"
+             *     ]
+             */
+            grades: string[];
+            /** @description The published standard in force today, or `null` when no version of this company's standard has been recorded. */
+            rules: components["schemas"]["GradingRulesResponse"] | null;
+        };
+        /**
+         * GradingRulesResponse
+         * @description The version of one company's published standard currently in force.
+         *
+         *     Spec §23's record, minus the `rules` body — that is empty in V1 by decision
+         *     (#46: the published standards are the companies' copyrighted text, and what
+         *     §57 needs is the identifier plus a source a human can open).
+         */
+        GradingRulesResponse: {
+            /**
+             * Effective From
+             * @description When the company's published standard took effect, where the company states one. `null` where it states none — never a guess.
+             * @example 2008-02-01
+             */
+            effective_from: string | null;
+            /**
+             * Effective To
+             * @description When it stopped applying, or `null` while it is current. Derived from the next version's start rather than stored, so two versions of one company cannot overlap.
+             * @example null
+             */
+            effective_to: string | null;
+            /**
+             * Source
+             * @description Where the standard was read. A URL a human can open.
+             * @example https://www.psacard.com/gradingstandards
+             */
+            source: string;
+            /**
+             * Verified On
+             * Format: date
+             * @description When the source was last read.
+             * @example 2026-08-24
+             */
+            verified_on: string;
+            /**
+             * Version
+             * @description The identifier an analysis retains — spec §57's `grading_rules_version`. No grading company publishes a version for its standard, so this one is this repository's, stamped with the date the standard was read.
+             * @example psa-rules-2026-08-24
+             */
+            version: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1433,6 +1538,44 @@ export interface operations {
                 };
             };
             /** @description The catalog could not be reached, or no version has been registered. `details.reason` says which. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_grading_companies_grading_companies_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GradingCompaniesResponse"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The grading rules could not be read. `details.reason` is `grading_rules_unreachable`. */
             503: {
                 headers: {
                     [name: string]: unknown;

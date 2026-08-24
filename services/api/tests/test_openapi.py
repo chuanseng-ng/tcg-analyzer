@@ -85,6 +85,17 @@ def test_openapi_documents_the_card_search_path() -> None:
     assert "get" in schema["paths"]["/cards/search"]
 
 
+def test_openapi_documents_the_grading_companies_path() -> None:
+    """Spec §64 names `GET /grading-companies`; #48 serves it.
+
+    A literal path with no parameters, so it appears verbatim.
+    """
+    schema = create_app().openapi()
+
+    assert "/grading-companies" in schema["paths"]
+    assert "get" in schema["paths"]["/grading-companies"]
+
+
 def test_openapi_documents_the_analysis_paths() -> None:
     """Spec §64 names `POST /analyses` and `GET /analyses/{id}`; #32 serves them.
 

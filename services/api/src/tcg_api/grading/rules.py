@@ -32,14 +32,12 @@ no start, so as far as this repository knows the standard applied until somethin
 succeeded it — and it comes back as `None` rather than as a date nobody
 published.
 
-There is deliberately **no `GradingRulesUnavailable`** wrapping the driver's
-errors. `catalog/versions.py` has one because it implements a domain Protocol,
-and `analysis/sessions.py` has one because a driver error on an HTTP path would
-otherwise reach a client as a 500 carrying an asyncpg message. Nothing routes to
-these functions yet. #48 is the first caller that does, and adding it there — in
-the same commit as the route — is also the moment to hoist the three
-near-identical `execute()` wrappers into a shared helper rather than write a
-third.
+`GradingRulesUnavailable` exists for the reason `analysis/sessions.py`'s
+`AnalysisStoreUnavailable` does: #48 put a route in front of these functions, and
+a driver error on an HTTP path would otherwise reach a client as a 500 carrying
+an asyncpg message. It is defined here rather than in `tcg_domain.errors`,
+where `CatalogUnavailable` lives, because nothing here implements a domain
+Protocol — published grading rules are this repository's own reference data.
 """
 
 from __future__ import annotations
@@ -48,12 +46,24 @@ from datetime import date
 from typing import Any, Final
 
 import sqlalchemy as sa
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_grading_companies import GradingRules
 
 from tcg_api.grading.tables import grading_rules
 
-__all__ = ["get_rules", "rules_in_force"]
+__all__ = ["GradingRulesUnavailable", "get_rules", "rules_in_force"]
+
+_UNAVAILABLE = "The grading rules could not be read."
+
+
+class GradingRulesUnavailable(ConnectionError):
+    """The grading rules store could not be reached.
+
+    A `ConnectionError`, matching `AnalysisStoreUnavailable` and the domain's
+    `CatalogUnavailable`: what went wrong is that the store was out of reach,
+    not that the caller asked for something invalid.
+    """
 
 
 #: Each row with the start of the row that supersedes it, which is the end of its
@@ -85,6 +95,29 @@ _RANGED: Final = sa.select(
 _SELECT: Final = sa.select(_RANGED)
 
 
+async def _one_or_none(db: AsyncSession, statement: sa.Select[Any]) -> sa.Row[Any] | None:
+    """Run a statement that resolves at most one version, translating failure.
+
+    `OSError` alongside `SQLAlchemyError` because a refused connection never
+    becomes a SQLAlchemy error at all — the same rule `catalog/cards.py`,
+    `catalog/versions.py` and `analysis/sessions.py` each state for themselves.
+
+    `one_or_none()` rather than `first()`: both readers rely on at most one row
+    matching, and a second one means the non-overlap invariant `tables.py`
+    argues for has been broken. Raising there is the honest outcome.
+
+    ponytail: fourth near-identical wrapper in this service. Hoist
+    `catalog/cards.py::_execute`, `catalog/versions.py::_one_or_none`,
+    `analysis/sessions.py::execute` and this one into one helper parameterised
+    on the exception if a fifth ever appears.
+    """
+    try:
+        result = await db.execute(statement)
+    except (SQLAlchemyError, OSError) as error:
+        raise GradingRulesUnavailable(_UNAVAILABLE) from error
+    return result.one_or_none()
+
+
 def _entity(row: sa.Row[Any]) -> GradingRules:
     return GradingRules(
         company=row.company,
@@ -107,13 +140,16 @@ async def rules_in_force(db: AsyncSession, company: str, on: date) -> GradingRul
 
     At most one row can match. The intervals partition each company's timeline
     by construction, so there is no `LIMIT 1` here to get the ordering of wrong.
+
+    Raises:
+        GradingRulesUnavailable: If the store cannot be reached.
     """
     statement = _SELECT.where(
         _RANGED.c.company == company,
         sa.or_(_RANGED.c.effective_from.is_(None), _RANGED.c.effective_from <= on),
         sa.or_(_RANGED.c.effective_to.is_(None), _RANGED.c.effective_to > on),
     )
-    row = (await db.execute(statement)).one_or_none()
+    row = await _one_or_none(db, statement)
     return None if row is None else _entity(row)
 
 
@@ -125,7 +161,10 @@ async def get_rules(db: AsyncSession, version: str) -> GradingRules | None:
     `analyses.grading_rules_version` and resolves the exact record here, however
     many revisions have been published since. Reads through the same ranged
     subquery, so a superseded version still reports the date it stopped applying.
+
+    Raises:
+        GradingRulesUnavailable: If the store cannot be reached.
     """
     statement = _SELECT.where(_RANGED.c.version == version)
-    row = (await db.execute(statement)).one_or_none()
+    row = await _one_or_none(db, statement)
     return None if row is None else _entity(row)
