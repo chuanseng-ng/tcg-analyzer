@@ -255,6 +255,37 @@ so a row claiming to be a raw price while carrying a grading company is not
 representable at all; the rule is stated once, in `PriceObservation`, and this is
 that same statement in SQL.
 
+**A market snapshot is where that append-only guarantee pays for itself.** Spec
+§36 requires every analysis to use one, so a result from last month can be
+re-derived with the prices it actually used. `market_snapshots` holds four
+things — which provider, when it was cut, the identifier of the ingestion run
+behind it, and nothing else. In particular it holds **no list of observations**,
+which §36's own diagram invites: the set is already determined, because
+`market_observations` never changes and `created_at` records when a row *landed*
+rather than when the price was seen. So a snapshot comprises "this provider's
+prices stored at or before this moment", and re-resolving it a year later
+returns the same figures.
+
+The cut is on when a row was stored, and that is the load-bearing half. A
+backfilled price is seen long before it is stored, so a snapshot cut on when a
+price was *seen* could be joined retroactively by a late arrival — and a
+snapshot that resolves differently on two readings of the same data is not
+immutable at all.
+
+The alternative, stamping each ingested row with the snapshot it belongs to, is
+worse than redundant: a daily run may not reach every one of 49,399 cards, so a
+snapshot built from what that run wrote would hold the day's *coverage* rather
+than the market as of that day, and every card the run missed would report no
+price at all while a perfectly good one from yesterday sat on file. A snapshot
+resolves the latest **known** price, not the latest fetched one.
+
+`data_version` is generated from the cut rather than written, because no market
+provider surveyed publishes a version of its own — so the identifier is the
+ingestion date, and a run that could name its own version could name one that
+disagreed with when it was cut. It is also the date stamp the results UI has to
+show beside a price: a historical analysis reports an old snapshot by design,
+and a record of a past date is not a stale price presented as a current one.
+
 The grading rules version is the second. `grading_rules` holds one row per
 published standard per company — identifier, when it took effect, where it was
 read and when — under the same guarantee and the same trigger. A correction is a
@@ -282,11 +313,16 @@ session lives for days, so the version that opened one is not necessarily the
 version that ran this. Every value is resolved when the analysis ran, never a
 pointer to whatever is current: the worker captures them at the moment it claims
 the analysis, which is the one moment at which "what is this being computed
-against" has an answer. Four of the six are null through V1: no model bundle,
-market snapshot or economic configuration exists yet, and grading rules now do
-but nothing in an analysis consults them until per-company grade prediction
-arrives — so recording a rules version on a run that never applied one would be a
-false claim. A documented absence rather than a gap.
+against" has an answer. `market_snapshot_id` is the second of the six the worker
+actually resolves, and the only one carrying a foreign key — `RESTRICT`, so
+pruning can never make a recorded analysis unresolvable, where a catalog version
+is an identifier worth keeping even if its record went. Four of the six are
+still null through V1: no model bundle or economic configuration exists yet;
+nothing has ingested a price, so there is no snapshot to name and the run
+records that rather than inventing one; and grading rules now exist but nothing
+in an analysis consults them until per-company grade prediction arrives — so
+recording a rules version on a run that never applied one would be a false
+claim. A documented absence rather than a gap.
 
 Immutability is a database guarantee here too. A `BEFORE UPDATE` trigger refuses
 to change any of those six once it holds a value, so a re-run is a new analysis

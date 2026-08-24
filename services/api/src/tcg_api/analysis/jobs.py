@@ -73,6 +73,7 @@ from tcg_api.analysis.state import transition
 from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.database import create_engine, create_session_factory
+from tcg_api.market.snapshots import current_snapshot
 from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
 
@@ -252,6 +253,12 @@ async def _advance(analysis_id: UUID) -> bool:
             # store is down, so the run should fail, roll the claim back and be
             # retried.
             current_catalog = await PostgresCardDatabaseVersionRepository(db).current()
+            # §36: the analysis is computed against a snapshot resolved now, not
+            # against whichever is current when somebody re-reads the result.
+            # `None` through V1 and honestly so — ADR 0006 gates the provider on
+            # a subscription that is not yet active, so nothing has ingested and
+            # there is no snapshot. Never a fabricated one.
+            snapshot = await current_snapshot(db)
             await record_reproducibility(
                 db,
                 analysis_id,
@@ -260,6 +267,7 @@ async def _advance(analysis_id: UUID) -> bool:
                 # session days ago.
                 application_version=application_version(),
                 card_database_version=None if current_catalog is None else current_catalog.version,
+                market_snapshot_id=None if snapshot is None else snapshot.id,
             )
 
             # Spec §18 puts the quality gate here, before anything looks for a

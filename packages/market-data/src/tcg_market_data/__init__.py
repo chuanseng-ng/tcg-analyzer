@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from tcg_market_data.errors import (
     InvalidMarketObservation,
+    InvalidMarketSnapshot,
     MarketDataError,
     MarketProviderUnavailable,
 )
@@ -31,13 +32,16 @@ from tcg_market_data.port import (
     PriceObservation,
     validated_grade_key,
 )
+from tcg_market_data.snapshot import MarketSnapshot
 
 __all__ = [
     "InMemoryMarketDataProvider",
     "InvalidMarketObservation",
+    "InvalidMarketSnapshot",
     "MarketDataError",
     "MarketDataProvider",
     "MarketProviderUnavailable",
+    "MarketSnapshot",
     "MarketType",
     "PriceObservation",
     "validated_grade_key",

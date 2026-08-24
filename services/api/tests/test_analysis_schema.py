@@ -32,6 +32,7 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -42,6 +43,7 @@ from tcg_api.analysis.tables import (
     images,
 )
 from tcg_api.catalog.tables import cards, sets
+from tcg_api.market.tables import market_providers, market_snapshots
 from tcg_domain.analysis import AnalysisStatus, ImageSide, QualityStatus, SessionStatus
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -116,9 +118,13 @@ def empty_tables():
             # Child-first, and the catalog too: `analyses.card_id` references
             # `cards`, so a card left behind by another module would survive into
             # these tests and a card inserted here must not survive out of them.
+            # The market tables join the list because `analyses.market_snapshot_id`
+            # now references `market_snapshots` — the reproducibility record
+            # points at something real, and the fixtures have to supply it.
             connection.execute(
                 sa.text(
-                    "TRUNCATE images, analyses, analysis_sessions, "
+                    "TRUNCATE images, analyses, analysis_sessions, market_snapshots, "
+                    "market_observations, market_providers, "
                     "card_external_ids, cards, sets RESTART IDENTITY CASCADE"
                 )
             )
@@ -136,12 +142,18 @@ SET_ID = uuid.UUID("22222222-2222-5222-8222-222222222222")
 CARD_ID = uuid.UUID("33333333-3333-5333-8333-333333333333")
 SESSION_ID = uuid.UUID("44444444-4444-5444-8444-444444444444")
 ANALYSIS_ID = uuid.UUID("55555555-5555-5555-8555-555555555555")
+PROVIDER_ID = uuid.UUID("aaaaaaaa-aaaa-5aaa-8aaa-aaaaaaaaaaaa")
 
 DIGEST = "a" * 64
 
 #: One legal value per reproducibility column, and a second, different one.
 #: Two of the six are UUIDs and four are printed identifiers, so the pair cannot
 #: be a single literal reused across the parametrisation.
+#:
+#: The two `market_snapshot_id` values are not arbitrary any more: the column
+#: carries a foreign key, so `insert_analysis` publishes two snapshots with
+#: exactly these ids. `economic_configuration_id` still is arbitrary, because the
+#: table it will point at does not exist yet.
 VALUE_FOR: dict[str, Any] = {
     "application_version": "0.1.0",
     "model_bundle_version": "pokemon-condition-v0.3.0",
@@ -213,9 +225,47 @@ def analysis_values(**overrides: Any) -> dict[str, Any]:
     return values | overrides
 
 
+def publish_snapshots() -> None:
+    """Two snapshots, so the reproducibility record has something to point at.
+
+    A provider row is needed first, since a snapshot names one. It is a throwaway
+    fixture rather than ADR 0006's provider: this file asserts schema behaviour,
+    and `market_providers` is the one table that exists to be truthful about
+    licensing — a real determination does not belong in a test.
+
+    `data_version` is generated from `generated_at`, so neither is written here.
+    Idempotent, because more than one analysis may be opened in a test and both
+    need the same two snapshots to exist.
+    """
+    write(
+        [
+            (
+                insert(market_providers).on_conflict_do_nothing(index_elements=["id"]),
+                {
+                    "id": PROVIDER_ID,
+                    "slug": "examplesource",
+                    "name": "ExampleSource",
+                    "license": "Storage and caching permitted.",
+                    "commercial_use": True,
+                    "terms_reference": "https://example.test/terms",
+                    "verified_on": NOW.date(),
+                },
+            ),
+            (
+                insert(market_snapshots).on_conflict_do_nothing(index_elements=["id"]),
+                [
+                    {"id": VALUE_FOR["market_snapshot_id"], "provider_id": PROVIDER_ID},
+                    {"id": OTHER_VALUE_FOR["market_snapshot_id"], "provider_id": PROVIDER_ID},
+                ],
+            ),
+        ]
+    )
+
+
 def insert_analysis(**overrides: Any) -> uuid.UUID:
     values = analysis_values(**overrides)
     write([(sa.insert(analyses), values)])
+    publish_snapshots()
     return uuid.UUID(str(values["id"]))
 
 

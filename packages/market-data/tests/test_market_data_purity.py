@@ -77,6 +77,6 @@ def test_the_public_surface_is_explicit() -> None:
     exported = {name for name in vars(tcg_market_data) if not name.startswith("_")}
     # Submodules become attributes once imported, and `annotations` is the
     # __future__ flag every module carries. Neither is public surface.
-    incidental = {"annotations", "errors", "memory", "port"}
+    incidental = {"annotations", "errors", "memory", "port", "snapshot"}
 
     assert exported - incidental == set(tcg_market_data.__all__)

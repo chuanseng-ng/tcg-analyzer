@@ -1,20 +1,21 @@
-"""Spec §35's `market_providers` and `market_observations`, as SQLAlchemy Core.
+"""Spec §35's market tables and spec §36's snapshots, as SQLAlchemy Core.
 
-Two tables. One row per price a provider reported for a card at a moment, and
-one row per provider recording **what this project is licensed to do with those
-prices**. `license`, `commercial_use` and `terms_reference` are enforcement
-fields rather than documentation: ADR 0006 relies on one right — derived data,
-its risk R5 — that no shortlisted candidate grants expressly, and gates
-commercial use on an active Business plan. A licensing question years from now
-has to have an answer in the database rather than in someone's memory.
+Three tables. One row per price a provider reported for a card at a moment, one
+row per provider recording **what this project is licensed to do with those
+prices**, and one row per immutable snapshot of the first. `license`,
+`commercial_use` and `terms_reference` are enforcement fields rather than
+documentation: ADR 0006 relies on one right — derived data, its risk R5 — that
+no shortlisted candidate grants expressly, and gates commercial use on an active
+Business plan. A licensing question years from now has to have an answer in the
+database rather than in someone's memory.
 
 `packages/market-data` holds the same observation as a frozen dataclass
 (`tcg_market_data.PriceObservation`) and validates it on construction. This is
-where one goes so that #51's snapshots, #55's price age and the economic engine
-can read a price nobody has to fetch again. **Core, not ORM**, and the entity is
+where one goes so that snapshots, #55's price age and the economic engine can
+read a price nobody has to fetch again. **Core, not ORM**, and the entity is
 not redeclared here — same direction as the catalog and grading adapters.
 
-Five decisions, each of which binds a later milestone:
+Six decisions, each of which binds a later milestone:
 
 * **`market_type` is a stored generated column, not a written one.** §35 lists
   it, and `PriceObservation.market_type` already derives it from
@@ -47,7 +48,17 @@ Five decisions, each of which binds a later milestone:
   wrong before any arithmetic happens. Two places matches `Money`'s own
   quantisation, so a round trip through the database changes nothing.
 
-Both tables are append-only, and say so in the database rather than in a
+* **A snapshot is a cut-line, not a membership list.** §36 draws
+  `market_snapshot` with `observations` hanging off it, but storing that edge
+  would mean tens of thousands of rows a day carrying no information — the set is
+  already determined by `generated_at`, because `market_observations` is
+  append-only and `created_at` records when a row *landed* rather than when the
+  price was seen. So a snapshot comprises "this provider's observations whose
+  `created_at` is at or before `generated_at`", and a backfilled price cannot
+  join a snapshot that was cut before it arrived. `tcg_api.market.snapshots`
+  resolves it; nothing copies a price.
+
+All three tables are append-only, and say so in the database rather than in a
 comment — see the trigger at the foot of this module.
 """
 
@@ -71,7 +82,7 @@ from tcg_api.tables import NO_METADATA as _NO_METADATA
 from tcg_api.tables import PRINTED as _PRINTED
 from tcg_api.tables import metadata, one_of
 
-__all__ = ["TABLES", "market_observations", "market_providers"]
+__all__ = ["TABLES", "market_observations", "market_providers", "market_snapshots"]
 
 
 #: A lowercase slug, mirroring `tcg_domain.card.validated_slug`'s grammar so the
@@ -95,6 +106,13 @@ _MARKET_TYPE_EXPRESSION: Final = (
     f"CASE WHEN grading_company IS NULL "
     f"THEN '{MarketType.RAW.value}' ELSE '{MarketType.GRADED.value}' END"
 )
+
+#: §36's `data_version`, derived from the cut-line rather than written. ADR 0006:
+#: no provider publishes a version, so the snapshot's identifier is the ingestion
+#: date. `AT TIME ZONE 'UTC'` and the cast are both IMMUTABLE, which is what makes
+#: the expression legal in a generated column; `to_char` is not, so do not reach
+#: for it to change the format.
+_DATA_VERSION_EXPRESSION: Final = "(generated_at AT TIME ZONE 'UTC')::date"
 
 
 market_providers = sa.Table(
@@ -412,7 +430,81 @@ market_observations = sa.Table(
 )
 
 
-TABLES: Final = (market_providers, market_observations)
+market_snapshots = sa.Table(
+    "market_snapshots",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "provider_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            "market_providers.id",
+            ondelete="RESTRICT",
+            name="fk_market_snapshots_provider_id_market_providers",
+        ),
+        nullable=False,
+        comment=(
+            "§36's `provider`, as the identifier rather than the slug. A snapshot "
+            "reads one provider: two providers' figures for one card are two answers, "
+            "and a snapshot that mixed them would be reproducible from neither licence."
+        ),
+    ),
+    sa.Column(
+        "generated_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.func.now(),
+        nullable=False,
+        comment=(
+            "§36's `generated_at`, and **the cut-line itself**: this snapshot comprises "
+            "its provider's observations whose `created_at` is at or before it. Written "
+            "by the database, never by a caller, so a cut cannot be backdated past "
+            "prices that had already landed. The comparison is `<=` rather than `<`, "
+            "and that is load-bearing: a snapshot is generated inside the transaction "
+            "that wrote the run's observations, and `now()` is transaction-start time, "
+            "so those rows carry exactly this value. With `<` a run would snapshot the "
+            "day before its own work."
+        ),
+    ),
+    sa.Column(
+        "data_version",
+        sa.Date(),
+        sa.Computed(_DATA_VERSION_EXPRESSION, persisted=True),
+        nullable=False,
+        comment=(
+            "§36's `data_version` — **this repository's** identifier for the ingestion "
+            "run, never a pointer (spec §31), and never the provider's own version, "
+            "which is `market_providers.version` and which no candidate M3 surveyed "
+            "publishes at all. ADR 0006 therefore has it hold the ingestion date, so "
+            "it is generated from `generated_at` rather than written: a run that could "
+            "name its own version could name one that disagreed with when it was cut. "
+            "UTC, so the stamp does not move with the server's timezone."
+        ),
+    ),
+    sa.PrimaryKeyConstraint("id", name="pk_market_snapshots"),
+    # No unique constraint. Two snapshots cut on one day share a `data_version`
+    # and are still two snapshots — they resolve through different `generated_at`
+    # values and an analysis names one by id. `UNIQUE (provider_id, data_version)`
+    # would make a second run in a day fail for no reason anybody could act on.
+    #
+    # No `created_at` either: every other table has one because it records when a
+    # row *landed* as distinct from when the data was made, and for a snapshot
+    # those are the same instant — `generated_at` is both.
+    #
+    # ponytail: no index. `get_snapshot` is the primary key and `current_snapshot`
+    # sorts a table that gains one row a day. If snapshots ever stop being daily,
+    # the index is on `generated_at DESC`.
+    comment=(
+        "One immutable market snapshot — spec §36. It stores no observations: the "
+        "snapshot *is* `generated_at`, and it comprises the observations from its "
+        "provider whose `created_at` is at or before that moment. Because "
+        "`market_observations` is append-only, that set can never change afterwards, "
+        "which is what makes a historical analysis re-derivable rather than "
+        "re-guessed. Append-only itself, enforced by trg_market_snapshots_immutable."
+    ),
+)
+
+
+TABLES: Final = (market_providers, market_observations, market_snapshots)
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +579,14 @@ _OBSERVATIONS_TRIGGER: Final = _ddl(
     """
 )
 
+_SNAPSHOTS_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_market_snapshots_immutable
+    BEFORE UPDATE ON market_snapshots
+    FOR EACH ROW EXECUTE FUNCTION market_rows_are_immutable();
+    """
+)
+
 # Two statements, two DDL objects: the asyncpg driver prepares each statement it
 # is handed, and a prepared statement may not contain more than one.
 _DROP_PROVIDERS_TRIGGER: Final = _ddl(
@@ -495,6 +595,10 @@ _DROP_PROVIDERS_TRIGGER: Final = _ddl(
 
 _DROP_OBSERVATIONS_TRIGGER: Final = _ddl(
     "DROP TRIGGER IF EXISTS trg_market_observations_immutable ON market_observations"
+)
+
+_DROP_SNAPSHOTS_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_market_snapshots_immutable ON market_snapshots"
 )
 
 _DROP_IMMUTABLE_FUNCTION: Final = _ddl("DROP FUNCTION IF EXISTS market_rows_are_immutable()")
@@ -515,6 +619,11 @@ sa.event.listen(
     _OBSERVATIONS_TRIGGER.execute_if(dialect="postgresql"),
 )
 sa.event.listen(
+    market_snapshots,
+    "after_create",
+    _SNAPSHOTS_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
     market_providers,
     "before_drop",
     _DROP_PROVIDERS_TRIGGER.execute_if(dialect="postgresql"),
@@ -524,9 +633,15 @@ sa.event.listen(
     "before_drop",
     _DROP_OBSERVATIONS_TRIGGER.execute_if(dialect="postgresql"),
 )
-# On `market_providers`, because it is dropped last of the two — the function is
-# shared, and dropping it while the observations trigger still referenced it
-# would leave the reversal half done.
+sa.event.listen(
+    market_snapshots,
+    "before_drop",
+    _DROP_SNAPSHOTS_TRIGGER.execute_if(dialect="postgresql"),
+)
+# On `market_providers`, because every other market table references it and it is
+# therefore dropped last of the three — the function is shared, and dropping it
+# while another table's trigger still referenced it would leave the reversal half
+# done.
 sa.event.listen(
     market_providers,
     "before_drop",

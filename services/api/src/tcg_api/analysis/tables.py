@@ -74,6 +74,16 @@ from tcg_domain.analysis import (
 # referenced directly rather than by the string "cards.id" so that the dependency
 # is visible to a reader and to a type checker, and cannot be a silent typo.
 from tcg_api.catalog.tables import cards
+
+# `analyses.market_snapshot_id` points at §36's snapshots, so the market domain
+# is a hard dependency of this module rather than merely of the migration
+# environment — a `sa.ForeignKey` resolves against the `MetaData` it is attached
+# to, and without `market_snapshots` on it `CreateTable(analyses)` raises
+# NoReferencedTableError. Referenced as a column object rather than by the string
+# "market_snapshots.id" for the reason `market/tables.py` gives about `cards`:
+# the dependency is then visible to a reader and to mypy. The direction is safe —
+# nothing in the market domain reads this one.
+from tcg_api.market.tables import market_snapshots
 from tcg_api.tables import PRINTED, metadata, one_of
 
 __all__ = [
@@ -242,19 +252,30 @@ analyses = sa.Table(
     sa.Column(
         "market_snapshot_id",
         sa.Uuid(),
+        sa.ForeignKey(
+            market_snapshots.c.id,
+            ondelete="RESTRICT",
+            name="fk_analyses_market_snapshot_id_market_snapshots",
+        ),
         nullable=True,
         comment=(
-            "Which pre-ingested market snapshot the economics were computed "
-            "against. No foreign key yet — the table it will point at arrives with "
-            "the market-data milestone, and adding the constraint then is cheaper "
-            "than changing this column's type."
+            "Which pre-ingested market snapshot the economics were computed against — "
+            "spec §36, resolved when the run claimed the analysis. RESTRICT, unlike "
+            "`card_database_version` which carries no key at all: a catalog version is "
+            "an identifier worth keeping even if the record went, where a snapshot "
+            "*is* the prices, and one an analysis references must stay resolvable "
+            "forever. NULL until something has ingested — a fact rather than a gap."
         ),
     ),
     sa.Column(
         "economic_configuration_id",
         sa.Uuid(),
         nullable=True,
-        comment="The fee and cost configuration used. No foreign key yet, as above.",
+        comment=(
+            "The fee and cost configuration used. No foreign key yet — the table it "
+            "will point at arrives with the economics milestone, and adding the "
+            "constraint then is cheaper than changing this column's type."
+        ),
     ),
     sa.Column(
         "application_version",

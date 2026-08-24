@@ -289,6 +289,7 @@ async def record_reproducibility(
     *,
     application_version: str,
     card_database_version: str | None,
+    market_snapshot_id: UUID | None,
 ) -> None:
     """Write spec §57's reproducibility record onto `analysis_id`.
 
@@ -303,10 +304,17 @@ async def record_reproducibility(
     them, and a signature naming a catalog type would make this module import
     the catalog to write two strings.
 
-    `grading_rules_version` is deliberately not a parameter. No grading rules
-    exist in V1, so the column stays NULL and the milestone that introduces them
-    adds the argument — an explicit absence rather than a `None` this caller has
-    to keep passing.
+    `market_snapshot_id` is `None` until something has ingested: ADR 0006 gates
+    commercial use on a subscription that is not yet active, so no provider is
+    registered and no snapshot exists to point at. It is still a **required**
+    argument rather than one defaulting to `None` — a default is how a caller
+    that ought to record a snapshot silently stops.
+
+    `grading_rules_version` is deliberately not a parameter. Nothing in an
+    analysis consults grading rules until per-company grade prediction arrives,
+    so recording a rules version on a run that never applied one would be a
+    false claim; that milestone adds the argument. An explicit absence rather
+    than a `None` this caller has to keep passing.
 
     Does not commit; the caller owns the transaction. Writing twice is refused
     by `trg_analyses_reproducibility_immutable` rather than by a check here,
@@ -319,6 +327,7 @@ async def record_reproducibility(
         .values(
             application_version=application_version,
             card_database_version=card_database_version,
+            market_snapshot_id=market_snapshot_id,
         )
     )
     await execute(db, statement)
