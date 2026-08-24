@@ -14,7 +14,7 @@
 # `next.config.mjs` back to the repository root, undoing a fix whose reason is
 # recorded in that file. See docs/adr/0003-the-local-development-stack.md.
 
-FROM node:24-bookworm-slim AS development
+FROM node:26-bookworm-slim AS development
 
 # Corepack provisions the exact pnpm pinned by the root `package.json`'s
 # `packageManager` field, hash and all, so the image resolves dependencies with
