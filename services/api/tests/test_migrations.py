@@ -51,6 +51,10 @@ CATALOG_REVISION = "0d60d1982d83"
 VERSION_RECORD_REVISION = "352eb3d5e889"
 ANALYSIS_REVISION = "29d14fe0fcee"
 
+# Spec §23's grading rules, the second table in this schema to carry an
+# immutability trigger. Pinned for the same reason as the two above.
+GRADING_RULES_REVISION = "50c399cb7b9b"
+
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
 
@@ -187,6 +191,39 @@ def test_downgrading_the_analysis_revision_leaves_the_catalog_standing() -> None
         assert not table_exists(table), table
     assert table_exists("cards")
     assert table_exists("card_database_versions")
+
+
+def test_downgrading_the_grading_rules_revision_leaves_the_analysis_spine_standing() -> None:
+    """The grading rules landed on top of the analysis spine and reference nothing.
+
+    Nothing has a foreign key into `grading_rules` and it has none out —
+    `analyses.grading_rules_version` is a bare identifier by decision — so
+    reversing it must disturb nothing at all.
+    """
+    alembic("upgrade", GRADING_RULES_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("grading_rules")
+    for table in ANALYSIS_TABLES:
+        assert table_exists(table), table
+    assert table_exists("cards")
+    assert table_exists("card_database_versions")
+
+
+def test_downgrading_the_grading_rules_revision_leaves_no_orphaned_trigger_function() -> None:
+    """A dropped table takes its trigger; the function it called survives.
+
+    The same trap `card_database_versions` documents, and the reason the second
+    trigger-bearing revision names all three drops rather than relying on
+    `DROP TABLE`.
+    """
+    alembic("upgrade", GRADING_RULES_REVISION)
+    assert function_exists("grading_rules_are_immutable()")
+
+    alembic("downgrade", "-1")
+
+    assert not function_exists("grading_rules_are_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:

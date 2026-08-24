@@ -1338,6 +1338,7 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
     { name = "tcg-domain" },
+    { name = "tcg-grading-companies" },
     { name = "tcg-shared" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1363,6 +1364,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.52" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "tcg-domain", editable = "packages/domain" },
+    { name = "tcg-grading-companies", editable = "packages/grading-companies" },
     { name = "tcg-ml-card-detection", marker = "extra == 'worker'", editable = "ml/card-detection" },
     { name = "tcg-ml-image-quality", marker = "extra == 'worker'", editable = "ml/image-quality" },
     { name = "tcg-ml-normalization", marker = "extra == 'worker'", editable = "ml/normalization" },

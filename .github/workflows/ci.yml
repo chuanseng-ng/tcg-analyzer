@@ -303,6 +303,35 @@ jobs:
       # only place the upload path can be proved end to end. The JPEG is made
       # inside the API container, which also proves Pillow is in the deployed
       # image rather than only in the developer's virtualenv.
+      # The published grading rules (spec §23), seeded from inside the API image
+      # rather than from a developer's virtualenv. That is the half `uv run` at
+      # home can never prove: `api.Dockerfile` syncs `--package tcg-api`, so
+      # calling the bare console script — the image puts its venv on PATH — is
+      # what shows `tcg-grading-companies` and the entry point actually made it
+      # into the container. Run twice, because the second run is what proves the
+      # write is `ON CONFLICT DO NOTHING` — a `DO UPDATE` would be refused by
+      # trg_grading_rules_immutable and fail here.
+      - name: The published grading rules seed into an immutable table
+        run: |
+          $COMPOSE exec -T api tcg-seed-grading-rules
+          $COMPOSE exec -T api tcg-seed-grading-rules
+          rows=$($COMPOSE exec -T postgres psql -tAqX -U tcg -d tcg \
+            -c "SELECT company || '=' || version FROM grading_rules ORDER BY company")
+          echo "$rows"
+          test "$(echo "$rows" | wc -l | tr -d ' ')" = 3
+          # The refusals, asked of the real database. Alembic compares no
+          # triggers, so nothing else in CI would notice a migration that never
+          # created one.
+          refusal=$($COMPOSE exec -T postgres psql -qX -U tcg -d tcg \
+            -c "UPDATE grading_rules SET source = 'https://elsewhere.test'" 2>&1 || true)
+          echo "$refusal"
+          echo "$refusal" | grep -q "grading_rules is immutable"
+          overlap=$($COMPOSE exec -T postgres psql -qX -U tcg -d tcg \
+            -c "INSERT INTO grading_rules (version, company, source, verified_on)
+                VALUES ('tag-rules-duplicate', 'tag', 'https://example.test', '2026-08-24')" 2>&1 || true)
+          echo "$overlap"
+          echo "$overlap" | grep -q "uq_grading_rules_company_effective_from"
+
       - name: A photograph uploads, validates and reaches uploaded
         run: |
           $COMPOSE exec -T api python -c "

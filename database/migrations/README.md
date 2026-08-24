@@ -135,5 +135,36 @@ are load-bearing:
   Alembic compares no triggers, so `test_analysis_schema.py`'s refusal tests are
   the only guard against this drifting from `tables.py`.
 
+`50c399cb7b9b` adds spec §23's `grading_rules`: one published grading standard,
+of one company, at one version. It is what `analyses.grading_rules_version` has
+been pointing at nothing since the reproducibility record landed. Three things
+about it are load-bearing:
+
+- **`effective_to` is derived rather than stored, and that is the whole design.**
+  §23 names the column; a version is in force from its `effective_from` until the
+  next version of the same company begins, so one company's intervals are
+  `[fᵢ, fᵢ₊₁)` by construction and two of them *cannot* overlap.
+  `tcg_api.grading.rules` computes it with `lead()`, so every record a caller
+  receives still carries one. Storing it instead would mean a superseding version
+  has to `UPDATE` its predecessor — an exception carved into the immutability §23
+  asks for — and without `btree_gist`, which this schema does not install, there
+  would be no `EXCLUDE` constraint to stop two overlapping *closed* ranges.
+- **`uq_grading_rules_company_effective_from` IS the non-overlap constraint**,
+  not a supplement to it, and `NULLS NOT DISTINCT` is its load-bearing half. TAG
+  and BGS publish no effective date at all; without it a company could carry two
+  undated standards and "which was in force" would have no answer.
+- **No CHECK on `company`**, unlike every other vocabulary in this schema.
+  `GradingCompany` is deliberately a vocabulary rather than a closed enum so that
+  §22's "a fourth company costs one new adapter and no caller change" stays true;
+  a CHECK built from it would make a fourth company cost a migration here too.
+  `market_observations.grading_company` takes one for the opposite reason — a
+  price row is data *about* a company V1 ships.
+
+Immutability is the second `BEFORE UPDATE OR DELETE` trigger in this schema, and
+flat: no `WHEN` clause and no `IS DISTINCT FROM` escape, because a
+`grading_rules` row is written complete from a constant rather than filled in by
+later stages the way `analyses` is. Alembic compares no triggers, so
+`services/api/tests/test_grading_schema.py` is the only guard.
+
 The remaining domain table — `market_observations` — arrives in its own
 milestone.
