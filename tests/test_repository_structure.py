@@ -67,6 +67,13 @@ SPEC_DIRECTORIES: tuple[str, ...] = (
     ".github/workflows",
 )
 
+# The filename a directory's own documentation takes, where it is not README.md.
+DIRECTORY_DOC_FILENAME: dict[str, str] = {
+    # GitHub surfaces .github/README.md as the repository's front page, ahead of
+    # the root one. Same document, under a name GitHub does not claim.
+    ".github": "CONTENTS.md",
+}
+
 # --------------------------------------------------------------------------
 # Python workspace members: directory -> (distribution name, import name).
 #
@@ -115,9 +122,10 @@ def test_spec_directory_exists(relative_path: str) -> None:
 
 @pytest.mark.parametrize("relative_path", SPEC_DIRECTORIES)
 def test_spec_directory_documents_its_responsibility(relative_path: str) -> None:
-    readme = REPO_ROOT / relative_path / "README.md"
-    assert readme.is_file(), f"{relative_path}/ must contain a README.md"
-    assert readme.read_text(encoding="utf-8").strip(), f"{relative_path}/README.md is empty"
+    filename = DIRECTORY_DOC_FILENAME.get(relative_path, "README.md")
+    doc = REPO_ROOT / relative_path / filename
+    assert doc.is_file(), f"{relative_path}/ must contain a {filename}"
+    assert doc.read_text(encoding="utf-8").strip(), f"{relative_path}/{filename} is empty"
 
 
 @pytest.mark.parametrize(
