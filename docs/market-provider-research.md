@@ -716,8 +716,9 @@ reports only scores has thrown away most of what it learned.
 
 Per shortlisted candidate: the terms document to read, and what is already open.
 
-**PkmnPrices** — <https://www.pkmnprices.com/terms> (no effective date; eleven
-sections; the full text is short enough to read in one sitting). Open, and in
+**PkmnPrices** — <https://www.pkmnprices.com/terms> (~~no effective date~~ **last
+updated 2026-04-14**, corrected by #44; eleven sections; the full text is short
+enough to read in one sitting). Open, and in
 priority order:
 
 1. **H2 storage and caching** — silent. The §36 snapshot and §37's prohibition on calling a provider during a user request both depend on the answer.
