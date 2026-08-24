@@ -47,6 +47,14 @@ dependencies = [
     # transitive: `tcg-grading-companies` depends only on `tcg-domain`, which is
     # already here, and it reaches no network, database or vendor SDK.
     "tcg-grading-companies",
+    # Spec §33's `MarketDataProvider` port, and `MarketType` — which
+    # `tcg_api.market.tables` builds §35's generated `market_type` column from
+    # rather than retyping the two strings. Declared for the reason
+    # `tcg-shared`'s entry gives below. It brings nothing transitive:
+    # `tcg-market-data` depends only on `tcg-domain` and
+    # `tcg-grading-companies`, both already here, and it reaches no network,
+    # database or vendor SDK.
+    "tcg-market-data",
     # The object-storage port and its S3 adapter. Declared rather than left to
     # `uv sync --all-packages`, which installs every member editable and would
     # hide the omission locally: `infrastructure/docker/api.Dockerfile` runs
@@ -77,6 +85,7 @@ worker = ["tcg-ml-card-detection", "tcg-ml-image-quality", "tcg-ml-normalization
 [tool.uv.sources]
 tcg-domain = { workspace = true }
 tcg-grading-companies = { workspace = true }
+tcg-market-data = { workspace = true }
 tcg-ml-card-detection = { workspace = true }
 tcg-ml-image-quality = { workspace = true }
 tcg-ml-normalization = { workspace = true }

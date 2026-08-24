@@ -23,11 +23,18 @@ from typing import Final
 from tcg_api.analysis.tables import TABLES as ANALYSIS_TABLES
 from tcg_api.catalog.tables import TABLES as CATALOG_TABLES
 from tcg_api.grading.tables import TABLES as GRADING_TABLES
+from tcg_api.market.tables import TABLES as MARKET_TABLES
 from tcg_api.tables import metadata
 
 __all__ = ["DECLARED_TABLES", "metadata"]
 
 #: Every declared table, catalog first — which is also a workable creation
-#: order, since `analyses.card_id` references `cards`. `grading_rules` references
-#: nothing and nothing references it, so it goes last.
-DECLARED_TABLES: Final = (*CATALOG_TABLES, *ANALYSIS_TABLES, *GRADING_TABLES)
+#: order, since both `analyses.card_id` and `market_observations.card_id`
+#: reference `cards`. `grading_rules` references nothing and nothing references
+#: it; the market tables reference the catalog and each other, so they go last.
+DECLARED_TABLES: Final = (
+    *CATALOG_TABLES,
+    *ANALYSIS_TABLES,
+    *GRADING_TABLES,
+    *MARKET_TABLES,
+)

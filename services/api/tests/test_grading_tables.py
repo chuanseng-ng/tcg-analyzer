@@ -89,7 +89,7 @@ def test_one_company_cannot_have_two_standards_starting_on_one_day() -> None:
 
 
 def test_the_company_is_not_constrained_to_a_closed_vocabulary() -> None:
-    """The one place `_one_of` looks applicable and is not — spec §22.
+    """The one place `one_of` looks applicable and is not — spec §22.
 
     `GradingCompany` is a vocabulary rather than a closed enum precisely so that
     "a fourth company costs one new adapter and no caller change" stays true. A

@@ -213,6 +213,17 @@ The market-price provider was a separate open decision and is now settled:
 for V1, behind `MarketDataProvider` and nothing more, with manual curation
 retained as the fallback.
 
+What that decision costs is recorded in the database rather than in an ADR alone.
+`market_providers` holds one row per provider carrying `license`,
+`commercial_use` and `terms_reference` — enforcement fields, not documentation.
+ADR 0006 relies on one right no shortlisted candidate grants expressly, and gates
+commercial use on a subscription tier, so "what were we allowed to do with this
+price" has to have an answer years from now without anyone remembering. The row
+carries the provider's name as its own terms spell it, alongside the lowercase
+slug every observation is stamped with; and it is append-only, because an
+`UPDATE` to `commercial_use` would retroactively relicense every price already
+gathered under the old terms.
+
 ### Everything is versioned and immutable
 
 Grading rules, model bundles, dataset versions and market snapshots are
@@ -231,6 +242,18 @@ licence, upstream revision, when the data was made, and how much of it there was
 database guarantee rather than a convention: a trigger refuses `UPDATE` and
 `DELETE`, so a re-import publishes a new version instead of editing an old one,
 and the identifier an analysis recorded still finds what it recorded.
+
+`market_observations` is where prices land, one row per price a provider
+reported for a card at a moment, and it is append-only for the same reason: a
+corrected price is a new observation rather than an edit, which is what makes
+price history and §36's snapshots honest. Two of its columns are worth knowing
+about. The grade is a **text key** — BGS issues a 9.5 where PSA and TAG do not,
+all three issue half grades elsewhere, and §24's collapsed tails (`7_or_lower`)
+are legal keys — so a numeric column could not hold what the domain produces.
+And `market_type` is **generated from the grading company rather than written**,
+so a row claiming to be a raw price while carrying a grading company is not
+representable at all; the rule is stated once, in `PriceObservation`, and this is
+that same statement in SQL.
 
 The grading rules version is the second. `grading_rules` holds one row per
 published standard per company — identifier, when it took effect, where it was
