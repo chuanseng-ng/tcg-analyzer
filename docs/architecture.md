@@ -195,7 +195,10 @@ it produces, and `services/api/tests/test_import_purity.py` asserts that
 importing the FastAPI app pulls in neither. Dropping the source costs a `DELETE`
 from `card_external_ids` and the deletion of one module.
 
-The market-price provider is a separate, still-open decision.
+The market-price provider was a separate open decision and is now settled:
+[ADR 0006](adr/0006-the-v1-market-data-provider.md) selects PokePriceTracker
+for V1, behind `MarketDataProvider` and nothing more, with manual curation
+retained as the fallback.
 
 ### Everything is versioned and immutable
 
