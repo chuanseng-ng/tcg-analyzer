@@ -12,10 +12,14 @@ The identity is deliberately the printed one — game, language, set, number,
 variant — rather than any provider's identifier, so no card database can become
 a hard dependency of the core domain.
 
-The three validators below are shared with :mod:`tcg_domain.catalog` and
-:mod:`tcg_domain.repository`, so a set code means the same thing wherever it
-appears. Each takes the exception it should raise, because "this is not a card
-number" is a different report depending on what was being built.
+The three validators below are shared with :mod:`tcg_domain.catalog`,
+:mod:`tcg_domain.repository` and :mod:`tcg_market_data.port`, so a set code — or
+a provider key — means the same thing wherever it appears. Each takes the
+exception it should raise, because "this is not a card number" is a different
+report depending on what was being built. That parameter is typed
+`type[Exception]` rather than `type[DomainError]`: the grammar is the domain's,
+but a package outside it that reuses the grammar reports through its own error
+hierarchy, exactly as `tcg_market_data` does.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
-from tcg_domain.errors import DomainError, InvalidCardReference
+from tcg_domain.errors import InvalidCardReference
 
 __all__ = ["ENGLISH", "JAPANESE", "POKEMON", "CardReference", "Game", "Language"]
 
@@ -65,7 +69,7 @@ _SLUG_PATTERN: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _ISO_639_1_PATTERN: Final = re.compile(r"^[a-z]{2}$")
 
 
-def validated_slug(field: str, value: object, *, error: type[DomainError]) -> str:
+def validated_slug(field: str, value: object, *, error: type[Exception]) -> str:
     """Accept a lowercase slug — a game key, a provider key.
 
     The result is coerced to a plain `str`, so a :class:`Game` member does not
@@ -78,14 +82,14 @@ def validated_slug(field: str, value: object, *, error: type[DomainError]) -> st
     return str(value)
 
 
-def validated_language(value: object, *, error: type[DomainError]) -> str:
+def validated_language(value: object, *, error: type[Exception]) -> str:
     """Accept an ISO 639-1 code — ``en``, ``ja``, and whatever V2 adds."""
     if not isinstance(value, str) or not _ISO_639_1_PATTERN.match(value):
         raise error(f"language must be a lowercase ISO 639-1 code such as 'en', got {value!r}")
     return str(value)
 
 
-def validated_identifier(field: str, value: object, *, error: type[DomainError]) -> str:
+def validated_identifier(field: str, value: object, *, error: type[Exception]) -> str:
     """Accept printed text verbatim, rejecting only empty or padded values.
 
     Set codes, card numbers and names are printed on the card in whatever form

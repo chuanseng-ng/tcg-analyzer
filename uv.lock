@@ -1434,6 +1434,16 @@ source = { editable = "services/ingestion" }
 name = "tcg-market-data"
 version = "0.0.0"
 source = { editable = "packages/market-data" }
+dependencies = [
+    { name = "tcg-domain" },
+    { name = "tcg-grading-companies" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "tcg-domain", editable = "packages/domain" },
+    { name = "tcg-grading-companies", editable = "packages/grading-companies" },
+]
 
 [[package]]
 name = "tcg-market-data-service"
