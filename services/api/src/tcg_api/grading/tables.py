@@ -162,8 +162,8 @@ grading_rules = sa.Table(
         name="uq_grading_rules_company_effective_from",
         postgresql_nulls_not_distinct=True,
     ),
-    # No CHECK on `company`, and this is the one place `analysis/tables.py`'s
-    # `_one_of` looks applicable and is not. `GradingCompany` is a vocabulary
+    # No CHECK on `company`, and this is the one place `tcg_api.tables`'s
+    # `one_of` looks applicable and is not. `GradingCompany` is a vocabulary
     # rather than a closed set precisely so that §22's "a fourth company costs
     # one new adapter and no caller change" stays true; a CHECK built from it
     # would make a fourth company cost a migration of this table as well.

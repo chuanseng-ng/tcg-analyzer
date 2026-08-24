@@ -55,7 +55,6 @@ has been written; see the DDL at the foot of this module.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Final
 
 import sqlalchemy as sa
@@ -75,7 +74,7 @@ from tcg_domain.analysis import (
 # referenced directly rather than by the string "cards.id" so that the dependency
 # is visible to a reader and to a type checker, and cannot be a silent typo.
 from tcg_api.catalog.tables import cards
-from tcg_api.tables import PRINTED, metadata
+from tcg_api.tables import PRINTED, metadata, one_of
 
 __all__ = [
     "REPRODUCIBILITY_COLUMNS",
@@ -84,19 +83,6 @@ __all__ = [
     "analysis_sessions",
     "images",
 ]
-
-
-def _one_of(column: str, values: Iterable[str]) -> str:
-    """Render ``column IN ('a', 'b')`` from a domain vocabulary.
-
-    Built from the enum rather than written out, so a member added to
-    `tcg_domain.analysis` cannot be one the database silently refuses. The
-    migration writes the same list as a literal — a migration is a snapshot of
-    what was applied and must not change when this module does — and
-    `test_analysis_tables.py` checks that the two still agree.
-    """
-    rendered = ", ".join(f"'{value}'" for value in values)
-    return f"{column} IN ({rendered})"
 
 
 #: Spec §65's terminal states, in the enum's own order so the rendered DDL is
@@ -170,7 +156,7 @@ analysis_sessions = sa.Table(
     # Short names: the naming convention supplies the `ck_analysis_sessions_`
     # prefix, in this file and in the migration alike.
     sa.CheckConstraint(
-        _one_of("status", SessionStatus),
+        one_of("status", SessionStatus),
         name="status_is_a_known_session_state",
     ),
     # A session that expired before it existed is a clock or a caller bug, and the
@@ -308,13 +294,13 @@ analyses = sa.Table(
         ),
     ),
     sa.CheckConstraint(
-        _one_of("status", AnalysisStatus),
+        one_of("status", AnalysisStatus),
         name="status_is_a_known_analysis_state",
     ),
     # A completion time on an analysis that has not finished is not a smaller
     # version of the truth; it is a different claim.
     sa.CheckConstraint(
-        f"completed_at IS NULL OR {_one_of('status', _TERMINAL)}",
+        f"completed_at IS NULL OR {one_of('status', _TERMINAL)}",
         name="completed_at_accompanies_a_terminal_status",
     ),
     sa.Index("ix_analyses_session_id", "session_id"),
@@ -475,9 +461,9 @@ images = sa.Table(
     # replacement, so nothing downstream has to choose between two fronts, and the
     # retention job has no rejected upload it never knew about.
     sa.UniqueConstraint("analysis_id", "side", name="uq_images_analysis_id_side"),
-    sa.CheckConstraint(_one_of("side", ImageSide), name="side_is_a_known_side"),
+    sa.CheckConstraint(one_of("side", ImageSide), name="side_is_a_known_side"),
     sa.CheckConstraint(
-        f"quality_status IS NULL OR {_one_of('quality_status', QualityStatus)}",
+        f"quality_status IS NULL OR {one_of('quality_status', QualityStatus)}",
         name="quality_status_is_a_known_status",
     ),
     # Zero is not a smaller image, it is a division by zero waiting for the

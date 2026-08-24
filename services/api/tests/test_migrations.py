@@ -54,6 +54,9 @@ ANALYSIS_REVISION = "29d14fe0fcee"
 # Spec §23's grading rules, the second table in this schema to carry an
 # immutability trigger. Pinned for the same reason as the two above.
 GRADING_RULES_REVISION = "50c399cb7b9b"
+# Spec §35's market schema, the third to carry an immutability trigger — and the
+# first where one trigger function serves two tables. Pinned for the same reason.
+MARKET_DATA_REVISION = "b5bca50f46c0"
 
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
@@ -224,6 +227,39 @@ def test_downgrading_the_grading_rules_revision_leaves_no_orphaned_trigger_funct
     alembic("downgrade", "-1")
 
     assert not function_exists("grading_rules_are_immutable()")
+
+
+def test_downgrading_the_market_data_revision_leaves_the_rest_standing() -> None:
+    """The market tables landed on top of everything and only reference `cards`.
+
+    `market_observations.card_id` points into the catalog, so reversing this must
+    leave the catalog untouched rather than cascading into it.
+    """
+    alembic("upgrade", MARKET_DATA_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("market_observations")
+    assert not table_exists("market_providers")
+    assert table_exists("grading_rules")
+    for table in ANALYSIS_TABLES:
+        assert table_exists(table), table
+    assert table_exists("cards")
+    assert table_exists("card_database_versions")
+
+
+def test_downgrading_the_market_data_revision_leaves_no_orphaned_trigger_function() -> None:
+    """A dropped table takes its trigger; the function it called survives.
+
+    One function serves both market tables here, so the reversal has to drop it
+    after the second table rather than alongside either one.
+    """
+    alembic("upgrade", MARKET_DATA_REVISION)
+    assert function_exists("market_rows_are_immutable()")
+
+    alembic("downgrade", "-1")
+
+    assert not function_exists("market_rows_are_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:
