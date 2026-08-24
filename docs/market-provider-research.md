@@ -223,11 +223,21 @@ citation supporting an offer, not terms text granting a right. It is recorded as
 `pass\*` and is the first question [#44](https://github.com/chuanseng-ng/tcg-analyzer/issues/44)
 must settle.
 
+**This scoreboard is the survey's record and is left as #43 wrote it.** #44 read
+all three shortlisted candidates' terms end to end and superseded four of its
+verdicts — PkmnPrices' H1 `pass\*` reads **unclear** once the pricing page is shown
+not to be incorporated by the terms, and Scrydex's H2, H3 and the display position
+read **not granted** rather than `unclear`, because §9 of its terms grants no
+rights by implication. The determinations under
+[Licensing determinations](#licensing-determinations) govern; nothing here was
+rewritten to match them, because a survey that quietly agrees with its own
+follow-up has destroyed the evidence that the follow-up found something.
+
 ### PkmnPrices
 
 - **What it is:** a Pokémon card data and price API over TCGplayer, Cardmarket and eBay, covering English, Japanese and German cards, sealed products and graded slabs
 - **Status:** shortlisted
-- **Terms URL / version / date read:** <https://www.pkmnprices.com/terms> · no version or effective date stated · 2026-08-24
+- **Terms URL / version / date read:** <https://www.pkmnprices.com/terms> · **last updated 2026-04-14** · 2026-08-24 (the survey recorded no date here; #44 found one — see [Licensing determinations](#licensing-determinations))
 - **Docs URL / date read:** <https://www.pkmnprices.com/developers> · 2026-08-24
 - **Currency of quoted prices:** USD (TCGplayer) and EUR (Cardmarket) (V1 economics are SGD; recorded, not scored)
 
@@ -258,7 +268,7 @@ must settle.
 - **Risks and ambiguities:**
   - **The terms are thin, and that is the finding.** Eleven short sections that address accounts, payment, liability and termination, and grant nothing about the data. The commercial-use permission lives on a pricing page. H2 and H3 — both hard requirements, both architectural — rest on silence.
   - Graded prices derive from eBay sold listings. Whatever rights eBay's own terms impose on that derivation are not addressed here and are not visible from outside.
-  - No published effective date on the terms, so the ninety-day re-verification rule has no anchor other than the date read.
+  - ~~No published effective date on the terms~~ — **superseded by #44**, which found *Last updated: April 14, 2026* on the same document. The terms had stood unchanged for four months when read.
   - TAG per-card depth unverified.
 
 ### PokemonPriceTracker
@@ -753,22 +763,408 @@ language of that shape rather than composing a question from scratch.
 
 ## Licensing determinations
 
-Filled in by #44, for shortlisted candidates only. Each records all eight §78
-points — commercial use, derived data, storage, caching, display,
-redistribution, attribution, and any competing-product restriction — with the
-terms version and the date assessed, plus a plain-language summary of what the
-project may and may not do.
+Assessed 2026-08-24 by [#44](https://github.com/chuanseng-ng/tcg-analyzer/issues/44),
+for shortlisted candidates only. Each records the eight points the spec and the
+rubric together require — **commercial use, derived data, storage, caching,
+display, redistribution** from §78, plus **attribution** and **any
+competing-product restriction** from §34's evaluation list and the rubric's H4.
+(The stub this replaces attributed all eight to §78; §78 lists six. Corrected
+here rather than left to mislead.)
 
-These map onto the `market_providers` columns spec §35 defines, so that what the
-database stores is traceable to a reading recorded here:
+Every one of the three terms documents was **read end to end** for this pass.
+That matters: #43 read them for the six hard requirements, and three of the eight
+points — display, redistribution and attribution — had only been *scored* under
+W7 and W8 against summarised readings, never determined against quoted text.
+Reading in full changed findings on all three candidates, and the changes are
+recorded below rather than folded silently into the survey's scoreboard.
 
-| §35 column | Comes from |
-| --- | --- |
-| `name` | the candidate's name |
-| `version` | the provider's API or data version |
-| `license` | the licence or terms name |
-| `commercial_use` | the H1 determination |
-| `terms_reference` | the terms URL and version recorded above |
+### Two interpretive rules, stated before the determinations
+
+Both follow from the evidence standard at the top of this document, and both are
+fixed here so that no determination below turns on a reading chosen to suit it.
+
+1. **For a permission, silence is not a grant.** Where terms do not address
+   caching, storage, derived data or display, the determination is *not granted*
+   — not "probably fine". This is the rubric's own instruction that ambiguity is
+   never resolved in the project's favour.
+2. **For an obligation, silence *is* the answer.** Attribution is an obligation
+   the licensor imposes. A document read end to end that imposes none has
+   answered the question: none is owed. It would be incoherent to record "unclear
+   whether attribution is required" against a complete document containing no
+   attribution clause.
+
+The asymmetry matters because it is what separates a real finding from a
+uniformly cautious one. Attribution comes out clean on all three candidates. The
+architectural points do not.
+
+**One further distinction, and it is the most useful thing in this pass.**
+Silence is not one thing. PkmnPrices is silent and asserts no ownership of the
+data and contains **no no-implied-grant clause**; its silence is a gap. Scrydex
+is silent and says, in §9, *"Except as expressly permitted under these Terms, no
+rights are granted to you by implication or otherwise."* Its silence is a
+refusal. Two documents that both say nothing about caching therefore mean
+opposite things, and #43 — which had not read §9 — recorded both as `unclear`.
+
+### PkmnPrices
+
+- **Legal entity named in the document:** `pkmnprices` (lower case throughout; no company form, registration or jurisdiction stated)
+- **Terms URL / version / date assessed:** <https://www.pkmnprices.com/terms> · **"Last updated: April 14, 2026"** · read 2026-08-24
+- **Document shape:** eleven sections, roughly 600 words
+- **Governing law:** not stated
+- **Change notice:** none — §10, "We may update these Terms from time to time. Continued use of the Service after changes constitutes acceptance of the revised Terms."
+
+> **Correction to #43.** The survey recorded "no version or effective date
+> stated". The terms do carry one — *Last updated: April 14, 2026* — which was
+> missed. It matters for the ninety-day re-verification rule, and it means the
+> document had stood unchanged for four months when it was read, which is mild
+> evidence of stability.
+
+| Point | Determination | Evidence |
+| --- | --- | --- |
+| Commercial use | **unclear** | The terms do not mention commercial use anywhere. "Commercial use" appears as a feature bullet on every tier of the pricing table at <https://www.pkmnprices.com/developers> (read 2026-08-24) — **context, not terms text**, and not acceptable evidence for a licensing claim under this document's standard. See the incorporation question below. |
+| Derived data | **not granted** | Not addressed. §7 asserts ownership of "the Service, its design, code, and documentation" — conspicuously **not** the pricing data — and imposes no restriction on derivative works or analyses. |
+| Storage | **not granted** | Not addressed anywhere in the document. |
+| Caching | **not granted** | Not addressed anywhere in the document. |
+| Display | **not granted** | Not addressed anywhere in the document. |
+| Redistribution | **not restricted as to data; restricted as to credentials** | §4's only redistribution prohibition is "Share, redistribute, or resell API keys". Redistribution of the *data* is neither permitted nor forbidden. |
+| Attribution | **none owed** | No attribution clause exists. §7's trademark statement — "Pokémon and all related trademarks are the property of Nintendo, The Pokémon Company… pkmnprices is not affiliated with or endorsed by these entities" — is a disclaimer about the licensor, not an obligation on the licensee. |
+| Competing / comparable product | **no such clause** | §4 enumerates five prohibitions — exceeding rate limits, sharing keys, unlawful use, reverse-engineering, and "Scrape, crawl, or collect data from the Service outside of the provided API". None restricts competing or comparable products. |
+
+**Is the pricing page incorporated by reference?** Partly, and not in the way
+that would help. §4 makes API use "subject to the rate limits and credit
+allowances of your subscription tier" — which incorporates the pricing page's
+*rate limits and credits* and nothing else. No clause incorporates the tier
+feature list generally, and no clause of the terms mentions commercial use for
+the feature bullet to attach to. The determination is therefore that **the
+commercial-use permission sits outside the agreement**, on a page the vendor can
+change without changing its terms. The FAQ on the same page carries a "Can I use
+this for commercial projects?" entry; an FAQ is expressly not evidence for a
+licensing claim here, and it was not relied on.
+
+**In plain language.** *May:* call the API within tier limits, and — on the
+pricing page's offer rather than on the terms — use it commercially. *May not:*
+share or resell keys, scrape outside the API, reverse-engineer. *Not known:*
+whether the project may cache a response, store a market snapshot, compute
+`EV = Σ P(g)·V(g)` from the figures, or show a price to a user. That is four of
+the eight points, including both architectural ones.
+
+**Risks:** [R1](#risk-register), [R2](#risk-register), [R3](#risk-register),
+[R4](#risk-register).
+
+### PokemonPriceTracker
+
+- **Legal entity named in the document:** **PokePriceTracker** — the site trades as PokemonPriceTracker and the terms name PokePriceTracker throughout, including in the trademark clause (§9) and the notice address (`pokepricetracker@proton.me`). No company form, registration or jurisdiction stated. **A licensing determination and any `market_providers` row must name PokePriceTracker**, which is the party the terms bind.
+- **Terms URL / version / date assessed:** <https://www.pokemonpricetracker.com/terms> · **"Last updated: August 19, 2026"** · read 2026-08-24 (five days old at reading)
+- **Document shape:** sixteen sections; §6 "Data Usage & Commercial Restrictions" carries seven sub-headings and is the operative clause throughout
+- **Governing law:** §15, "the laws of the United States" — **no state named**, which is unusual, since general contract law in the United States is state law. Recorded as an observation, not a determination.
+- **Change notice:** §14 — "If a revision is material, we will try to provide at least 30 days' notice". Qualified by "try", and materiality is "determined at our sole discretion". The best change-notice provision of the three, which is a low bar.
+
+| Point | Determination | Evidence |
+| --- | --- | --- |
+| Commercial use | **permitted, on Business or Enterprise** | §6: "Using PokePriceTracker Data for any commercial purpose requires an active Business or Enterprise subscription." The enumeration that follows names this product's activities directly — "Building applications, websites, bots, tools, or services that generate revenue", "Internal business analytics, reporting, and decision-making", and "Displaying card prices, trends, or market data within a commercial product or service". |
+| Derived data | **unclear — narrowed, not resolved** | Derivative works are never named. But §6's commercial-use enumeration expressly includes "Internal business analytics, reporting, and decision-making" and "Training artificial intelligence or machine learning models for commercial products". Both are transformations of the data into something new, and `EV = Σ P(g)·V(g)` is of that family. **This narrows the ambiguity substantially without closing it**: the list defines what *requires a Business plan*, not what is *licensed*, and §6 opens by reserving all the data as "the property of PokePriceTracker". |
+| Storage | **permitted, and it survives cancellation** | §6: "You may store and cache PokePriceTracker Data in your own systems". And, separately: "PokePriceTracker Data that you retrieved while holding an active subscription may be retained and used within your own application indefinitely, including after your subscription ends. You are under no obligation to delete it." |
+| Caching | **permitted, with a condition** | Same clause as storage, plus: "Cached data should be refreshed on a reasonable schedule so that end users are not shown materially stale pricing." |
+| Display | **permitted, to this application's own end users** | §6: "serve it to the end users of your own application… Serving your own first-party clients — for example a mobile app, front end, or internal tool that consumes your own backend — is not considered operating a competing API". Reinforced by the commercial-use enumeration's "Displaying card prices, trends, or market data within a commercial product or service". |
+| Redistribution | **prohibited, on every tier** | §6: "Regardless of your subscription plan — including Business and Enterprise — you may not resell, sublicense, syndicate, or redistribute the raw data itself as a standalone product or data service." Scope test: "If another party could use your product in place of a PokePriceTracker subscription to obtain the data itself, that is redistribution and is prohibited under this Section." Survives termination "permanently". |
+| Attribution | **none owed** | No attribution clause. §6 does impose a related negative obligation: PokePriceTracker "is not affiliated with, endorsed by, or sponsored by Nintendo, The Pokémon Company, TCGplayer, eBay, Professional Sports Authenticator (PSA), or any other third party, and claims no partnership with or authorization from any such party." |
+| Competing / comparable product | **prohibited, and narrow enough not to reach this product** | §6: "Use our API to power your own competing API that sells or provides the same pricing data to third parties"; "Offer PokePriceTracker Data as a service… in a manner that substitutes for or competes with the PokePriceTracker API". A grading advisor is neither a pricing API nor a substitute for one. |
+
+**Three findings the survey did not have, all from §6 read in full.**
+
+1. **The retention clause is stronger than the reference text's, and it is the
+   one §36 actually needs.** JustTCG permits storage "for as long as your
+   subscription remains active"; PokePriceTracker permits retention
+   "indefinitely, including after your subscription ends". §36 requires a market
+   snapshot per analysis and the invariant that *a historical analysis retains
+   the exact versions it used* — a snapshot that must be deleted when a
+   subscription lapses would make every past analysis unreproducible. **On this
+   single point PokePriceTracker's terms are better than the survey's reference
+   text.** The clause carries one caveat — it "does not authorize a bulk
+   retrieval of the catalogue undertaken in anticipation of cancellation" —
+   which is about intent, not volume, and a §37 daily refresh running for as
+   long as the subscription runs is squarely the "ordinary course of operating
+   your product" the clause describes.
+2. **The refresh condition and §36's immutability point in opposite directions,
+   and both can be satisfied.** "Cached data should be refreshed on a reasonable
+   schedule so that end users are not shown materially stale pricing" is a
+   condition attached to the caching grant. §37's once-per-day ingestion meets it
+   for the live path. A *historical* analysis, by design, shows the snapshot it
+   used, which will eventually be old — so the results UI must **date-stamp the
+   snapshot it is reporting**. That is a design constraint for M4/M5, not a risk:
+   an analysis presented as a record of a past date is not a stale price
+   presented as a current one.
+3. **The terms decline to state provenance, which contradicts how the survey
+   scored it.** §6: "PokePriceTracker publishes what its data covers but does not
+   disclose its collection methods, sourcing arrangements, or infrastructure",
+   and "Nothing in these Terms constitutes a grant of rights in any third-party
+   content, trademark, or database, and PokePriceTracker provides no
+   indemnification against third-party claims". #43 scored W10 a 3 partly for
+   "provenance stated — TCGplayer, Cardmarket, and eBay completed listings named
+   as the sources". Both readings are true of different documents: the sources
+   are named in the *documentation*, and the *terms* expressly decline to
+   disclose the arrangements behind them and disclaim any onward grant. The score
+   is left as #43 set it and the contradiction is recorded here, per this
+   document's rule that a conflict is a finding rather than a number to adjust.
+   [R12](#risk-register) is where it lands.
+
+**A product constraint that falls out of the redistribution test.** "If another
+party could use your product in place of a PokePriceTracker subscription to
+obtain the data itself" is a functional test, not a formal one. A per-card
+grading recommendation passes it comfortably. **A bulk price browser, a
+downloadable table, a public price-history endpoint or a data export would
+not** — and none of those is in V1 scope, which is fortunate rather than
+planned. Worth carrying into M4 and M7 so it stays that way.
+
+**In plain language.** *May:* use the data commercially on a Business or
+Enterprise plan; store it; cache it; keep it indefinitely, including after
+cancelling; and display prices and trends to this application's users. *May not:*
+resell, syndicate or redistribute the raw data, expose the stored copy to third
+parties, publish it as a feed, or operate anything that substitutes for a
+subscription. *Not known:* whether computing and displaying `EV = Σ P(g)·V(g)`
+is licensed, as opposed to merely being a commercial use that requires the right
+plan.
+
+**Risks:** [R5](#risk-register), [R12](#risk-register).
+
+### Scrydex
+
+- **Legal entity named in the document:** `Scrydex`. No company form or registration stated, but §17 fixes jurisdiction — the State of Wisconsin, with exclusive jurisdiction in Wisconsin state and federal courts. The most identifiable of the three.
+- **Terms URL / version / date assessed:** <https://scrydex.com/terms> · **no version or effective date stated** · read 2026-08-24
+- **Document shape:** eighteen sections
+- **Governing law:** §17, State of Wisconsin
+- **Change notice:** §2 — "Changes become effective **immediately upon posting** to this page unless otherwise stated. We may, but are not obligated to, provide notice of material changes." No notice obligation at all, and no effective date to detect a change against.
+
+**§9 governs every determination below**, and it is the clause #43 did not have:
+
+> "Except as expressly permitted under these Terms, no rights are granted to you
+> by implication or otherwise."
+
+With that clause in the document, Scrydex's silences are not gaps to be
+clarified. They are the operation of an express term.
+
+| Point | Determination | Evidence |
+| --- | --- | --- |
+| Commercial use | **unclear, and internally contradictory** | §3 contemplates it — "You must be at least 18 years old… to use the Services for commercial purposes" — and §6 sells paid subscriptions. §4 prohibits: "Resell, sublicense, redistribute, mirror, or **commercially exploit the Services** without prior written authorization from Scrydex." The document does not reconcile the two, and §9 grants nothing by implication. |
+| Derived data | **not granted** | Not addressed anywhere; §9 applies. |
+| Storage | **not granted** | Not addressed anywhere; §9 applies. §11 further provides that on termination "Scrydex may delete or render inaccessible account data… and has no obligation to retain or provide such data." |
+| Caching | **not granted** | Not addressed anywhere; §9 applies. The **documentation** actively recommends caching — "Caching API responses locally allows you to reuse data without making repeated API calls" (<https://scrydex.com/docs/getting-started/best-practices>, read 2026-08-24) — which is context, not a grant, and now stands in direct tension with §9. |
+| Display | **not granted** | Not addressed anywhere; §9 applies. |
+| Redistribution | **prohibited without written authorisation** | §4, quoted above. |
+| Attribution | **none owed** | No attribution clause in the terms. The image acknowledgement — "Scrydex does not claim ownership of the images provided by the API" — is documentation, and this project displays no catalog images at all (ADR 0004). §9's "Any third-party card data, metadata, trademarks, or related content accessible through the Services remains the property of its respective owners" is a reservation, not an obligation. |
+| Competing / comparable product | **prohibited; unclear whether it reaches this product** | §4: "Use the Services **primarily** as a substitute backend, proxy, or **wholesale data source** for a competing commercial product or service without written authorization from Scrydex." The qualifiers point at resale rather than consumption, and a grading advisor does not compete with a TCG data API — but this is the family of clause that excludes TCGplayer, and §9 means it cannot be read down by implication. |
+
+**The route through Scrydex is a negotiation, not a clarification, and the terms
+say so.** §4 conditions three separate prohibitions on "prior written
+authorization from Scrydex", and §9 forecloses reading a permission into
+silence. So there is no question to ask that the text could answer: obtaining
+caching, storage, derived-data and display rights from Scrydex means obtaining a
+written grant. That is a materially different undertaking from asking
+PkmnPrices to confirm what its silence means, and it is the single most
+important thing this pass learned about Scrydex.
+
+**A second, non-licensing finding worth carrying to #45.** §4 prohibits use of
+"automated systems or excessive request patterns inconsistent with normal
+commercial usage", and §7 reserves the right to respond to "excessive, abusive,
+economically unreasonable, or materially atypical usage patterns" with "required
+plan upgrades, custom pricing requirements, or restricted access". #43 already
+scored W5 zero because a daily refresh of 49,399 cards needs roughly six times
+Professional's monthly credits. These clauses mean the shortfall is not only a
+budget problem: a refresh at that volume is the pattern the terms reserve the
+right to restrict.
+
+**In plain language.** *May:* call the API within the plan purchased. *May not:*
+resell, sublicense, redistribute, mirror or commercially exploit the Services
+without written authorisation; use the Services primarily as a substitute backend
+or wholesale data source for a competing product. *Not known:* whether an
+ordinary paid commercial integration is "commercial exploitation" at all. *Not
+granted:* caching, storage, derived data, display — each by the operation of §9
+rather than by oversight.
+
+**Risks:** [R6](#risk-register), [R7](#risk-register), [R8](#risk-register),
+[R9](#risk-register), [R10](#risk-register), [R11](#risk-register).
+
+### The composition, and the fallback
+
+**PkmnPrices + PokemonPriceTracker** takes no separate determination. The
+rubric's rule that H1–H4 hold per member makes a composition the *conjunction* of
+its members' rights, not a new assessment: it carries PokePriceTracker's grants,
+PkmnPrices' four silences, and every risk of both. #43's observation stands and
+is now evidenced — a composition cannot launder rights, and pairing the two buys
+nothing at the licensing layer that R1–R4 do not already cost.
+
+**Manual curation** takes no determination here either. Its entry in the
+candidate register above records the whole of it: the project records the figures
+itself, so no third party grants or withholds any of the eight points. It is
+retained as the §69/M3 fallback and it is the only candidate immune to every risk
+below.
+
+### Risk register
+
+Every ambiguity from the determinations above, numbered so the ADR can cite it
+rather than restate it. **"Blocks §36/§37"** means the risk reaches an
+architectural requirement — a market snapshot per analysis, and no provider call
+during a user request — rather than a preference.
+
+| # | Candidate | Unresolved | Blocks §36/§37 | What would resolve it |
+| --- | --- | --- | --- | --- |
+| R1 | PkmnPrices | Commercial use is offered on a pricing page and absent from the terms; the terms incorporate only the page's rate limits and credits | no | Written confirmation that commercial use is permitted, or terms amended to say so |
+| R2 | PkmnPrices | Derived data not addressed; `EV = Σ P(g)·V(g)` is the product's central output | no — but it puts the economic engine's output in question | Written confirmation that derived metrics and aggregate valuations may be computed and displayed |
+| R3 | PkmnPrices | Storage and caching not addressed | **yes** | Written confirmation that responses may be cached and market snapshots stored |
+| R4 | PkmnPrices | Display to end users not addressed | no | Written confirmation that prices may be shown to this application's users |
+| R5 | PokePriceTracker | Derived data not addressed; narrowed by §6 naming analytics and ML training as permitted commercial uses, but not closed | no — but it is the last open point on the strongest candidate | One sentence confirming derived metrics are within the Business grant |
+| R6 | Scrydex | Whether "commercially exploit the Services" (§4) reaches an ordinary paid integration, given §3 and §6 contemplate commercial use | no | Written authorisation under §4 |
+| R7 | Scrydex | Derived data not granted; §9 forecloses implication | no | Written authorisation under §4 |
+| R8 | Scrydex | Storage and caching not granted; §9 forecloses implication, and the documentation recommends what the terms omit | **yes** | Written authorisation under §4 |
+| R9 | Scrydex | Display to end users not granted; §9 forecloses implication | no | Written authorisation under §4 |
+| R10 | Scrydex | Whether the "substitute backend, proxy, or wholesale data source for a competing commercial product" clause reaches a grading advisor | no | Written authorisation under §4 |
+| R11 | Scrydex | A daily refresh of 49,399 cards is both ~6× the Professional credit budget and plausibly the "materially atypical usage" §7 reserves the right to restrict | no — it is a capacity risk, recorded here because §4 and §7 make it contractual as well as arithmetic | A quoted Enterprise tier sized for the catalog, in writing |
+| R12 | PokePriceTracker | §6 expressly declines to disclose collection methods or sourcing arrangements and disclaims any grant of third-party rights, while the documentation names TCGplayer, Cardmarket and eBay as sources | no | Nothing available. **This is a standing risk, not an open question** — see below |
+| R13 | All three | Every shortlisted candidate's graded prices derive from eBay sold listings, and eBay's own API is closed | no | Nothing available. Standing risk |
+
+**R12 and R13 are standing risks and are not to be chased.** What a provider's
+own arrangement with eBay, TCGplayer or Cardmarket permits is *the provider's*
+obligation to hold, not this project's to license — which is exactly why the
+rubric assesses H1–H4 against the provider's terms and records whose data is
+being resold under W10. Both are recorded so #45 states them; neither is
+actionable by this project, and PokePriceTracker's disclaimer of indemnity means
+the exposure cannot be contracted away either.
+
+**R3 and R8 are the only two that block the architecture.** Both are storage and
+caching. Everything else on this register is a rights question that a
+determination can carry as an open risk; those two are the ones §36 and §37
+cannot be built without.
+
+### What #45 can rely on today
+
+Stated as a determination, not as a selection — #45 owns the decision, it is a
+spec §78 open decision, and nothing here forecloses it.
+
+1. **On rights as written today, exactly one shortlisted candidate grants what
+   §36 and §37 require.** PokePriceTracker permits storage and caching in terms
+   text, permits display to this application's users, permits commercial use on a
+   named tier, and permits retention after cancellation — which is what makes an
+   immutable historical snapshot lawful as well as architectural. Its single open
+   point is derived data (R5), and §6's own enumeration of permitted commercial
+   uses narrows even that.
+2. **No shortlisted candidate grants derived-data rights expressly.** JustTCG,
+   which is not shortlisted, is still the only document in the survey that does.
+   So whichever candidate is selected, the ADR relies on derived data being
+   permitted without a clause saying so, and must record that reliance
+   explicitly.
+3. **The two silences are not equivalent, and the difference decides how much
+   work each costs.** PkmnPrices is silent with no no-implied-grant clause; a
+   written reply from the vendor would resolve R1–R4 outright. Scrydex is silent
+   *and* says no rights arise by implication; its route is a written
+   authorisation under §4 — a licence negotiation with an unpublished outcome,
+   which the rubric does not score and which #43's calendar-risk note did not
+   anticipate.
+4. **The highest-scoring candidate is the least documented.** PkmnPrices scored
+   45/57 to PokePriceTracker's 37/57, and four of its eight points are
+   unanswered including both architectural ones. That is not a reason to prefer
+   either; it is the trade the ADR has to name — coverage against rights — and
+   the rubric deliberately put licensing in the hard requirements so that the
+   trade could not be made silently.
+5. **Manual curation remains available and is unaffected by all thirteen
+   risks.** §69/M3 names it as an acceptable V1 outcome. Its cost is coverage —
+   500 cards against 49,399 — and `insufficient_information` becomes the modal
+   answer rather than the exception.
+
+**What this pass does not do.** It does not select. It does not weigh 45/57
+against a clean rights position, and it does not decide whether an unanswered
+derived-data question is tolerable for a V1 launch. Those are #45's, and the
+rubric exists so that they are made against criteria fixed before the candidates
+were seen.
+
+### Questions to put to the vendors
+
+Sending these is a human action, and **#44 does not wait on the replies** — the
+determinations above stand on the terms as they are today, the silences are
+recorded as risks R1–R11, and #45 decides on that evidence. A reply that arrives
+later amends this section in a commit of its own.
+
+Per #43's instruction, each question asks the vendor to confirm language of the
+shape JustTCG already publishes (terms effective 2026-07-27, §§7.1–7.4) rather
+than composing a form of words from scratch. The four clauses to quote:
+
+> "Cache API responses server-side and store historical price points for as long
+> as your subscription remains active, strictly to support features, logic, and
+> user histories within your own application."
+>
+> "Calculate and display derived metrics, market observations, and aggregate
+> valuations based on data obtained from the Service."
+>
+> "Display current prices, historical trends, and percentage changes to end users
+> within a consumer-facing application or website."
+>
+> "Combine data obtained from the Service with other lawfully obtained market
+> data sources."
+
+**PkmnPrices** — `support@pkmnprices.com`. Four questions, in priority order,
+each answerable yes or no:
+
+1. May responses be cached server-side, and may a dated price snapshot be stored indefinitely so that a past analysis remains reproducible? (R3 — this one blocks the architecture)
+2. May derived metrics and aggregate valuations calculated from the prices be displayed to end users? (R2)
+3. Is the "Commercial use" listed on every pricing tier a term of the agreement, given the terms of service do not mention it? (R1)
+4. May prices be displayed to the end users of a consumer-facing application? (R4)
+
+Worth adding, since it costs nothing: whether the terms will be amended to say
+so, or whether a written reply is the whole of it. A permission that lives only
+in an email is a permission the next revision of the terms can contradict.
+
+**PokePriceTracker** — `pokepricetracker@proton.me`. One question that matters,
+and two that are commercial rather than legal:
+
+1. Do the Business plan's permitted commercial uses — which name "Internal business analytics, reporting, and decision-making" — extend to calculating and displaying derived metrics and aggregate valuations from the prices, in the sense of JustTCG §7.1? (R5)
+2. Is "Business or Enterprise" one tier or two, and what does Enterprise cost? (#43's open question; §6 names an enterprise agreement for redistribution, which this project does not need)
+3. Does BGS coverage exist? It is claimed in marketing and absent from the API reference. (#43's open question; W2 is scored provisional)
+
+**Scrydex** — `support@scrydex.com`. **This is a request for written
+authorisation under §4, not a request for clarification** — §9 means no reply
+short of a written grant changes the determination:
+
+1. Written authorisation to cache API responses and store dated price snapshots, retained after a subscription ends. (R8 — blocks the architecture)
+2. Written authorisation to calculate and display derived metrics and aggregate valuations. (R7)
+3. Written authorisation to display prices to the end users of a consumer-facing application. (R9)
+4. Confirmation that an ordinary paid integration of this kind is not "commercial exploitation of the Services" under §4, and that a grading advisor is not a "substitute backend, proxy, or wholesale data source for a competing commercial product". (R6, R10)
+5. Separately and commercially: a tier sized for a once-daily refresh of a 49,399-card catalog, given Professional's 250,000 monthly credits, and whether that volume is compatible with §4 and §7. (R11)
+
+### §35 `market_providers`, filled in
+
+What an M4 ingestion would write, per candidate, so that a row in the database is
+traceable to a reading recorded here. `version` is the API or data version the
+provider publishes; **none of the three publishes one**, which is itself a
+finding — a snapshot cannot record a provider data version that does not exist,
+and §36's `data_version` will have to hold the ingestion date instead.
+
+| §35 column | PkmnPrices | PokePriceTracker | Scrydex |
+| --- | --- | --- | --- |
+| `name` | `pkmnprices` | `PokePriceTracker` (**not** PokemonPriceTracker — the terms bind the former) | `Scrydex` |
+| `version` | none published | none published | none published |
+| `license` | Terms of Service, last updated 2026-04-14 | Terms of Service, last updated 2026-08-19 | Terms of Service, undated |
+| `commercial_use` | **unclear** — offered on the pricing page, absent from the terms (R1) | **true**, on Business or Enterprise | **unclear** (R6) |
+| `terms_reference` | <https://www.pkmnprices.com/terms> · 2026-04-14 · read 2026-08-24 | <https://www.pokemonpricetracker.com/terms> · 2026-08-19 · read 2026-08-24 | <https://scrydex.com/terms> · undated · read 2026-08-24 |
+
+`commercial_use` is a boolean in §35's column list and two of the three
+candidates cannot honestly fill it. **Do not default an unclear determination to
+`true`** — if the selected provider's commercial-use position is unresolved, M4
+either records it as unknown or the ADR resolves it first. A boolean that says
+`true` because nobody wanted a null is the failure this whole milestone exists to
+prevent.
+
+### Re-verification
+
+Every finding in this section was verified **2026-08-24**, the same day #43's
+survey was taken. Under this document's ninety-day rule, all of it is re-read
+before the ADR relies on it if the ADR lands after **2026-11-22**.
+
+Two candidates need watching sooner than that, for reasons in their own terms.
+PokePriceTracker's took effect five days before they were read and §14 gives at
+most 30 days' notice of a material change. **Scrydex's carry no effective date
+and §2 makes a change effective immediately on posting with no notice
+obligation** — so there is no way to detect that Scrydex's terms have changed
+other than reading them again, which is a review-trigger problem the ADR should
+name.
 
 ## Review trigger
 
