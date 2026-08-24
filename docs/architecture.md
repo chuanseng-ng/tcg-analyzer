@@ -177,6 +177,19 @@ works for Japanese, a card number matched as a prefix, and a total order over
 `(set_code, card_number, variant, id)` — so the guarantee belongs to the domain
 rather than to whichever database happens to be answering.
 
+`GradingCompanyAdapter` in [`packages/grading-companies`](../packages/grading-companies)
+is the third, and the one where replaceability is a stated requirement rather
+than a principle: adding CGC or ARS later must cost one new adapter and no
+caller change. That is why the company vocabulary is a `StrEnum` whose members
+are `str` — the shape `Game` and `Language` already use — instead of a closed
+enum sitting between every caller and every adapter. Its V1 adapters answer
+four of spec §22's five responsibilities from published reference data and
+refuse the fifth: `predict_grade` raises rather than returning a fabricated
+distribution until M8's per-company models exist. The three grade scales are
+not interchangeable — PSA and TAG issue no 9.5 and BGS does — which is why spec
+§35 keys a graded price by `(grading_company, grade)` and why this package
+lands in M4 ahead of the models that will use it.
+
 TCGplayer API access is neither assumed nor hard-coded. Access is not currently
 granted, and its terms restrict competing commercial products.
 

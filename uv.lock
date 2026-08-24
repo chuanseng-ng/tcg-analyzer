@@ -1416,6 +1416,12 @@ dev = [
 name = "tcg-grading-companies"
 version = "0.0.0"
 source = { editable = "packages/grading-companies" }
+dependencies = [
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tcg-domain", editable = "packages/domain" }]
 
 [[package]]
 name = "tcg-ingestion"

@@ -3,7 +3,14 @@ name = "tcg-grading-companies"
 version = "0.0.0"
 description = "GradingCompanyAdapter port and PSA/TAG/BGS grade scales"
 requires-python = ">=3.12"
-dependencies = []
+# The only dependency, and the package keeps it that way: a grade scale is a
+# set of `tcg_domain.Grade`, and `predict_grade` returns a
+# `tcg_domain.GradeDistribution`. Nothing here reaches a network, a database or
+# a vendor SDK — the adapters are published reference data, not clients.
+dependencies = ["tcg-domain"]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
