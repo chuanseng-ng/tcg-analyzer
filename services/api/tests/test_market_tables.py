@@ -20,8 +20,14 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from tcg_api.analysis.tables import analyses
 from tcg_api.market import tables
-from tcg_api.market.tables import market_observations, market_providers
+from tcg_api.market.snapshots import _PRICES
+from tcg_api.market.tables import (
+    market_observations,
+    market_providers,
+    market_snapshots,
+)
 from tcg_api.table_registry import DECLARED_TABLES
 from tcg_domain.grade import Grade, GradeBound
 from tcg_grading_companies import GradingCompany
@@ -49,13 +55,20 @@ SECTION_35_OBSERVATION_COLUMNS = {
     "metadata",
 }
 
-MIGRATION = (
-    Path(__file__).resolve().parents[3]
-    / "database"
-    / "migrations"
-    / "versions"
-    / "20260824_add_the_market_data_schema.py"
-).read_text(encoding="utf-8")
+SECTION_36_SNAPSHOT_COLUMNS = {
+    "id",
+    "provider_id",
+    "generated_at",
+    "data_version",
+}
+
+VERSIONS = Path(__file__).resolve().parents[3] / "database" / "migrations" / "versions"
+
+MIGRATION = (VERSIONS / "20260824_add_the_market_data_schema.py").read_text(encoding="utf-8")
+
+SNAPSHOT_MIGRATION = (VERSIONS / "20260824_add_the_market_snapshot_schema.py").read_text(
+    encoding="utf-8"
+)
 
 
 def ddl(table: sa.Table) -> str:
@@ -73,7 +86,7 @@ def check_constraint(table: sa.Table, name: str) -> str:
 # ---------------------------------------------------------------------------
 # Spec §35 — the columns
 # ---------------------------------------------------------------------------
-def test_the_market_domain_declares_two_tables_and_the_registry_saw_them() -> None:
+def test_the_market_domain_declares_three_tables_and_the_registry_saw_them() -> None:
     """A domain that is not in `table_registry` is invisible to Alembic.
 
     `env.py` reads the registry's `MetaData`, and autogenerate proposes dropping
@@ -83,9 +96,10 @@ def test_the_market_domain_declares_two_tables_and_the_registry_saw_them() -> No
     assert {table.name for table in tables.TABLES} == {
         "market_providers",
         "market_observations",
+        "market_snapshots",
     }
     declared = {table.name for table in DECLARED_TABLES}
-    assert {"market_providers", "market_observations"} <= declared
+    assert {"market_providers", "market_observations", "market_snapshots"} <= declared
 
 
 def test_the_provider_columns_are_section_35s_fields_plus_a_slug_and_provenance() -> None:
@@ -349,33 +363,171 @@ def test_the_tables_need_no_extension() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spec §36 — a snapshot is a cut-line, not a copy
+# ---------------------------------------------------------------------------
+def test_the_snapshot_columns_are_section_36s_fields() -> None:
+    """Three of §36's four are columns. The fourth is deliberately not one.
+
+    §36 draws `observations` hanging off a snapshot, and a membership table is
+    the obvious reading of that. It is refused twice over: the set is already
+    determined by `generated_at` over an append-only table, and — the decisive
+    one — a stored list could only hold the rows *this run wrote*, so a card the
+    day's ingestion did not reach would read as having no price at all when a
+    perfectly good one from yesterday is on file.
+    """
+    columns = set(market_snapshots.columns.keys())
+
+    assert columns == SECTION_36_SNAPSHOT_COLUMNS
+    assert "observations" not in columns
+    assert "observation_count" not in columns
+
+
+def test_the_data_version_is_generated_from_the_cut_line() -> None:
+    """ADR 0006 fixes its content, so the database can fix its value.
+
+    A run that could name its own `data_version` could name one disagreeing with
+    when it was cut — the same drift `market_type` is generated to prevent.
+    """
+    computed = market_snapshots.c.data_version.computed
+
+    assert computed is not None
+    assert computed.persisted is True
+    assert str(computed.sqltext) == tables._DATA_VERSION_EXPRESSION
+
+
+def test_the_migration_generates_the_data_version_the_same_way() -> None:
+    expression = re.search(r'DATA_VERSION_EXPRESSION = "(.*)"', SNAPSHOT_MIGRATION)
+
+    assert expression is not None
+    assert expression.group(1) == tables._DATA_VERSION_EXPRESSION
+
+
+def test_the_cut_line_is_written_by_the_database() -> None:
+    """No caller supplies `generated_at`, so no cut can be backdated.
+
+    A `CHECK (generated_at <= now())` would say the same thing and is not
+    available: `now()` is not IMMUTABLE, and a volatile expression in a CHECK
+    breaks `pg_dump`/restore. Leaving the column to its default is free.
+    """
+    assert market_snapshots.c.generated_at.server_default is not None
+    assert market_snapshots.c.generated_at.type.timezone is True
+
+
+def test_a_snapshot_names_one_provider() -> None:
+    """RESTRICT: a provider whose prices a snapshot resolves cannot be removed."""
+    assert "REFERENCES market_providers (id) ON DELETE RESTRICT" in ddl(market_snapshots)
+
+
+def test_two_snapshots_may_share_a_day() -> None:
+    """`data_version` is a date, so a second run in one day repeats it.
+
+    Deliberately no `UNIQUE (provider_id, data_version)`: two cuts on one day are
+    two snapshots, resolved through different `generated_at` values and named by
+    id, and refusing the second would fail for nothing anybody could act on.
+    """
+    assert not [
+        constraint
+        for constraint in market_snapshots.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    ]
+    assert not market_snapshots.indexes
+
+
+def test_an_analysis_points_at_a_snapshot_it_cannot_lose() -> None:
+    """The key `analyses.market_snapshot_id`'s comment promised this milestone.
+
+    RESTRICT, unlike `card_database_version` which carries no key at all: a
+    catalog version is an identifier worth keeping even if the record went,
+    where a snapshot *is* the prices.
+    """
+    key = next(
+        constraint
+        for constraint in analyses.foreign_key_constraints
+        if constraint.name == "fk_analyses_market_snapshot_id_market_snapshots"
+    )
+
+    assert [column.name for column in key.columns] == ["market_snapshot_id"]
+    assert key.ondelete == "RESTRICT"
+
+
+# ---------------------------------------------------------------------------
+# Resolving a snapshot
+# ---------------------------------------------------------------------------
+# The statement is compiled rather than executed. `test_market_schema.py` runs
+# it against a real database; these two assert the properties that would fail
+# silently — a resolution that returned the right prices in an unstable order,
+# or one cut on the wrong column, passes every behavioural test that does not
+# look for exactly this.
+def test_the_resolution_orders_by_a_total_key() -> None:
+    """`PriceObservation.history_key` names this module's problem by number.
+
+    Two rows tying under a partial key could come back in either order, which
+    would make an immutable snapshot resolve differently on two readings of the
+    same data. `id` is the primary key, so ending on it makes the order total.
+    """
+    rendered = str(_PRICES.compile(dialect=postgresql.dialect()))
+    ordering = rendered[rendered.index("ORDER BY") :]
+
+    assert (
+        "DISTINCT ON (market_observations.grading_company, market_observations.grade)" in rendered
+    )
+    assert ordering.rstrip().endswith("market_observations.id DESC")
+    assert "market_observations.observed_at DESC" in ordering
+    assert "market_observations.created_at DESC" in ordering
+
+
+def test_raw_prices_sort_ahead_of_graded_ones() -> None:
+    """`NULLS FIRST`, matching `history_key`'s empty company slug.
+
+    Raw rows need no other special case: `grading_company IS NULL` compares equal
+    to itself under `DISTINCT ON`, so they fall into exactly one group.
+    """
+    rendered = str(_PRICES.compile(dialect=postgresql.dialect()))
+
+    assert "market_observations.grading_company ASC NULLS FIRST" in rendered
+
+
+# ---------------------------------------------------------------------------
 # Append-only
 # ---------------------------------------------------------------------------
 # These read the module's private DDL constants deliberately. Nothing public
 # exposes them, Alembic compares no triggers, and a trigger that silently
 # stopped guarding a table would fail no other test in this file.
-def test_both_tables_are_guarded_against_update() -> None:
+def test_all_three_tables_are_guarded_against_update() -> None:
     assert "BEFORE UPDATE ON market_providers" in str(tables._PROVIDERS_TRIGGER)
     assert "BEFORE UPDATE ON market_observations" in str(tables._OBSERVATIONS_TRIGGER)
+    assert "BEFORE UPDATE ON market_snapshots" in str(tables._SNAPSHOTS_TRIGGER)
 
 
-def test_neither_trigger_guards_delete() -> None:
+def test_no_trigger_guards_delete() -> None:
     """Deliberate, and the one place this departs from `grading_rules`.
 
     A daily refresh over the whole catalog is millions of rows a year and will
     eventually need pruning. A provider row anything references is already
     undeletable, through the foreign key's RESTRICT.
     """
-    for trigger in (tables._PROVIDERS_TRIGGER, tables._OBSERVATIONS_TRIGGER):
+    for trigger in (
+        tables._PROVIDERS_TRIGGER,
+        tables._OBSERVATIONS_TRIGGER,
+        tables._SNAPSHOTS_TRIGGER,
+    ):
         assert "DELETE" not in str(trigger)
 
 
-def test_one_function_serves_both_tables() -> None:
+def test_one_function_serves_all_three_tables() -> None:
     """`TG_TABLE_NAME` names the table, so there is no second copy to keep in step."""
     function = str(tables._IMMUTABLE_FUNCTION)
     assert "TG_TABLE_NAME" in function
-    assert str(tables._PROVIDERS_TRIGGER).count("market_rows_are_immutable()") == 1
-    assert str(tables._OBSERVATIONS_TRIGGER).count("market_rows_are_immutable()") == 1
+    for trigger in (
+        tables._PROVIDERS_TRIGGER,
+        tables._OBSERVATIONS_TRIGGER,
+        tables._SNAPSHOTS_TRIGGER,
+    ):
+        assert str(trigger).count("market_rows_are_immutable()") == 1
+    # And the snapshot migration creates none of its own: the market-data
+    # revision it revises already did, and a second copy of a body means the
+    # last revision to run silently wins if the two ever differ.
+    assert "CREATE OR REPLACE FUNCTION" not in SNAPSHOT_MIGRATION
 
 
 def test_the_refusal_reports_a_constraint_violation() -> None:
@@ -394,6 +546,7 @@ def test_each_ddl_statement_is_one_statement() -> None:
     for statement in (
         tables._DROP_PROVIDERS_TRIGGER,
         tables._DROP_OBSERVATIONS_TRIGGER,
+        tables._DROP_SNAPSHOTS_TRIGGER,
         tables._DROP_IMMUTABLE_FUNCTION,
     ):
         assert str(statement).strip().rstrip(";").count(";") == 0

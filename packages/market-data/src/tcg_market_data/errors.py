@@ -30,6 +30,7 @@ from __future__ import annotations
 
 __all__ = [
     "InvalidMarketObservation",
+    "InvalidMarketSnapshot",
     "MarketDataError",
     "MarketProviderUnavailable",
 ]
@@ -61,4 +62,15 @@ class MarketProviderUnavailable(MarketDataError, ConnectionError):
     the card may well have a price, and the provider simply did not answer.
     Also a `ConnectionError`, because that is what it is, and because retry
     logic written against the builtin should apply here unchanged.
+    """
+
+
+class InvalidMarketSnapshot(MarketDataError, ValueError):
+    """A market snapshot is not representable.
+
+    Covers a naive `generated_at` and a `data_version` that is not a date —
+    the two fields a caller could get wrong when rehydrating one from a row.
+    Separate from :class:`InvalidMarketObservation` because a snapshot and an
+    observation fail for different reasons and a caller catching one should not
+    silently catch the other.
     """

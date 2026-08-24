@@ -57,6 +57,9 @@ GRADING_RULES_REVISION = "50c399cb7b9b"
 # Spec §35's market schema, the third to carry an immutability trigger — and the
 # first where one trigger function serves two tables. Pinned for the same reason.
 MARKET_DATA_REVISION = "b5bca50f46c0"
+# Spec §36's snapshots, and the first revision to reuse an immutability trigger
+# function it did not create. Pinned for the same reason as the rest.
+MARKET_SNAPSHOTS_REVISION = "3ac71e5d92f8"
 
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
@@ -260,6 +263,38 @@ def test_downgrading_the_market_data_revision_leaves_no_orphaned_trigger_functio
     alembic("downgrade", "-1")
 
     assert not function_exists("market_rows_are_immutable()")
+
+
+def test_downgrading_the_market_snapshots_revision_leaves_the_rest_standing() -> None:
+    """Reversing this must not take the prices a snapshot was a cut of.
+
+    It also drops a foreign key on `analyses`, which belongs to another domain
+    and another revision — `analyses` itself must survive intact.
+    """
+    alembic("upgrade", MARKET_SNAPSHOTS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("market_snapshots")
+    assert table_exists("market_observations")
+    assert table_exists("market_providers")
+    for table in ANALYSIS_TABLES:
+        assert table_exists(table), table
+
+
+def test_downgrading_the_market_snapshots_revision_keeps_the_shared_trigger_function() -> None:
+    """The mirror of the orphaned-function test, and the trap it guards is worse.
+
+    This revision reuses `market_rows_are_immutable()` rather than creating it,
+    so a copy-pasted `DROP FUNCTION` here would either fail outright or, with
+    CASCADE, silently unguard `market_observations` — leaving prices rewritable
+    with nothing to say so.
+    """
+    alembic("upgrade", MARKET_SNAPSHOTS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert function_exists("market_rows_are_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:

@@ -100,7 +100,20 @@ expires is no better than a bucket nobody expires.
 
 ## What this does not cover
 
-Three things, named here so that none of them is an exemption nobody wrote down.
+Four things, named here so that none of them is an exemption nobody wrote down.
+
+**Market prices and the snapshots of them.** `market_observations`,
+`market_providers` and `market_snapshots` are outside the sweep entirely, and
+deliberately: nothing in one identifies a person. They are a provider's figures
+for a printed card, gathered out of band and never on a user's request. Two of
+the three are also load-bearing for reproducibility — spec §36 requires a
+historical analysis to resolve the exact prices it used, and
+`analyses.market_snapshot_id` is `RESTRICT`, so a snapshot an unexpired analysis
+names cannot be deleted at all. What is *not* settled is pruning: a daily refresh
+over 49,399 cards is millions of observations a year, the immutability triggers
+guard `UPDATE` and not `DELETE` precisely so that a prune stays possible, and
+nobody has written the policy that would say which rows go and when. Until
+somebody does, nothing is deleted — which is a decision, not an oversight.
 
 **Objects that no row names.** The sweep works from rows. A worker killed
 between writing a normalized artifact and committing the row that names it

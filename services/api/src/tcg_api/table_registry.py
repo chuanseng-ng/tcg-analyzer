@@ -28,10 +28,11 @@ from tcg_api.tables import metadata
 
 __all__ = ["DECLARED_TABLES", "metadata"]
 
-#: Every declared table, catalog first — which is also a workable creation
-#: order, since both `analyses.card_id` and `market_observations.card_id`
-#: reference `cards`. `grading_rules` references nothing and nothing references
-#: it; the market tables reference the catalog and each other, so they go last.
+#: Every declared table, catalog first. This tuple is a *set* for the drift
+#: guard's purposes and not a creation order — `analyses.market_snapshot_id`
+#: references `market_snapshots`, so the market domain is no longer strictly
+#: last. `MetaData.sorted_tables` is what orders a real `create_all`, and
+#: Alembic orders a migration by what the migration says.
 DECLARED_TABLES: Final = (
     *CATALOG_TABLES,
     *ANALYSIS_TABLES,

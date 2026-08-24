@@ -375,6 +375,7 @@ def _run_with_gate(
     *,
     recorded: list[dict[str, Any]] | None = None,
     catalog_version: str | None = "pokemon-catalog-v0.3.0",
+    snapshot_id: uuid.UUID | None = None,
 ) -> tuple[list[AnalysisStatus], _FakeEngine]:
     """Drive `_advance` with a stubbed store, a stubbed gate and a stubbed catalog.
 
@@ -395,6 +396,11 @@ def _run_with_gate(
     async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
         return verdict
 
+    async def current_snapshot(_db: Any) -> Any:
+        if snapshot_id is None:
+            return None
+        return types.SimpleNamespace(id=snapshot_id)
+
     async def record_reproducibility(_db: Any, _id: Any, **values: Any) -> None:
         # The moves so far travel with the write, which is what lets a test
         # assert the record is captured *inside* the claim rather than merely
@@ -412,6 +418,7 @@ def _run_with_gate(
     monkeypatch.setattr(jobs, "transition", transition)
     monkeypatch.setattr(jobs, "record_reproducibility", record_reproducibility)
     monkeypatch.setattr(jobs, "PostgresCardDatabaseVersionRepository", versions)
+    monkeypatch.setattr(jobs, "current_snapshot", current_snapshot)
 
     assert asyncio.run(jobs._advance(uuid.uuid4())) is True
     return moves, engine
@@ -538,6 +545,39 @@ def test_no_published_catalog_is_recorded_as_none_rather_than_invented(
     assert recorded[0]["card_database_version"] is None
 
 
+def test_the_market_snapshot_in_force_is_recorded_with_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§36: an analysis is computed against a snapshot resolved when it ran.
+
+    Resolved in the same breath as the catalog version and inside the same
+    claim, because "which prices was this computed against" has an answer at
+    exactly one moment — and re-resolving it later would answer with whichever
+    snapshot happens to be current then.
+    """
+    snapshot_id = uuid.uuid4()
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded, snapshot_id=snapshot_id)
+
+    assert recorded[0]["market_snapshot_id"] == snapshot_id
+    assert recorded[0]["after"] == [AnalysisStatus.IDENTIFYING]
+
+
+def test_no_snapshot_is_recorded_as_none_rather_than_invented(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing has ingested through V1, and the record says so.
+
+    ADR 0006 gates the provider on a subscription that is not yet active, so no
+    snapshot exists — and the honest record of that is `None`, never a
+    fabricated identifier and never the prices of some other moment.
+    """
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
+
+    assert recorded[0]["market_snapshot_id"] is None
+
+
 def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch) -> None:
     """A duplicate delivery must not overwrite the record the first run captured.
 
@@ -550,6 +590,9 @@ def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch)
     async def refuse_to_claim(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
         return False
 
+    async def never_resolved(_db: Any) -> Any:
+        raise AssertionError("a delivery that did not claim must resolve no snapshot")
+
     async def record_reproducibility(_db: Any, _id: Any, **_values: Any) -> None:
         written.append(True)
 
@@ -557,6 +600,7 @@ def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: _FakeSession)
     monkeypatch.setattr(jobs, "transition", refuse_to_claim)
     monkeypatch.setattr(jobs, "record_reproducibility", record_reproducibility)
+    monkeypatch.setattr(jobs, "current_snapshot", never_resolved)
 
     assert asyncio.run(jobs._advance(uuid.uuid4())) is False
     assert written == []

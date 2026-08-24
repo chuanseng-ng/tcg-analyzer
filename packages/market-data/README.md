@@ -50,8 +50,16 @@ make `ADAPTERS` the closed set of valid companies.
 
 - **No provider adapter** — #52, and it will live in its own module, not be
   re-exported from `__init__`.
-- **No caching and no snapshots** — #51. `data_version` is a snapshot field
-  (§36), not an observation one, so it is not on `PriceObservation`.
+- **No caching, and no snapshot *resolution*.** `MarketSnapshot` — §36's four
+  fields — lives here, beside `PriceObservation`, for the reason `GradingRules`
+  lives in `packages/grading-companies`: it is a structure the specification
+  names, so it belongs to the domain the specification gives it to. Generating
+  and resolving one is `tcg_api.market.snapshots`, because a snapshot is a
+  cut-line over rows in a database and there are no rows here. It is deliberately
+  not part of the port either: a provider is asked for prices, never for a
+  snapshot, since §37 forbids calling one on the read path at all. `data_version`
+  stays a snapshot field, not an observation one, so it is not on
+  `PriceObservation`.
 - **No `price_age` and no computed `price_confidence`** — #55. The observation
   carries the provider's own `confidence` in that one figure; staleness is a
   function of `observed_at` and the moment of asking.
