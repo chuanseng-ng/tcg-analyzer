@@ -1,0 +1,60 @@
+"""The `GradingCompanyAdapter` port and the PSA / TAG / BGS grade scales.
+
+Spec §22's abstraction, spec §23's versioned rules reference, and the three
+companies' grade scales as data. It lands in M4 rather than M8 because spec
+§35's ``market_observations`` keys a graded price by ``(grading_company,
+grade)``, and that key cannot be written until something says which grades each
+company issues.
+
+The package depends on `tcg-domain` and nothing else. It reaches no network, no
+database and no vendor SDK: an adapter here is published reference data, not a
+client.
+
+Everything re-exported here is the package's public surface; nothing else is.
+"""
+
+from __future__ import annotations
+
+from tcg_grading_companies.companies import (
+    ADAPTERS,
+    BGS_RULES,
+    BGS_SCALE,
+    PSA_RULES,
+    PSA_SCALE,
+    TAG_RULES,
+    TAG_SCALE,
+    BGSAdapter,
+    PSAAdapter,
+    TAGAdapter,
+)
+from tcg_grading_companies.errors import (
+    GradePredictionUnavailable,
+    GradingCompanyError,
+    UnsupportedGrade,
+)
+from tcg_grading_companies.port import GradePrediction, GradingCompany, GradingCompanyAdapter
+from tcg_grading_companies.reference import EMPTY_RULES, GradingRules, ServiceOption
+from tcg_grading_companies.scale import GradeScale
+
+__all__ = [
+    "ADAPTERS",
+    "BGS_RULES",
+    "BGS_SCALE",
+    "EMPTY_RULES",
+    "PSA_RULES",
+    "PSA_SCALE",
+    "TAG_RULES",
+    "TAG_SCALE",
+    "BGSAdapter",
+    "GradePrediction",
+    "GradePredictionUnavailable",
+    "GradeScale",
+    "GradingCompany",
+    "GradingCompanyAdapter",
+    "GradingCompanyError",
+    "GradingRules",
+    "PSAAdapter",
+    "ServiceOption",
+    "TAGAdapter",
+    "UnsupportedGrade",
+]
