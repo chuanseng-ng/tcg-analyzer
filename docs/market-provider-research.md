@@ -12,7 +12,8 @@ It is written in three passes, and it is the only place the evidence lives:
 | Survey | [#43](https://github.com/chuanseng-ng/tcg-analyzer/issues/43) | Every candidate scored, and a shortlist of two or three |
 | Licensing | [#44](https://github.com/chuanseng-ng/tcg-analyzer/issues/44) | What the shortlisted candidates' terms actually permit |
 
-The decision itself is not here. It is an ADR, written by
+The decision itself is not here. It is
+[ADR 0006](adr/0006-the-v1-market-data-provider.md), written by
 [#45](https://github.com/chuanseng-ng/tcg-analyzer/issues/45), which cites this
 document rather than restating it.
 
