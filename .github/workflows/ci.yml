@@ -21,7 +21,7 @@ permissions:
 
 env:
   # Pinned so a toolchain bump is a reviewed commit rather than a surprise.
-  NODE_VERSION: "24"
+  NODE_VERSION: "26"
 
 jobs:
   python:

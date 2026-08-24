@@ -14,17 +14,23 @@
 # `next.config.mjs` back to the repository root, undoing a fix whose reason is
 # recorded in that file. See docs/adr/0003-the-local-development-stack.md.
 
-FROM node:24-bookworm-slim AS development
+FROM node:26-bookworm-slim AS development
 
 # Corepack provisions the exact pnpm pinned by the root `package.json`'s
 # `packageManager` field, hash and all, so the image resolves dependencies with
 # the same pnpm that CI and developers use. The prompt would otherwise block a
 # non-interactive build when it downloads that version.
+#
+# Node no longer ships Corepack in the distribution, so it is installed from npm
+# rather than assumed present — without this, `corepack enable` exits 127 on
+# node:26. Do not swap it for `npm install -g pnpm@<version>`: that duplicates
+# the version out of `package.json` and drops its integrity hash, which is the
+# whole reason Corepack is here.
 ENV PNPM_HOME=/pnpm \
     PATH="/pnpm:$PATH" \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable
+RUN npm install --global corepack && corepack enable
 
 # Uploaded card images are untrusted input, and nothing here needs root. The
 # same uid/gid as the API image, so the two are consistent when a future

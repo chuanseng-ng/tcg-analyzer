@@ -86,7 +86,8 @@ Two workspaces, split by language — see
 ### Prerequisites
 
 - **Node** 20+ with pnpm. pnpm is pinned by the `packageManager` field and
-  provisioned by Corepack: run `corepack enable pnpm` once, or prefix commands
+  provisioned by Corepack, which Node no longer bundles: install it once with
+  `npm install --global corepack`, then `corepack enable pnpm`. Prefix commands
   with `corepack` (`corepack pnpm install`) if enabling shims needs
   administrator rights.
 - **[uv](https://docs.astral.sh/uv/)**. The Python version is pinned in
