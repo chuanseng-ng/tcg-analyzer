@@ -159,7 +159,7 @@ in the pipeline is a step you cannot reproduce yourself.
 ```bash
 uv run ruff check .                     # lint
 uv run ruff format --check .            # formatting
-uv run mypy packages/domain/src packages/shared/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src
+uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src
 uv run pytest -m "not integration and not object_storage"   # both need Docker
 
 pnpm --filter @tcg/web lint

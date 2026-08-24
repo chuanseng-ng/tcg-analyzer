@@ -3,7 +3,22 @@ name = "tcg-market-data"
 version = "0.0.0"
 description = "MarketDataProvider port and market data normalization"
 requires-python = ">=3.12"
-dependencies = []
+# Two workspace dependencies and no third-party ones, and the package keeps it
+# that way: a price is a `tcg_domain.Money` for a `tcg_domain.CardReference`,
+# and a graded price's key is checked against the company's scale in
+# `tcg_grading_companies`. The provider client belongs to #52's adapter module,
+# never to the port — see tests/test_market_data_purity.py.
+#
+# Plain dependencies rather than an extra: CI resolves the workspace with
+# `uv sync --all-packages`, which does not install extras.
+dependencies = [
+    "tcg-domain",
+    "tcg-grading-companies",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
+tcg-grading-companies = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
