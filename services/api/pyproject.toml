@@ -41,6 +41,12 @@ dependencies = [
     # entity, so a malformed record fails with the domain's own message rather
     # than as a constraint violation mid-transaction.
     "tcg-domain",
+    # Spec §23's published rules records, which `tcg_api.grading.seed` writes
+    # into `grading_rules` and `tcg_api.grading.rules` reads back out. Declared
+    # for the reason `tcg-shared`'s entry gives below. It brings nothing
+    # transitive: `tcg-grading-companies` depends only on `tcg-domain`, which is
+    # already here, and it reaches no network, database or vendor SDK.
+    "tcg-grading-companies",
     # The object-storage port and its S3 adapter. Declared rather than left to
     # `uv sync --all-packages`, which installs every member editable and would
     # hide the omission locally: `infrastructure/docker/api.Dockerfile` runs
@@ -70,6 +76,7 @@ worker = ["tcg-ml-card-detection", "tcg-ml-image-quality", "tcg-ml-normalization
 
 [tool.uv.sources]
 tcg-domain = { workspace = true }
+tcg-grading-companies = { workspace = true }
 tcg-ml-card-detection = { workspace = true }
 tcg-ml-image-quality = { workspace = true }
 tcg-ml-normalization = { workspace = true }
@@ -85,6 +92,10 @@ tcg-seed-catalog = "tcg_api.catalog.seed:main"
 # Fetches the canonical catalog from TCGdex into a snapshot and loads it,
 # publishing an immutable card_database_version per run. See ADR 0004.
 tcg-import-catalog = "tcg_api.catalog.import_catalog:main"
+# Writes the published PSA/TAG/BGS rules versions from `tcg_grading_companies`
+# into `grading_rules` (spec §23). Idempotent; a published version is never
+# rewritten, and the database refuses it if anything tries.
+tcg-seed-grading-rules = "tcg_api.grading.seed:main"
 
 [build-system]
 requires = ["hatchling"]

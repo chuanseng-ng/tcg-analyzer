@@ -1,7 +1,8 @@
 # `database/seeds`
 
-Reference data loaded into a fresh database: the card catalog subset below, and
-later grading rules versions, grading companies and cost defaults.
+Reference data loaded into a fresh database: the card catalog subset below, the
+published grading rules versions, and later grading companies and cost
+defaults.
 
 Seeds are data, not schema. They must be idempotent.
 
@@ -97,3 +98,46 @@ meant. Move `SEED_CATALOG_GENERATED_AT` with it, never on its own.
 
 It never creates or drops anything, and it will not delete a row that has left
 the fixtures. Removing seed data is a migration's job.
+
+## The published grading rules
+
+```bash
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+uv run alembic upgrade head
+uv run tcg-seed-grading-rules
+```
+
+Spec §23's `grading_rules` — one published grading standard, of one company, at
+one version. The loader is
+`services/api/src/tcg_api/grading/seed.py`.
+
+**There is no JSON file here, deliberately.** The catalog fixtures are JSON
+because a hand-authored card list has no Python home; these records do. They are
+`PSA_RULES`, `TAG_RULES` and `BGS_RULES` in `packages/grading-companies`, each a
+validated `GradingRules` already carrying its version, its source URL and the
+date the source was read. A file beside them would be a second source of truth
+for the same three records, and a lossy one — it would have to re-encode
+`effective_from: null` for TAG and BGS, and need a parser and a schema whose
+whole job is to rebuild objects the process already holds.
+
+The loader reads them through `ADAPTERS` rather than by name, so a fourth
+grading company costs one new adapter and no edit here.
+
+**The rules body is `{}`, and that is a decision rather than a gap.** Each
+company's grading standard is that company's copyrighted text and this
+repository does not reproduce it. What spec §57 needs is the *identifier* — so a
+run made today can be told apart from one made after a company revises its
+standard — plus a source a human can open. Both are columns.
+
+Written with `ON CONFLICT DO NOTHING`, for the reason the catalog version above
+gives: rewriting a published version would falsify every analysis that recorded
+it. Here the table's trigger refuses an `UPDATE` outright, so the policy is the
+database's rather than the loader's — a published version is corrected by
+publishing a successor with a new `effective_from`, never by editing.
+
+**`verified_on` carries ADR 0006's ninety-day rule into reference data.** A
+record older than ninety days is re-read before anything relies on it. One
+caveat travels with the BGS row: beckett.com refused both an automated fetch and
+a real browser on 2026-08-24, so that scale rests on a search index of Beckett's
+own page rather than on the page itself. Confirm it by hand before anything
+treats a BGS price as authoritative.

@@ -224,13 +224,32 @@ Every analysis records: application version, model bundle version, card database
 version, grading rules version, market snapshot ID, economic configuration, and
 the input image hashes.
 
-The card database version is the first of those seven to become a real table.
+The card database version was the first of those seven to become a real table.
 `card_database_versions` holds one row per import run — identifier, source,
 licence, upstream revision, when the data was made, and how much of it there was
 — and `GET /catalog/version` reports the current one. Immutability there is a
 database guarantee rather than a convention: a trigger refuses `UPDATE` and
 `DELETE`, so a re-import publishes a new version instead of editing an old one,
 and the identifier an analysis recorded still finds what it recorded.
+
+The grading rules version is the second. `grading_rules` holds one row per
+published standard per company — identifier, when it took effect, where it was
+read and when — under the same guarantee and the same trigger. A correction is a
+new version with a new effective date, never an edit.
+
+Its one departure is worth knowing: **the date a standard stopped applying is
+derived rather than stored.** A version is in force from its effective date until
+the next version of the same company begins, so a company's ranges cannot overlap
+at all rather than being rejected when they do — and there is no second write to
+close a range, which is what lets the immutability guarantee stay unconditional.
+Every record a caller receives still carries the end date; the resolver computes
+it. What is stored instead is the honest absence: PSA publishes an effective date
+and TAG and BGS publish none, so those two carry no date rather than one inferred
+from a copyright footer.
+
+The rules body itself is empty, by decision. Each company's grading standard is
+that company's copyrighted text and this repository does not reproduce it; what
+reproducibility needs is the identifier, plus a source a human can open.
 
 `analyses` carries the rest of the record: `model_bundle_version`,
 `market_snapshot_id`, `economic_configuration_id`, `application_version`,
@@ -240,9 +259,11 @@ session lives for days, so the version that opened one is not necessarily the
 version that ran this. Every value is resolved when the analysis ran, never a
 pointer to whatever is current: the worker captures them at the moment it claims
 the analysis, which is the one moment at which "what is this being computed
-against" has an answer. Four of the six are null through V1, because no model
-bundle, grading rules, market snapshot or economic configuration exist yet — a
-documented absence rather than a gap.
+against" has an answer. Four of the six are null through V1: no model bundle,
+market snapshot or economic configuration exists yet, and grading rules now do
+but nothing in an analysis consults them until per-company grade prediction
+arrives — so recording a rules version on a run that never applied one would be a
+false claim. A documented absence rather than a gap.
 
 Immutability is a database guarantee here too. A `BEFORE UPDATE` trigger refuses
 to change any of those six once it holds a value, so a re-run is a new analysis

@@ -13,6 +13,7 @@ Table modules import `metadata` from here and attach to it:
   `card_database_versions`.
 * `tcg_api.analysis.tables` — spec §12's `analysis_sessions` / `analyses` and
   §11's `images`.
+* `tcg_api.grading.tables` — spec §23's `grading_rules`.
 
 This module imports nothing from `tcg_api`, and must not: the table modules
 import *it*, so anything here that reached back for them would be a cycle. What

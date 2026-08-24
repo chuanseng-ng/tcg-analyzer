@@ -22,10 +22,12 @@ from typing import Final
 
 from tcg_api.analysis.tables import TABLES as ANALYSIS_TABLES
 from tcg_api.catalog.tables import TABLES as CATALOG_TABLES
+from tcg_api.grading.tables import TABLES as GRADING_TABLES
 from tcg_api.tables import metadata
 
 __all__ = ["DECLARED_TABLES", "metadata"]
 
 #: Every declared table, catalog first — which is also a workable creation
-#: order, since `analyses.card_id` references `cards`.
-DECLARED_TABLES: Final = (*CATALOG_TABLES, *ANALYSIS_TABLES)
+#: order, since `analyses.card_id` references `cards`. `grading_rules` references
+#: nothing and nothing references it, so it goes last.
+DECLARED_TABLES: Final = (*CATALOG_TABLES, *ANALYSIS_TABLES, *GRADING_TABLES)
