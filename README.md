@@ -334,7 +334,9 @@ The schema's source of truth is the `MetaData` in
 `services/api/src/tcg_api/tables.py`, which `database/migrations/env.py` reads as
 `target_metadata`. The tables themselves are declared per domain — the card
 catalog in `tcg_api/catalog/tables.py`, the analysis spine in
-`tcg_api/analysis/tables.py` — and `tcg_api/table_registry.py` imports them all,
+`tcg_api/analysis/tables.py`, the published grading standards in
+`tcg_api/grading/tables.py` and the market data in `tcg_api/market/tables.py` —
+and `tcg_api/table_registry.py` imports them all,
 which is what makes that `MetaData` complete. `env.py` reads it from the registry
 for exactly that reason. Declare a new table in one of those modules as well as in
 its migration, and register a new domain in the registry, or
@@ -352,6 +354,20 @@ a fixture; see `database/seeds/README.md`. These fixtures are the catalog a
 developer gets without a network, and
 [ADR 0004](docs/adr/0004-the-canonical-card-catalog-source.md) keeps them as the
 floor if the TCGdex position ever has to be withdrawn.
+
+The published grading standards are seeded separately:
+
+```bash
+uv run tcg-seed-grading-rules
+```
+
+One row per published PSA, TAG and BGS standard (spec §23), written into
+`grading_rules` from the versions `tcg_grading_companies` carries. It is
+idempotent, and a published version is never rewritten regardless of what the
+loader asks for — the database refuses the update. `GET /grading-companies`
+reads its `rules` from this table and each grade scale from the package, so a
+deployment that has not run this still serves all three scales and reports
+`rules` as null.
 
 For a real catalog, import one from TCGdex:
 
@@ -490,6 +506,20 @@ Five properties are load-bearing rather than incidental, and each has a test:
   and their surroundings; keeping one indefinitely so a job nobody re-drives
   could be re-driven is not a trade this project makes (spec §54).
 
+The worker also runs **Celery beat embedded**, which is what schedules spec §54's
+retention sweep: hourly, `tcg_api.analysis.retention` deletes everything
+belonging to a session that has expired — the stored objects first and the rows
+second, so an interrupted sweep leaves a row naming an object that is gone rather
+than an object nothing names. The schedule lives in the application rather than
+in Compose, so `--beat` only decides which process runs it. Run one on demand:
+
+```bash
+celery --app tcg_api.analysis.worker call tcg_api.analysis.purge_expired
+```
+
+[`docs/retention.md`](docs/retention.md) is the policy, and it records the gaps
+that remain open as gaps rather than pretending they are closed.
+
 #### The image-quality gate
 
 Spec §18 puts a quality gate between file validation and card detection, and
@@ -570,6 +600,104 @@ Four things about it are deliberate:
   table the card was lying on. The gate degrades the same way, capping such a
   photograph at `acceptable`. The original is always kept unmodified.
 
+#### Grading rules
+
+Spec §22 puts each grading company behind an adapter and spec §23 requires an
+analysis to record the version of the published standard it was judged against.
+`packages/grading-companies` holds that port and the three grade scales;
+`grading_rules` holds one row per published standard per company, seeded by
+`tcg-seed-grading-rules` and served by `GET /grading-companies`.
+
+That the three scales differ is the whole reason the endpoint exists, and is
+covered under [API](#api) above. Three further things are deliberate:
+
+- **The date a standard stopped applying is derived, never stored.** A version is
+  in force from its effective date until the next version of the same company
+  begins, computed with `lead()` when the rules are read. Overlapping ranges are
+  therefore unrepresentable rather than rejected, and no second write is needed
+  to close a range — which is what lets immutability stay unconditional. Every
+  record a caller receives still carries the end date.
+- **The rules body is empty, by decision.** Each company's grading standard is
+  that company's copyrighted text, and this repository does not reproduce it.
+  What reproducibility needs is the identifier plus a source a human can open.
+  The absences are honest too: PSA publishes an effective date where TAG and BGS
+  publish none, so those two carry no date rather than one inferred from a
+  copyright footer.
+- **`company` carries no CHECK**, so a fourth grading company costs one adapter
+  and no migration. `market_observations.grading_company` deliberately does carry
+  one; the two columns answer different questions.
+
+A published version is never rewritten — a trigger refuses `UPDATE` and `DELETE`,
+exactly as it does for `card_database_versions`. A correction is a new version
+with a new effective date.
+
+#### Market data
+
+Spec §33 puts price data behind a `MarketDataProvider` port, and spec §35 and §36
+give it three tables — `market_providers`, `market_observations` and
+`market_snapshots`. All of that exists. **Nothing has ingested a price yet, and
+that is deliberate:** [ADR 0006](docs/adr/0006-the-v1-market-data-provider.md)
+selected a provider and gates commercial use on a subscription that is not
+active, so no provider row is seeded. Writing `commercial_use = true` before the
+subscription exists would be a false record in the one table whose purpose is to
+be truthful about that.
+
+The port is [`packages/market-data`](packages/market-data), and its shape matters
+more than its methods: **an absent price is a return value, not an exception.**
+Both price methods return `Uncertain[PriceObservation]` — an observation, or a
+falsy `InsufficientInformation` carrying a reason. A `Money.zero()` sentinel
+would feed a real number into `EV = Σ P(g)·V(g)` and produce a confident, wrong
+recommendation, and a card with no price is exactly the case ADR 0006 forced: the
+V1 provider does not cover TAG, so the answer there is `insufficient_information`
+for as long as that holds, never a substituted or interpolated PSA price. A
+provider that *fails* is a third outcome and raises `MarketProviderUnavailable`,
+named for the provider rather than for the data because the two map to different
+errors.
+
+Four things about the schema are load-bearing:
+
+- **`market_type` is generated from `grading_company` rather than written.** A
+  row claiming to be a raw price while carrying a grading company is not
+  representable at all, and PostgreSQL refuses an `INSERT` that so much as names
+  the column. Spec §35's raw/graded rule is stated once, in `PriceObservation`,
+  and this is that same statement in SQL.
+- **`grade` is text whose CHECK is the grade *grammar*** — half steps in [0, 10]
+  plus spec §24's collapsed tails — and never any one company's scale. A
+  per-company CHECK would make a fourth company, or a scale revision, cost a
+  migration of this table. `validated_grade_key` is the per-company guard, and
+  neither substitutes for the other.
+- **Both tables are append-only.** One trigger refuses `UPDATE` and deliberately
+  not `DELETE`: a corrected price is a new observation rather than an edit, and a
+  daily refresh across the whole catalog is millions of rows a year that will
+  eventually need pruning.
+- **A snapshot holds no observations.** `market_snapshots` records which
+  provider, when the cut was taken, and a `data_version` generated from that cut
+  — four columns, and no membership list. The set is already determined, because
+  observations never change and `created_at` records when a row *landed*, so a
+  snapshot means "this provider's prices stored at or before this moment" and
+  re-resolving it a year later returns the same figures.
+
+The cut is on when a row was **stored**, never on when its price was seen. A
+backfilled price is seen long before it is stored, and a snapshot that a late
+arrival could join retroactively is not immutable at all. Stamping each ingested
+row with the snapshot it belongs to would be worse than redundant: a daily run
+may not reach every one of 49,399 cards, so such a snapshot would hold that run's
+*coverage* rather than the market as of that day, and every card the run missed
+would report no price while a perfectly good one from yesterday sat on file. A
+snapshot resolves the latest **known** price, not the latest fetched one.
+
+`data_version` is generated rather than written because no provider surveyed
+publishes a version of its own, so the identifier is the ingestion date — and
+that date is what the results UI must show beside a price. ADR 0006 grants
+caching, not republication: a historical analysis reports an old snapshot by
+design, and a record of a past date is not a stale price presented as a current
+one.
+
+There is no market endpoint yet. `tcg_api.market.snapshots` is a library, and the
+worker's claim calls it to record which snapshot an analysis was computed
+against. [`docs/architecture.md`](docs/architecture.md) carries the rest of the
+reasoning.
+
 #### The reproducibility record
 
 Spec §57 requires every analysis to record what it was computed against, so a
@@ -583,8 +711,8 @@ historical answer can be re-derived rather than re-guessed. Eight fields, and
 | `card_database_version` | the published catalog identifier that was current |
 | `image_sha256` | a digest per side, of the bytes that were *stored* |
 | `model_bundle_version` | null — no model exists yet |
-| `grading_rules_version` | null — no grading rules exist yet |
-| `market_snapshot_id` | null — market data is a later milestone |
+| `grading_rules_version` | null — the rules exist, but no run applies one |
+| `market_snapshot_id` | null — nothing has ingested, so there is none to name |
 | `economic_configuration_id` | null — the economic engine is a later milestone |
 
 Three things about it are load-bearing:
@@ -602,9 +730,17 @@ Three things about it are load-bearing:
   still expires with its session, and guarding `DELETE` would make that
   impossible.
 
-A null is a documented absence, not an omission. The four components that do not
-exist yet have columns anyway, so that a null years from now reads as "there was
-nothing to record" rather than as a field somebody forgot to write.
+A null is a documented absence rather than an omission, and there are two kinds
+of it here. The model bundle and the economic configuration **do not exist yet**,
+and neither does an ingested price — `analyses.market_snapshot_id` carries a
+foreign key and the worker resolves it on every run, but there is no snapshot to
+name, so the run records that rather than inventing one. Grading rules are the
+other kind: they exist and `tcg-seed-grading-rules` publishes them, but nothing
+in an analysis consults one until per-company grade prediction arrives, and
+recording a rules version on a run that never applied it would be a false claim
+rather than a record. Every one of them has a column regardless, so that a null
+years from now reads as "there was nothing to record" rather than as a field
+somebody forgot to write.
 
 ## Contributing
 
@@ -624,6 +760,7 @@ not merely out of the working tree.
 | --- | --- |
 | [`docs/architecture.md`](docs/architecture.md) | Domain architecture, the analysis pipeline, the invariants |
 | [`docs/retention.md`](docs/retention.md) | How long uploaded photographs are kept, and what deletes them |
+| [`docs/market-provider-research.md`](docs/market-provider-research.md) | The rubric, the survey, and the licensing determinations |
 | [`docs/adr/`](docs/adr) | Why things are the way they are, one decision per file |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Commits, pull requests, Definition of Done |
 | [`.env.example`](.env.example) | Every variable the stack reads |
