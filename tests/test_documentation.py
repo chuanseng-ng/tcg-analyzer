@@ -31,12 +31,22 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The documents a contributor is expected to follow. `docs/architecture.md` has
-# no commands but plenty of links, so it joins the link check further down.
-DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = ("README.md", "CONTRIBUTING.md")
-LINKED_DOCUMENTS: tuple[str, ...] = (
+# The documents a contributor is expected to follow. Every document that carries
+# a runnable command belongs here: the README is the front page rather than the
+# manual, so most of them now live under `docs/`, and a command that moved out of
+# this tuple is a command nothing checks any more.
+DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = (
     "README.md",
     "CONTRIBUTING.md",
+    "docs/analysis-pipeline.md",
+    "docs/api.md",
+    "docs/database.md",
+    "docs/development.md",
+)
+# `docs/architecture.md` has no commands but plenty of links, so the link check
+# covers more than the command check does.
+LINKED_DOCUMENTS: tuple[str, ...] = (
+    *DOCUMENTED_COMMAND_SOURCES,
     "docs/README.md",
     "docs/architecture.md",
     "docs/market-provider-research.md",
