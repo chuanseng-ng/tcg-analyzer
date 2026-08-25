@@ -15,7 +15,7 @@ something it cannot represent at all.
 
 from __future__ import annotations
 
-__all__ = ["EconomicEngineError", "InvalidCostConfiguration"]
+__all__ = ["EconomicEngineError", "InvalidCostConfiguration", "InvalidGradedPrice"]
 
 
 class EconomicEngineError(Exception):
@@ -33,4 +33,19 @@ class InvalidCostConfiguration(EconomicEngineError, ValueError):
     :class:`~tcg_domain.errors.InvalidMoney` refuses one — it is already wrong
     before any arithmetic happens — but it never reaches `Money` here, because
     a float is simply not a line item.
+    """
+
+
+class InvalidGradedPrice(EconomicEngineError, ValueError):
+    """A graded market price is not representable.
+
+    Covers a value that is not a :class:`~tcg_domain.money.Money` — a `float`
+    above all — a negative one, and a confidence that is not a
+    :class:`~tcg_domain.confidence.Confidence`.
+
+    Note what this is *not*. "No price is held for this grade" is not an error
+    and is not raised: it is absence, which
+    :func:`~tcg_economic_engine.expectation.expected_value` records in
+    ``unpriced_grades`` and renormalises around. This error means a price was
+    supplied and could not be read.
     """
