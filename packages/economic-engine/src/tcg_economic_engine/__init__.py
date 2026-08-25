@@ -23,14 +23,20 @@ from tcg_economic_engine.errors import (
     InvalidGradedPrice,
 )
 from tcg_economic_engine.expectation import ExpectedValue, GradedPrice, expected_value
+from tcg_economic_engine.profit import (
+    IncrementalGradingDecision,
+    incremental_grading_decision,
+)
 
 __all__ = [
     "CostConfiguration",
     "EconomicEngineError",
     "ExpectedValue",
     "GradedPrice",
+    "IncrementalGradingDecision",
     "InvalidCostConfiguration",
     "InvalidGradedPrice",
     "SellingFee",
     "expected_value",
+    "incremental_grading_decision",
 ]
