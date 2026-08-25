@@ -35,11 +35,13 @@ from typing import Any, Final
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import SessionStatus
 
 from tcg_api.analysis.tables import analyses, analysis_sessions
+
+# Aliased: this module exports its own `execute`, which would otherwise shadow it.
+from tcg_api.database import execute as _execute
 
 __all__ = [
     "TOKEN_BYTES",
@@ -148,20 +150,19 @@ def _record(row: sa.Row[Any]) -> AnalysisRecord:
 async def execute(db: AsyncSession, statement: Any) -> sa.Result[Any]:
     """Run `statement`, translating every driver failure into one exception.
 
-    Public because `state.py` performs its transitions through it: there is one
-    analysis store, so there should be one place where its driver's failures
-    stop being the driver's.
-
-    `OSError` alongside `SQLAlchemyError` for the reason `catalog/versions.py`
-    gives: a refused connection never becomes a SQLAlchemy error at all, since
-    asyncpg opens its socket through asyncio and raises `ConnectionRefusedError`
-    before the dialect has anything to wrap. That is precisely the case this
-    exception exists to name, so it must not be the one that escapes.
+    Public because `state.py`, `images.py` and `retention.py` all perform their
+    statements through it: there is one analysis store, so there should be one
+    place where its driver's failures stop being the driver's. Kept as this
+    module's own name after the translation itself was hoisted into
+    `database.execute` (#56), so those three import one exception's worth of
+    context rather than repeating it at each call.
     """
-    try:
-        return await db.execute(statement)
-    except (SQLAlchemyError, OSError) as error:
-        raise AnalysisStoreUnavailable("The analysis store could not be reached.") from error
+    return await _execute(
+        db,
+        statement,
+        unavailable=AnalysisStoreUnavailable,
+        message="The analysis store could not be reached.",
+    )
 
 
 async def resolve_session(db: AsyncSession, token: str | None) -> UUID | None:

@@ -34,19 +34,23 @@ which is not merely tidiness: building one runs `validated_grade_key`, so a
 stored grade a company does not issue is caught when it is read as well as when
 it is written. `validated_grade_key` names this caller.
 
-**Plain functions, no Protocol, and no error class.** A snapshot is this
-repository's own record of its own ingestion, not a replaceable external
-provider, so a port here would be an interface with one implementation —
-`tcg_api.grading.rules` and `tcg_api.analysis.sessions` are the precedents. And
-there is deliberately no `MarketSnapshotUnavailable` and no
-`(SQLAlchemyError, OSError)` wrapper: nothing puts an HTTP route in front of
-these functions yet. The only caller is the worker's claim, where a driver
-failure should propagate, roll the claim back and let the task retry — which is
-exactly what `CatalogUnavailable` already does two lines above it. #47 shipped
-`grading/rules.py` the same way and #48 added the error when a route arrived;
-#56 is that moment here, and it is also when `rules.py::_one_or_none`'s hoist
-falls due — a fifth near-identical wrapper is what that comment says not to
-write.
+**Plain functions and no Protocol.** A snapshot is this repository's own record
+of its own ingestion, not a replaceable external provider, so a port here would
+be an interface with one implementation — `tcg_api.grading.rules` and
+`tcg_api.analysis.sessions` are the precedents.
+
+**Every function raises `MarketSnapshotUnavailable` on a driver failure**, and
+that is one sentence rather than a per-function caveat on purpose: #54's
+ingestion gets the same translation the market route does. This module shipped
+without it, exactly as `grading/rules.py` did, until a route arrived — #56 is
+that route. The translation itself is `database.execute`, hoisted there in the
+same change: this would have been the fifth near-identical
+`(SQLAlchemyError, OSError)` wrapper, which is what `rules.py::_one_or_none`'s
+`ponytail:` comment said not to write.
+
+Being a `ConnectionError` keeps the worker's behaviour unchanged: a failure
+inside the claim still propagates, rolls the claim back and lets the task retry,
+which is what `CatalogUnavailable` already does two lines above `current_snapshot`.
 """
 
 from __future__ import annotations
@@ -63,9 +67,31 @@ from tcg_domain.grade import Grade
 from tcg_domain.money import Currency, Money
 from tcg_market_data import InvalidMarketObservation, MarketSnapshot, PriceObservation
 
+from tcg_api.database import execute
 from tcg_api.market.tables import market_observations, market_providers, market_snapshots
 
-__all__ = ["current_snapshot", "generate_snapshot", "get_snapshot", "resolve_prices"]
+__all__ = [
+    "MarketSnapshotUnavailable",
+    "current_snapshot",
+    "generate_snapshot",
+    "get_snapshot",
+    "resolve_prices",
+]
+
+_UNAVAILABLE: Final = "The market data store could not be reached."
+
+
+class MarketSnapshotUnavailable(ConnectionError):
+    """The snapshot store could not be read or written.
+
+    A `ConnectionError` for the reason `CatalogUnavailable` and
+    `AnalysisStoreUnavailable` are: the store being unreachable is a transport
+    fact, and a caller that only cares about that can catch the builtin.
+
+    **Not spec §66's `market_data_unavailable`.** That code means there is no
+    usable price; this means the question could not be asked. `errors.py` states
+    the distinction and the economic engine relies on it.
+    """
 
 
 _SNAPSHOT_COLUMNS: Final = (
@@ -194,7 +220,9 @@ async def generate_snapshot(db: AsyncSession, *, provider_id: UUID) -> MarketSna
         .values(id=uuid4(), provider_id=provider_id)
         .returning(*_SNAPSHOT_COLUMNS)
     )
-    result = await db.execute(statement)
+    result = await execute(
+        db, statement, unavailable=MarketSnapshotUnavailable, message=_UNAVAILABLE
+    )
     return _entity(result.one())
 
 
@@ -220,7 +248,9 @@ async def current_snapshot(db: AsyncSession) -> MarketSnapshot | None:
         market_snapshots.c.generated_at.desc(),
         market_snapshots.c.id.desc(),
     ).limit(1)
-    result = await db.execute(statement)
+    result = await execute(
+        db, statement, unavailable=MarketSnapshotUnavailable, message=_UNAVAILABLE
+    )
     row = result.one_or_none()
     return None if row is None else _entity(row)
 
@@ -233,7 +263,9 @@ async def get_snapshot(db: AsyncSession, snapshot_id: UUID) -> MarketSnapshot | 
     however many ingestion runs have happened since.
     """
     statement = _SELECT.where(market_snapshots.c.id == snapshot_id)
-    result = await db.execute(statement)
+    result = await execute(
+        db, statement, unavailable=MarketSnapshotUnavailable, message=_UNAVAILABLE
+    )
     row = result.one_or_none()
     return None if row is None else _entity(row)
 
@@ -268,6 +300,8 @@ async def resolve_prices(
         market_observations.c.provider_id == snapshot.provider,
         market_observations.c.created_at <= snapshot.generated_at,
     )
-    result = await db.execute(statement)
+    result = await execute(
+        db, statement, unavailable=MarketSnapshotUnavailable, message=_UNAVAILABLE
+    )
     reference = card.reference
     return tuple(_observation(row, reference) for row in result)

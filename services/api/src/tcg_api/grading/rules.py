@@ -46,10 +46,10 @@ from datetime import date
 from typing import Any, Final
 
 import sqlalchemy as sa
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_grading_companies import GradingRules
 
+from tcg_api.database import execute
 from tcg_api.grading.tables import grading_rules
 
 __all__ = ["GradingRulesUnavailable", "get_rules", "rules_in_force"]
@@ -98,23 +98,17 @@ _SELECT: Final = sa.select(_RANGED)
 async def _one_or_none(db: AsyncSession, statement: sa.Select[Any]) -> sa.Row[Any] | None:
     """Run a statement that resolves at most one version, translating failure.
 
-    `OSError` alongside `SQLAlchemyError` because a refused connection never
-    becomes a SQLAlchemy error at all — the same rule `catalog/cards.py`,
-    `catalog/versions.py` and `analysis/sessions.py` each state for themselves.
-
     `one_or_none()` rather than `first()`: both readers rely on at most one row
     matching, and a second one means the non-overlap invariant `tables.py`
     argues for has been broken. Raising there is the honest outcome.
 
-    ponytail: fourth near-identical wrapper in this service. Hoist
-    `catalog/cards.py::_execute`, `catalog/versions.py::_one_or_none`,
-    `analysis/sessions.py::execute` and this one into one helper parameterised
-    on the exception if a fifth ever appears.
+    The translation itself lives in `database.execute` — this comment used to
+    name the hoist as a `ponytail:` deferral, and #56 was the fifth wrapper that
+    made it fall due. Every store in this service now translates in one place;
+    what stays per-domain is which exception, because that is what a route turns
+    into a `details.reason`.
     """
-    try:
-        result = await db.execute(statement)
-    except (SQLAlchemyError, OSError) as error:
-        raise GradingRulesUnavailable(_UNAVAILABLE) from error
+    result = await execute(db, statement, unavailable=GradingRulesUnavailable, message=_UNAVAILABLE)
     return result.one_or_none()
 
 

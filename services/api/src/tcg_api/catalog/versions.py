@@ -24,12 +24,12 @@ from typing import Any, Final
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from tcg_domain.catalog_version import CardDatabaseVersion
 from tcg_domain.errors import CatalogUnavailable
 
 from tcg_api.catalog.tables import card_database_versions
+from tcg_api.database import execute
 
 __all__ = [
     "VERSION_NAMESPACE",
@@ -111,17 +111,14 @@ class PostgresCardDatabaseVersionRepository:
     async def _one_or_none(self, statement: sa.Select[Any]) -> sa.Row[Any] | None:
         # Every driver failure becomes `CatalogUnavailable` here, so no asyncpg
         # exception escapes the port and swapping this adapter for another
-        # changes no caller's error handling.
-        #
-        # `OSError` alongside `SQLAlchemyError` because a refused connection
-        # never becomes a SQLAlchemy error at all: asyncpg opens the socket
-        # through asyncio, which raises `ConnectionRefusedError` before the
-        # dialect has anything to wrap. That is precisely the case this port
-        # exists to name, so it must not be the one that escapes.
-        try:
-            result = await self._session.execute(statement)
-        except (SQLAlchemyError, OSError) as error:
-            raise CatalogUnavailable("The card catalog could not be reached.") from error
+        # changes no caller's error handling. `database.execute` is where that
+        # translation lives for every store in this service.
+        result = await execute(
+            self._session,
+            statement,
+            unavailable=CatalogUnavailable,
+            message="The card catalog could not be reached.",
+        )
         return result.one_or_none()
 
 

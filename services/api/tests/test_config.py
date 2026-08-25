@@ -13,9 +13,12 @@ query.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from pydantic import ValidationError
 from tcg_api.config import DATABASE_URL_ENV_VAR, Settings, get_settings
+from tcg_market_data import FRESH_WITHIN
 
 
 @pytest.fixture(autouse=True)
@@ -130,3 +133,31 @@ def test_an_unknown_driver_is_rejected_at_startup(monkeypatch: pytest.MonkeyPatc
         Settings(_env_file=None)
 
     assert DATABASE_URL_ENV_VAR in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Market data — spec §38, #56
+# ---------------------------------------------------------------------------
+def test_the_market_staleness_threshold_defaults_to_a_month() -> None:
+    """`price_confidence`'s own worked example is a month-old price."""
+    assert Settings(_env_file=None).market_stale_after_days == 30
+
+
+@pytest.mark.parametrize("days", [0, 1, -1])
+def test_the_staleness_threshold_must_exceed_the_fresh_window(days: int) -> None:
+    """Refused here so `price_confidence`'s ValueError is unreachable over HTTP.
+
+    `tcg_market_data.freshness.FRESH_WITHIN` is one day, and `price_confidence`
+    refuses a `stale_after` that is not longer than it — a deployment that set
+    this to a day by accident would otherwise report every price older than a
+    day at the floor, which looks exactly like a provider outage.
+    """
+    with pytest.raises(ValidationError, match="market_stale_after_days"):
+        Settings(_env_file=None, market_stale_after_days=days)
+
+
+def test_the_staleness_threshold_is_read_from_the_variable_freshness_names() -> None:
+    """`freshness.py` documents this exact name; a rename would silently unwire it."""
+    monkeypatched = Settings(_env_file=None, market_stale_after_days=14)
+    assert monkeypatched.market_stale_after_days == 14
+    assert timedelta(days=monkeypatched.market_stale_after_days) > FRESH_WITHIN

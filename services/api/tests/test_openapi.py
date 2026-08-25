@@ -96,6 +96,19 @@ def test_openapi_documents_the_grading_companies_path() -> None:
     assert "get" in schema["paths"]["/grading-companies"]
 
 
+def test_openapi_documents_the_card_market_path() -> None:
+    """Spec §64 names `GET /cards/{id}/market`; #56 serves it.
+
+    Mounted by a second router on the same `/cards` prefix. It has one segment
+    more than `/cards/{card_id}`, so the two cannot shadow each other whatever
+    order they include in.
+    """
+    schema = create_app().openapi()
+
+    assert "/cards/{card_id}/market" in schema["paths"]
+    assert "get" in schema["paths"]["/cards/{card_id}/market"]
+
+
 def test_openapi_documents_the_analysis_paths() -> None:
     """Spec §64 names `POST /analyses` and `GET /analyses/{id}`; #32 serves them.
 
@@ -160,6 +173,7 @@ def test_openapi_documents_the_throttled_response() -> None:
     assert "429" in paths["/analyses/{analysis_id}/images"]["post"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
     assert "429" not in paths["/cards/search"]["get"]["responses"]
+    assert "429" not in paths["/cards/{card_id}/market"]["get"]["responses"]
 
 
 # ---------------------------------------------------------------------------
