@@ -154,6 +154,13 @@ The ML system answers *"what grade might this receive?"*. The economic engine
 answers *"is grading worth it?"*. Neither may depend on the other's internals.
 This is the master rule above, restated as a code boundary.
 
+The engine answers that question twice, never once: the incremental grading
+decision and the investment return are separately named figures over separate
+denominators, and an absent acquisition cost makes the investment figures `null`
+rather than zero. See
+[ADR 0007](adr/0007-roi-and-the-capital-at-risk-basis.md), which fixes the
+`CapitalAtRisk` basis spec §42 requires be settled before ROI reaches the UI.
+
 ### External providers are replaceable
 
 Market data, card databases and marketplaces sit behind interfaces —
