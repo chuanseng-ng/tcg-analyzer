@@ -28,6 +28,27 @@ it — the V1 provider does not cover TAG at all, and the answer is
 `insufficient_information`, **never a substituted PSA price and never an
 interpolated one**.
 
+## Age is asked, never stored
+
+`freshness.py` answers spec §38's two questions — `price_age(observation, at=)`
+and `price_confidence(observation, at=, stale_after=)` — and both take the
+moment of asking as an argument, because a stored age is wrong the second after
+it is written. That is why `market_observations` has an `observed_at` and a
+`confidence` and neither of these.
+
+`confidence` and `price_confidence` are different numbers with similar names.
+The first is what the provider thought that one figure was worth; the second is
+that, discounted for how long ago it was true, and only the second is fit to
+show a user. The discount is flat through `FRESH_WITHIN` (one ingestion cycle
+— §37 refreshes daily, so a price a day old is the current one), then linear
+to `STALE_FLOOR` of the provider's figure, and never below.
+
+**The floor is above zero on purpose.** §38 forbids substituting stale data
+*without identifying it*, not using it. A month-old price on a thinly traded
+card is often the only evidence there is; reporting it at a fraction of its
+original confidence says "old, and we know it", where reporting it at zero
+would be indistinguishable from having nothing at all.
+
 A provider that *fails* is a different thing and raises
 `MarketProviderUnavailable`. That maps to spec §66's `provider_error`, **not**
 to `market_data_unavailable`; the two are deliberately distinct, and which of
@@ -60,9 +81,10 @@ make `ADAPTERS` the closed set of valid companies.
   snapshot, since §37 forbids calling one on the read path at all. `data_version`
   stays a snapshot field, not an observation one, so it is not on
   `PriceObservation`.
-- **No `price_age` and no computed `price_confidence`** — #55. The observation
-  carries the provider's own `confidence` in that one figure; staleness is a
-  function of `observed_at` and the moment of asking.
+- **No judgement about whether a confidence is good enough to act on** — M5.
+  `freshness.py` stops at the number; deciding that too much is unavailable and
+  the answer is `insufficient_information` needs the economic engine's inputs,
+  and guessing them now would be a seam built against nothing.
 - **No `Currency.USD`, and no conversion** — #53 owns normalization to SGD and
   is where a currency arrives alongside the rate that has to be recorded with
   it.
