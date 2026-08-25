@@ -25,6 +25,12 @@ from tcg_market_data.errors import (
     MarketDataError,
     MarketProviderUnavailable,
 )
+from tcg_market_data.freshness import (
+    FRESH_WITHIN,
+    STALE_FLOOR,
+    price_age,
+    price_confidence,
+)
 from tcg_market_data.memory import InMemoryMarketDataProvider
 from tcg_market_data.port import (
     MarketDataProvider,
@@ -35,6 +41,8 @@ from tcg_market_data.port import (
 from tcg_market_data.snapshot import MarketSnapshot
 
 __all__ = [
+    "FRESH_WITHIN",
+    "STALE_FLOOR",
     "InMemoryMarketDataProvider",
     "InvalidMarketObservation",
     "InvalidMarketSnapshot",
@@ -44,5 +52,7 @@ __all__ = [
     "MarketSnapshot",
     "MarketType",
     "PriceObservation",
+    "price_age",
+    "price_confidence",
     "validated_grade_key",
 ]
