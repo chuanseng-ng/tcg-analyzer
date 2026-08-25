@@ -146,3 +146,74 @@ apply-the-fee-inside-the-sum rule exists for.
 Acquisition cost is **not** part of this model: spec §45 makes it optional user
 input that must never be inferred, and ADR 0007 reports the investment figures as
 `null` when it is absent.
+
+## The incremental grading decision
+
+`incremental_grading_decision(distribution, prices, raw_price, costs,
+distribution_confidence=...)` is spec §41's first figure — *"I own this card; is
+grading it worth it?"* — on ADR 0007's basis:
+
+```python
+graded_proceeds       = Σ P(g)·(V(g) − sale_costs(V(g)))
+raw_opportunity_value = raw_market_value − sale_costs(raw_market_value)
+incremental_profit    = graded_proceeds − raw_opportunity_value − grading_costs
+```
+
+`prices` are the **gross** graded values; the fee is netted off here, per
+outcome. It returns an `IncrementalGradingDecision` or `InsufficientInformation`
+— `no_graded_price_available` propagated from the expectation, or
+`no_raw_price_available` when the raw side cannot be priced.
+
+| Field | What it is |
+| --- | --- |
+| `incremental_profit` | ADR 0007's term. **Negative is a real answer** |
+| `confidence` | `min(graded expectation, raw price)` |
+| `graded_proceeds` | `Σ P(g)·(V(g) − fee)`, conditional on a priced grade |
+| `raw_market_value` / `raw_selling_fee` / `raw_opportunity_value` | The raw branch, gross → fee → net |
+| `grading_costs` | Five line items; the selling fee is not one |
+| `costs` | The configuration it was computed against — already the per-line breakdown |
+| `unpriced_grades` / `unpriced_probability` | Carried through from the expectation |
+
+The breakdown is the point. A user shown a single number cannot tell whether the
+recommendation turns on a shipping estimate or on the gap between the raw and
+graded prices.
+
+### The two omissions this figure exists to prevent
+
+**Forgetting the raw-sale opportunity value.** The comparison is not "graded
+proceeds against grading costs" — it is "graded proceeds against what the card
+would fetch raw today". A card already worth 100 raw has to clear that bar
+before grading has earned anything.
+
+**Netting the selling fee off only one branch.** A raw sale pays it too, and the
+two fees differ because the two prices do. On ADR 0007's example 2 the correct
+answer is `84.00`; charging the fee only to the graded side reports `74.00`, and
+comparing gross graded proceeds against a net raw value reports `110.00`. The
+last is a silent, systematic bias toward *grade*.
+
+### No acquisition cost, and no ROI
+
+Spec §41 insists the incremental decision and the investment return be
+implemented rather than conflated, so this function has **no parameter and no
+field naming an acquisition cost** — there is no way to supply one, which is how
+`test_no_acquisition_cost_can_reach_this_figure` checks it. #61 adds
+`investment_return` beside it in the same module; #62 adds both ROIs.
+
+### `min`, not a product
+
+The figure is a *difference* between two quantities rather than one estimate
+refined by another, so it is no better than its weakest side. Multiplying would
+imply the two are independent evidence for one quantity and would compound a
+third factor onto the two `expected_value` already multiplies. `min` is monotone
+in both inputs, which is the property #64 needs.
+
+### The fee is applied inside the sum
+
+`incremental_grading_decision` nets `V(g) − fee.on(V(g))` into every rung of the
+ladder and then calls `expected_value`, which is why that function grows no fee
+parameter. `SellingFee.on` caps the fee at the sale price, so the two are not
+interchangeable: a flat `100.00` fee on `V(9) = 50`, `V(10) = 300` evenly split
+gives `100.00` inside the sum and `75.00` hoisted out. The cap also keeps every
+netted price non-negative, so `GradedPrice` still accepts it, and keeps
+`raw_opportunity_value` at or above zero — which is what makes ADR 0007's
+"neither denominator can be negative" true before #62 ever divides by it.
