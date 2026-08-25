@@ -8,8 +8,11 @@ mock so the assertions are about SQLAlchemy's actual behaviour.
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from tcg_api import database
 from tcg_api.config import DATABASE_URL_ENV_VAR, Settings
@@ -115,3 +118,103 @@ def test_check_database_connectivity_returns_false_instead_of_raising(
 
     assert result is False
     assert any("database" in record.message.lower() for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# execute
+#
+# The one place a driver failure stops being the driver's. Hoisted from four
+# near-identical wrappers — `catalog/cards.py`, `catalog/versions.py`,
+# `analysis/sessions.py` and `grading/rules.py` — when `market/snapshots.py`
+# would have been the fifth (#56).
+# ---------------------------------------------------------------------------
+class StoreUnavailable(ConnectionError):
+    """Stands in for the four real domain exceptions, which behave identically."""
+
+
+class FailingSession:
+    """Enough of an `AsyncSession` to fail, with the failure chosen per test."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def execute(self, statement: object) -> object:
+        raise self.error
+
+
+def failure(error: Exception) -> StoreUnavailable:
+    session = cast(AsyncSession, FailingSession(error))
+    with pytest.raises(StoreUnavailable) as raised:
+        asyncio.run(
+            database.execute(
+                session,
+                text("SELECT 1"),
+                unavailable=StoreUnavailable,
+                message="The store could not be reached.",
+            )
+        )
+    return raised.value
+
+
+def test_execute_translates_a_sqlalchemy_error_into_the_named_exception() -> None:
+    """The driver's exception becomes the store's, and stays on `__cause__`."""
+    driver_error = OperationalError("SELECT 1", {}, Exception("connection closed"))
+
+    translated = failure(driver_error)
+
+    assert str(translated) == "The store could not be reached."
+    assert translated.__cause__ is driver_error
+    assert "asyncpg" not in str(translated)
+
+
+def test_execute_translates_a_refused_connection_too() -> None:
+    """The limb all four hoisted wrappers documented separately.
+
+    asyncpg opens its socket through asyncio, so a refused connection raises
+    `ConnectionRefusedError` before the dialect has anything to wrap — it never
+    becomes a `SQLAlchemyError` at all. Catching only that one would let exactly
+    the case these exceptions exist to name escape untranslated.
+    """
+    refused = ConnectionRefusedError("[Errno 111] Connect call failed")
+
+    translated = failure(refused)
+
+    assert str(translated) == "The store could not be reached."
+    assert translated.__cause__ is refused
+
+
+def test_execute_returns_the_result_untouched() -> None:
+    """No wrapping on the success path: callers still call `.one_or_none()`."""
+
+    class Result:
+        pass
+
+    expected = Result()
+
+    class Session:
+        async def execute(self, statement: object) -> object:
+            return expected
+
+    result = asyncio.run(
+        database.execute(
+            cast(AsyncSession, Session()),
+            text("SELECT 1"),
+            unavailable=StoreUnavailable,
+            message="unused",
+        )
+    )
+
+    assert result is expected
+
+
+def test_execute_does_not_translate_a_programming_mistake() -> None:
+    """A `TypeError` from a malformed statement is a bug, not an outage."""
+    with pytest.raises(TypeError, match="not a statement"):
+        asyncio.run(
+            database.execute(
+                cast(AsyncSession, FailingSession(TypeError("not a statement"))),
+                text("SELECT 1"),
+                unavailable=StoreUnavailable,
+                message="unused",
+            )
+        )
