@@ -3,7 +3,20 @@ name = "tcg-economic-engine"
 version = "0.0.0"
 description = "Grading economics: expected value, decisions, strategies"
 requires-python = ">=3.12"
-dependencies = []
+# One workspace dependency and no third-party ones, and the package keeps it
+# that way: every figure here is a `tcg_domain.Money` or a `Decimal`, and the
+# grade distribution arrives as a `tcg_domain.GradeDistribution`. Nothing about
+# how that distribution was produced may reach this package — that is CLAUDE.md's
+# master architectural rule, and tests/test_economic_engine_purity.py enforces it.
+#
+# Plain dependencies rather than an extra: CI resolves the workspace with
+# `uv sync --all-packages`, which does not install extras.
+dependencies = [
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

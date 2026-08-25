@@ -1384,6 +1384,12 @@ source = { editable = "packages/domain" }
 name = "tcg-economic-engine"
 version = "0.0.0"
 source = { editable = "packages/economic-engine" }
+dependencies = [
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tcg-domain", editable = "packages/domain" }]
 
 [[package]]
 name = "tcg-grading-advisor"
