@@ -19,13 +19,16 @@ from __future__ import annotations
 from tcg_economic_engine.costs import CostConfiguration, SellingFee
 from tcg_economic_engine.errors import (
     EconomicEngineError,
+    InvalidAcquisitionCost,
     InvalidCostConfiguration,
     InvalidGradedPrice,
 )
 from tcg_economic_engine.expectation import ExpectedValue, GradedPrice, expected_value
 from tcg_economic_engine.profit import (
     IncrementalGradingDecision,
+    InvestmentReturn,
     incremental_grading_decision,
+    investment_return,
 )
 
 __all__ = [
@@ -34,9 +37,12 @@ __all__ = [
     "ExpectedValue",
     "GradedPrice",
     "IncrementalGradingDecision",
+    "InvalidAcquisitionCost",
     "InvalidCostConfiguration",
     "InvalidGradedPrice",
+    "InvestmentReturn",
     "SellingFee",
     "expected_value",
     "incremental_grading_decision",
+    "investment_return",
 ]

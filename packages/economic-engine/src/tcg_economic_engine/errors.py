@@ -15,7 +15,12 @@ something it cannot represent at all.
 
 from __future__ import annotations
 
-__all__ = ["EconomicEngineError", "InvalidCostConfiguration", "InvalidGradedPrice"]
+__all__ = [
+    "EconomicEngineError",
+    "InvalidAcquisitionCost",
+    "InvalidCostConfiguration",
+    "InvalidGradedPrice",
+]
 
 
 class EconomicEngineError(Exception):
@@ -33,6 +38,29 @@ class InvalidCostConfiguration(EconomicEngineError, ValueError):
     :class:`~tcg_domain.errors.InvalidMoney` refuses one — it is already wrong
     before any arithmetic happens — but it never reaches `Money` here, because
     a float is simply not a line item.
+    """
+
+
+class InvalidAcquisitionCost(EconomicEngineError, ValueError):
+    """An acquisition cost was supplied and could not be read.
+
+    Deliberately **not** :class:`InvalidCostConfiguration`. Spec §45 makes the
+    acquisition cost optional user input and #58 keeps it out of
+    :class:`~tcg_economic_engine.costs.CostConfiguration` entirely, so an error
+    naming the configuration would say the opposite of what the model does.
+
+    Note what this is *not*. `None` is **absence**, which ADR 0007 reports as
+    ``insufficient_information`` with reason ``acquisition_cost_not_supplied`` —
+    "I don't remember what I paid" is a legitimate state of the world, not a
+    caller's mistake. This error means a value arrived and was a `float`, was
+    not a :class:`~tcg_domain.money.Money`, or was negative.
+
+    The negative case is load-bearing rather than defensive, for the reason
+    :meth:`~tcg_economic_engine.costs.SellingFee.on`'s cap is: ADR 0007 asserts
+    that neither ``CapitalAtRisk`` denominator can be negative "because both are
+    sums of non-negative quantities", and ``CapitalAtRisk_inv`` is
+    ``acquisition_cost + grading_costs``. Refusing one here is what keeps that
+    claim true before #62 divides by it.
     """
 
 

@@ -196,8 +196,9 @@ last is a silent, systematic bias toward *grade*.
 Spec §41 insists the incremental decision and the investment return be
 implemented rather than conflated, so this function has **no parameter and no
 field naming an acquisition cost** — there is no way to supply one, which is how
-`test_no_acquisition_cost_can_reach_this_figure` checks it. #61 adds
-`investment_return` beside it in the same module; #62 adds both ROIs.
+`test_no_acquisition_cost_can_reach_this_figure` checks it. `investment_return`
+lives beside it in the same module and is where an acquisition cost goes; #62
+adds both ROIs.
 
 ### `min`, not a product
 
@@ -217,3 +218,75 @@ gives `100.00` inside the sum and `75.00` hoisted out. The cap also keeps every
 netted price non-negative, so `GradedPrice` still accepts it, and keeps
 `raw_opportunity_value` at or above zero — which is what makes ADR 0007's
 "neither denominator can be negative" true before #62 ever divides by it.
+
+## Investment return
+
+`investment_return(distribution, prices, acquisition_cost, costs,
+distribution_confidence=...)` is spec §41's second figure — *"I bought this card
+to grade it; did it pay?"* — on ADR 0007's basis:
+
+```python
+graded_proceeds   = Σ P(g)·(V(g) − sale_costs(V(g)))
+investment_profit = graded_proceeds − acquisition_cost − grading_costs
+```
+
+The raw market price is not an input. An investor's alternative was not buying
+the card, not selling it ungraded, which is why this figure has no `raw_`-named
+parameter or field and the incremental one has no acquisition cost. §41's "all
+costs" is `grading_costs` plus the selling fee, and the fee is already netted out
+of `graded_proceeds` — charging it again here would charge it twice.
+
+| Field | What it is |
+| --- | --- |
+| `investment_profit` | ADR 0007's term. **Negative is a real answer** |
+| `confidence` | The graded expectation's own, undiscounted |
+| `graded_proceeds` | `Σ P(g)·(V(g) − fee)`, conditional on a priced grade |
+| `acquisition_cost` | What the user says they paid. Always present on a result |
+| `grading_costs` | Five line items; the selling fee is not one |
+| `costs` | The configuration it was computed against |
+| `unpriced_grades` / `unpriced_probability` | Carried through from the expectation |
+
+### An absent acquisition cost is undefined, never zero
+
+Spec §45 makes the acquisition cost optional user input and says outright: *do
+not infer it*. So `None` returns `InsufficientInformation` with reason
+`acquisition_cost_not_supplied` — ADR 0007's own string, which #65 puts on the
+wire as `investment_roi_reason`.
+
+Zero would report the whole of `graded_proceeds` less costs as profit on a card
+the user may have paid dearly for. The raw market price — the other tempting
+substitution — answers a question nobody asked: *"what if you had bought it at
+today's price?"* The incremental figure is unaffected either way, because it
+never sees this number. Same rule as #91's "Not measured" is never `0%`.
+
+`0.00` **is** a real acquisition cost: a raffle win, or a pack from a box
+somebody else paid for. It reports a figure, and `None` does not — the same
+distinction `GET /cards/{id}/market` keeps between a price of `0.00` and `null`.
+
+That is why `acquisition_cost` is typed `Money | None` where the incremental
+figure's `raw_price` is `GradedPrice | None`. A market price is an *estimate* and
+carries an age-discounted confidence; an acquisition cost is a fact the user
+typed. A supplied one must be a non-negative `Money` — anything else raises
+`InvalidAcquisitionCost`, and the non-negative half is what keeps
+`CapitalAtRisk_inv = acquisition_cost + grading_costs` out of the negatives
+before #62 divides by it.
+
+### The confidence is the expectation's alone
+
+No `min` here, because there is no second estimate to be no better than. The two
+figures reaching different confidences on the same ladder is the point rather
+than an inconsistency: the incremental one is additionally exposed to a raw price
+that may be stale.
+
+### One formula, two figures, no shared object
+
+Both numerators are defined in terms of ADR 0007's `graded_proceeds`, so the
+net-the-fee-then-sum step lives in a single private `_graded_proceeds` — a rule
+this load-bearing written out twice is a rule that rots in one of the two places.
+It is a shared *formula*, never a shared object: each call returns its own frozen
+`ExpectedValue`, and the only object the two results have in common is the
+caller's own frozen `CostConfiguration`.
+
+Beyond that the two share no field name at all, which is what makes it impossible
+for a caller to display one figure under the other's label — the conflation spec
+§41 names specifically.
