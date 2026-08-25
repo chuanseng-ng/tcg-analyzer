@@ -22,7 +22,7 @@ from tcg_api.database import get_engine
 from tcg_api.errors import ErrorResponse, install_error_handlers
 from tcg_api.logging import configure_logging
 from tcg_api.rate_limit import get_redis
-from tcg_api.routers import analyses, cards, catalog, grading, health, readiness
+from tcg_api.routers import analyses, cards, catalog, grading, health, market, readiness
 from tcg_api.version import application_version
 
 __all__ = ["create_app"]
@@ -113,6 +113,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(catalog.router, responses=ERROR_RESPONSES)
     app.include_router(cards.router, responses=ERROR_RESPONSES)
     app.include_router(grading.router, responses=ERROR_RESPONSES)
+    app.include_router(market.router, responses=ERROR_RESPONSES)
     app.include_router(analyses.router, responses=ERROR_RESPONSES)
 
     structlog.get_logger(__name__).info(

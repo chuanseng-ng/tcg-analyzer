@@ -262,6 +262,27 @@ class Settings(BaseSettings):
     """
 
     # ----------------------------------------------------------------
+    # Market data — spec §37, §38, #55, #56.
+    # ----------------------------------------------------------------
+
+    market_stale_after_days: int = Field(default=30, gt=1)
+    """How old a price has to be before it is worth only `STALE_FLOOR`.
+
+    Configuration rather than a constant because it is a judgement about this
+    deployment's ingestion cadence, not a fact about prices —
+    `tcg_market_data.freshness` says so and names this variable. `GET
+    /cards/{id}/market` reads it; nothing stores a confidence derived from it.
+
+    Thirty days, matching `price_confidence`'s own worked example of a
+    month-old price on a thinly traded card. Spec §37 targets a daily refresh,
+    so a price this old means ingestion has been failing for weeks.
+
+    `gt=1` rather than `gt=0`: `price_confidence` refuses a `stale_after` that
+    is not longer than its one-day fresh window, and refusing it here instead
+    means that `ValueError` is unreachable from an HTTP request.
+    """
+
+    # ----------------------------------------------------------------
     # Object storage — the S3-compatible adapter in tcg_shared.storage.s3.
     #
     # These name S3 concepts because an adapter's configuration legitimately

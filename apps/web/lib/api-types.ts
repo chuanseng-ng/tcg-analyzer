@@ -156,6 +156,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cards/{card_id}/market": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one card's market prices from a snapshot
+         * @description Spec §64's market endpoint. Returns the ungraded price and every grade every supported company can issue, each with spec §38's `price_confidence` and `price_age` — **per price**, because a fresh raw price and a six-week-old PSA 10 price on the same card is the gap that matters. Served entirely from a market snapshot: no provider is called during a request (spec §37), and the snapshot's `data_version` is returned so a result can be shown for the date it describes rather than as today's. A price this snapshot does not hold is `null` rather than absent, and is never filled in from another company or interpolated. Pass `?snapshot_id=` to re-read exactly what a past analysis saw. No price history and no fees: the first is out under ADR 0006, the second is spec §45's user-configured economic input.
+         */
+        get: operations["read_card_market_cards__card_id__market_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/catalog/version": {
         parameters: {
             query?: never;
@@ -363,6 +383,27 @@ export interface components {
              * @example manual
              */
             provider: string;
+        };
+        /**
+         * CardMarketResponse
+         * @description The body of a successful `GET /cards/{card_id}/market`.
+         */
+        CardMarketResponse: {
+            /**
+             * Card Id
+             * Format: uuid
+             * @description The card these prices are for.
+             */
+            card_id: string;
+            /**
+             * Graded
+             * @description Every grade every supported company can issue, in the order `GET /grading-companies` lists them and ascending within each. The full ladder every time, holes included — spec §6's price panel is read down it, and spec §39's expected value is summed over it.
+             */
+            graded: components["schemas"]["GradedPriceResponse"][];
+            /** @description The ungraded market price, or `null` when the snapshot holds none. */
+            raw: components["schemas"]["PriceResponse"] | null;
+            /** @description The snapshot they were read from. Never null — see the 404 and 503. */
+            snapshot: components["schemas"]["MarketSnapshotResponse"];
         };
         /**
          * CardResponse
@@ -671,6 +712,26 @@ export interface components {
             message: string;
         };
         /**
+         * GradedPriceResponse
+         * @description What a card graded by one company at one grade is worth.
+         */
+        GradedPriceResponse: {
+            /**
+             * Company
+             * @description The company's lowercase slug, as `GET /grading-companies` spells it.
+             * @example psa
+             */
+            company: string;
+            /**
+             * Grade
+             * @description A grade on that company's scale, spelled exactly as `GET /grading-companies` spells it. The two agree by construction.
+             * @example 10
+             */
+            grade: string;
+            /** @description `null` when this snapshot holds no price for this company and grade — which is a fact about the data, never a substituted or interpolated figure from another company. Present-and-null rather than omitted, so a client never has to tell a gap apart from a missing field. */
+            price: components["schemas"]["PriceResponse"] | null;
+        };
+        /**
          * GradingCompaniesResponse
          * @description The body of a successful `GET /grading-companies`.
          */
@@ -869,6 +930,67 @@ export interface components {
          * @enum {string}
          */
         ImageSide: "front" | "back" | "angled_front" | "angled_back" | "surface_front" | "surface_back";
+        /**
+         * MarketSnapshotResponse
+         * @description Which cut of the market these prices came from — spec §36.
+         */
+        MarketSnapshotResponse: {
+            /**
+             * Data Version
+             * Format: date
+             * @description The snapshot's date, generated from `generated_at`. **Show this beside the prices**: a dated record of a past market is honest, where the same figures presented as current are not.
+             * @example 2026-08-25
+             */
+            data_version: string;
+            /**
+             * Generated At
+             * Format: date-time
+             * @description When the cut was taken. Every price here was stored at or before it.
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description Spec §57's `market_snapshot_id`. Pass it back as `?snapshot_id=` to read the same prices again however many ingestion runs have happened since.
+             */
+            id: string;
+        };
+        /**
+         * PriceResponse
+         * @description One price, with what it is currently worth believing.
+         */
+        PriceResponse: {
+            /**
+             * Amount
+             * @description The amount, as an exact decimal string with two places. A string rather than a number: a JSON number is a float in most clients, and a rounding error in a figure a user is deciding money on is not acceptable. **Zero is a real price** — a card nobody will pay for — and is why an absent price is `null` rather than `0.00`.
+             * @example 12.30
+             */
+            amount: string;
+            /**
+             * Currency
+             * @description ISO 4217 code for `amount`.
+             * @example SGD
+             */
+            currency: string;
+            /**
+             * Observed At
+             * Format: date-time
+             * @description When the provider saw this price. The instant `price_age_seconds` counts from.
+             */
+            observed_at: string;
+            /**
+             * Price Age Seconds
+             * @description Spec §38's `price_age`: how long before this request the price was observed. Computed now rather than stored, which is why the response is not cached. A provider clock running ahead of ours reads as 0, not as a negative age.
+             * @example 7200
+             */
+            price_age_seconds: number;
+            /**
+             * Price Confidence
+             * @description Spec §38's `price_confidence`: how much the provider was sure of this figure, discounted for how long ago it was true. Flat at the provider's own number for a day, then falling to a floor above zero — old evidence is still evidence, and reporting it at zero would be indistinguishable from having none. The provider's undiscounted figure is deliberately not exposed: only this one is fit to show a user.
+             * @example 0.86
+             */
+            price_confidence: number;
+        };
         /**
          * QualityCondition
          * @description Spec §19's eleven conditions, in the order the specification lists them.
@@ -1500,6 +1622,68 @@ export interface operations {
                 };
             };
             /** @description The card catalog could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_card_market_cards__card_id__market_get: {
+        parameters: {
+            query?: {
+                /** @description Read a specific snapshot instead of the current one — spec §57's reproducibility, so a past analysis can be re-read exactly. Omit it for today's prices. */
+                snapshot_id?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description This catalog's identifier for the card, as returned by a search. */
+                card_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CardMarketResponse"];
+                };
+            };
+            /** @description Either no card is recorded under that identifier — `card_not_identified`, with `details.card_id` — or no snapshot was generated under the one `?snapshot_id=` named, which is `market_data_unavailable` with `details.snapshot_id`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `market_data_unavailable` when nothing has been ingested yet, so there is no snapshot to read. `provider_error` when a store could not be reached, with `details.reason` of `market_store_unreachable` or `catalog_unreachable`. */
             503: {
                 headers: {
                     [name: string]: unknown;

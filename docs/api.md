@@ -39,6 +39,37 @@ with `Cache-Control: public, max-age=3600`. It carries no grading fees: spec §4
 makes those configurable economic inputs, so they belong to the economic engine's
 configuration rather than to a table here that would go stale quarterly.
 
+`GET /cards/{id}/market` returns what one card is worth: the ungraded price and
+every grade every supported company can issue, each carrying spec §38's
+`price_confidence` and `price_age`. **Per price, not per response** — a card can
+have a raw price from this morning and a PSA 10 price from six weeks ago, and one
+number for the pair would hide exactly the gap a user needs to see. Both are
+computed when the request arrives rather than stored, which is why this response
+alone is sent `Cache-Control: no-store`: a cached body would report an age frozen
+at the moment it was built, and spec §38 forbids presenting stale data without
+identifying it. Confidence is flat at the provider's own figure for a day, then
+falls to a floor above zero at `TCG_API_MARKET_STALE_AFTER_DAYS`; the floor is
+above zero because an old price on a thinly traded card is still the only
+evidence there is, and reporting it at zero would be indistinguishable from
+having none.
+
+**No provider is called during the request** (spec §37). Everything comes from a
+market snapshot ingested out of band, and the snapshot's identifier and
+`data_version` come back with it — show the date beside the prices, because a
+record of a past market is honest where the same figures presented as current are
+not. Pass `?snapshot_id=` to re-read exactly what a past analysis saw. A price the
+snapshot does not hold is `null` rather than absent, never filled in from another
+company and never interpolated: TAG carries no prices at all in V1, and the
+response says so eighteen times rather than borrowing PSA's. A price of `0.00` is
+a real observation about a card nobody will pay for and is emphatically not the
+same thing. Nothing has been ingested yet, so today every deployment answers 503
+`market_data_unavailable`; that is also the answer for a `?snapshot_id=` naming a
+snapshot that was never generated, at 404, since the request was well formed and
+the deployment simply holds no such cut. There is **no price history and no
+endpoint that lists snapshots**, deliberately — see
+[ADR 0006](adr/0006-the-v1-market-data-provider.md), whose redistribution test is
+functional rather than formal.
+
 `POST /analyses` starts an analysis. There is no login and no registration:
 V1 identifies a user by an anonymous session token only (spec §53), returned in
 an HTTP-only cookie that every later call must carry. `GET /analyses/{id}`
