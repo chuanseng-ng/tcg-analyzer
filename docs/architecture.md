@@ -161,6 +161,15 @@ rather than zero. See
 [ADR 0007](adr/0007-roi-and-the-capital-at-risk-basis.md), which fixes the
 `CapitalAtRisk` basis spec §42 requires be settled before ROI reaches the UI.
 
+The boundary is executed rather than asserted. `packages/economic-engine` depends
+on `tcg-domain` and nothing else, and a purity test proves it with a real import
+in a fresh interpreter — no `tcg_ml_*`, no provider client. Spec §40's expected
+value takes a `GradeDistribution` and a plain mapping of grade to price, so the
+engine cannot ask which model produced the distribution or which provider
+produced the prices. It is also entitled to refuse: a distribution whose grades
+carry no price at all yields `insufficient_information`, and an unpriced grade is
+excluded and recorded rather than silently valued at zero.
+
 ### External providers are replaceable
 
 Market data, card databases and marketplaces sit behind interfaces —

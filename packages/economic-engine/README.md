@@ -17,6 +17,78 @@ is the authority on what each one means.
 uv run pytest packages/economic-engine
 ```
 
+## Expected value
+
+`expected_value(distribution, prices, distribution_confidence=...)` is spec
+§40's `EV = Σ P(g)·V(g)`. It takes a `tcg_domain.GradeDistribution` and a
+`Mapping[Grade, GradedPrice]`, and returns an `ExpectedValue` or
+`InsufficientInformation` — never a bare number and never a fabricated one.
+
+| Field | What it is |
+| --- | --- |
+| `amount` | The expectation **conditional on a priced grade occurring** |
+| `confidence` | `distribution_confidence * Σ P(g)·price_confidence(g)`, clamped to 1 |
+| `unpriced_grades` | The grades excluded for want of a price, ascending |
+| `unpriced_probability` | How much of the distribution they carried |
+
+`distribution_confidence` has no default on purpose. Assuming `1.0` for a model
+nobody measured is the same fabrication as pricing an unknown grade at zero,
+pointed the other way.
+
+### A missing `V(g)` is never zero
+
+Spec §69/M5's acceptance criterion says so outright. Valuing an unpriced grade
+at nothing drags the expectation below every price in the ladder and can flip a
+recommendation from *grade* to *do_not_grade* on a card whose only unknown is
+its best outcome. The grade is excluded, the rest renormalised, and the
+exclusion reported in `unpriced_grades` / `unpriced_probability` so a caller can
+say which outcomes went unvalued.
+
+`insufficient_information` is returned only when no priced grade carries any
+probability at all. "Too little of the distribution is priced to be worth
+reporting" is a product judgement, and #64 owns it along with the rest of
+`grade | do_not_grade | insufficient_information`.
+
+A price of `0.00` is a price. `null` is not. That is the distinction
+`GET /cards/{id}/market` already keeps on the wire.
+
+### A bucket is worth the least it can be worth
+
+Spec §24's own example distribution is
+`{"10": 0.12, "9": 0.69, "8": 0.17, "7_or_lower": 0.02}`, and no market ladder
+ever prices `7_or_lower` — the 55 pairs `GET /cards/{id}/market` serves are
+exact grades. The rule:
+
+1. A price under the bucket's **own key** wins. A caller who priced
+   `7_or_lower` has answered the question.
+2. Otherwise the bucket takes the **lowest price among the grades it covers** —
+   for `7_or_lower`, the floor of what the ladder holds at or below 7; for
+   `9_or_higher`, the floor of what it holds at or above 9. Only exact grades
+   are scanned, so one bucket never prices another.
+3. Covering nothing priced makes it unpriced, like any other grade.
+
+The boundary grade's price was rejected: `7_or_lower` means "seven, or something
+worse", so valuing it at `V(7)` prices the worst-case tail at its best-case
+member — optimistic in the direction that tilts a recommendation toward *grade*.
+
+The cost is that the floor is read off whichever grades the caller happened to
+price, so a ladder missing its cheap end reports a higher floor for the same
+bucket. The upgrade, when that stops being good enough, is for the caller to
+price the bucket key itself — rule 1 already honours it — not for the engine to
+learn the shape of a company's scale.
+
+### The sum is exact and rounds once
+
+Terms are `Decimal` products accumulated at full precision and turned into
+`Money` at the end. `Money` quantises on construction, so multiplying per term
+would round eighteen times: a distribution whose grades are all worth `100.04`
+answers `100.05` that way, and `100.04` this way.
+
+There is no selling fee here and no cost of any kind. ADR 0007 applies
+`sale_costs` "per outcome, inside the sum, never to the expected value", which a
+caller satisfies by netting each `V(g)` **before** handing the ladder over —
+which is why this function grows no fee parameter and #60 owns cost subtraction.
+
 ## Cost configuration
 
 `CostConfiguration` is spec §46's six line items, all in SGD, all overridable,

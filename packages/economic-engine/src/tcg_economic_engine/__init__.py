@@ -17,11 +17,20 @@ Everything re-exported below is the package's public surface; nothing else is.
 from __future__ import annotations
 
 from tcg_economic_engine.costs import CostConfiguration, SellingFee
-from tcg_economic_engine.errors import EconomicEngineError, InvalidCostConfiguration
+from tcg_economic_engine.errors import (
+    EconomicEngineError,
+    InvalidCostConfiguration,
+    InvalidGradedPrice,
+)
+from tcg_economic_engine.expectation import ExpectedValue, GradedPrice, expected_value
 
 __all__ = [
     "CostConfiguration",
     "EconomicEngineError",
+    "ExpectedValue",
+    "GradedPrice",
     "InvalidCostConfiguration",
+    "InvalidGradedPrice",
     "SellingFee",
+    "expected_value",
 ]
