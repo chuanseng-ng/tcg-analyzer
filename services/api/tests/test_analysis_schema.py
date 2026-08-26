@@ -208,7 +208,12 @@ def session_values(**overrides: Any) -> dict[str, Any]:
     values: dict[str, Any] = {
         "id": SESSION_ID,
         "anonymous_session_id": "wCq3nB0Xr4h8kJ2vL7pT1yZ6sD9aF5gE",
-        "expires_at": NOW + timedelta(days=7),
+        # Off the real clock, not off `NOW`. `created_at` defaults to the
+        # database's `now()`, and `ck_analysis_sessions_expires_after_it_was_created`
+        # compares the two — so a frozen literal here is a fixture with an
+        # expiry date, which is what it turned out to be. `NOW` stays frozen for
+        # everything the database does not compare against its own clock.
+        "expires_at": datetime.now(UTC) + timedelta(days=7),
         "application_version": "0.1.0",
     }
     return values | overrides
