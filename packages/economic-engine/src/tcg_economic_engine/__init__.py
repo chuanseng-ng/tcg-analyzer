@@ -30,6 +30,12 @@ from tcg_economic_engine.profit import (
     incremental_grading_decision,
     investment_return,
 )
+from tcg_economic_engine.roi import (
+    IncrementalRoi,
+    InvestmentRoi,
+    incremental_roi,
+    investment_roi,
+)
 
 __all__ = [
     "CostConfiguration",
@@ -37,12 +43,16 @@ __all__ = [
     "ExpectedValue",
     "GradedPrice",
     "IncrementalGradingDecision",
+    "IncrementalRoi",
     "InvalidAcquisitionCost",
     "InvalidCostConfiguration",
     "InvalidGradedPrice",
     "InvestmentReturn",
+    "InvestmentRoi",
     "SellingFee",
     "expected_value",
     "incremental_grading_decision",
+    "incremental_roi",
     "investment_return",
+    "investment_roi",
 ]
