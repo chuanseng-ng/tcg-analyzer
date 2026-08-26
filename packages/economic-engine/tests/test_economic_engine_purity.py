@@ -74,6 +74,6 @@ def test_the_public_surface_is_explicit() -> None:
     exported = {name for name in vars(tcg_economic_engine) if not name.startswith("_")}
     # Submodules become attributes once imported, and `annotations` is the
     # __future__ flag every module carries. Neither is public surface.
-    incidental = {"annotations", "costs", "errors", "expectation", "profit"}
+    incidental = {"annotations", "costs", "errors", "expectation", "profit", "roi"}
 
     assert exported - incidental == set(tcg_economic_engine.__all__)

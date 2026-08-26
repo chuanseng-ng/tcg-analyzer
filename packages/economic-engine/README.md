@@ -197,8 +197,8 @@ Spec §41 insists the incremental decision and the investment return be
 implemented rather than conflated, so this function has **no parameter and no
 field naming an acquisition cost** — there is no way to supply one, which is how
 `test_no_acquisition_cost_can_reach_this_figure` checks it. `investment_return`
-lives beside it in the same module and is where an acquisition cost goes; #62
-adds both ROIs.
+lives beside it in the same module and is where an acquisition cost goes, and
+both ratios live in `roi.py` — see [The two ROIs](#the-two-rois) below.
 
 ### `min`, not a product
 
@@ -290,3 +290,80 @@ caller's own frozen `CostConfiguration`.
 Beyond that the two share no field name at all, which is what makes it impossible
 for a caller to display one figure under the other's label — the conflation spec
 §41 names specifically.
+
+## The two ROIs
+
+```python
+incremental_roi(incremental_grading_decision(...))  -> Uncertain[IncrementalRoi]
+investment_roi(investment_return(...))              -> Uncertain[InvestmentRoi]
+```
+
+```text
+CapitalAtRisk_incr = raw_opportunity_value + grading_costs
+incremental_roi    = incremental_profit / CapitalAtRisk_incr
+
+CapitalAtRisk_inv  = acquisition_cost + grading_costs
+investment_roi     = investment_profit / CapitalAtRisk_inv
+```
+
+Spec §42 says outright that *"the implementation must not casually choose a
+denominator."* ADR 0007 chose both; `roi.py` carries them out and decides
+nothing. All five of the ADR's worked examples are `tests/test_roi.py`'s
+fixtures verbatim — regenerating them from the implementation would void
+§69/M5's acceptance criterion.
+
+### There are two, and there is never one
+
+`incremental_roi` and `investment_roi` sit under §41's two profit figures, so a
+denominator serving both would be the conflation §41 forbids — and a field
+called `roi` alone would be the same mistake one layer down, since a caller
+cannot label a number it cannot tell apart. `IncrementalRoi` and `InvestmentRoi`
+share no field name. On ADR 0007's example 3 they report `0.5600` and `1.2286`
+for the same card on the same day.
+
+### The denominator includes the card
+
+"Return on the money you spend to grade" is the number most tools report, and
+ADR 0007 rejected it by name: the numerator has already subtracted the raw-sale
+opportunity value, so a denominator omitting it pretends the card itself is not
+committed. On example 1 the rejected basis reports `1.6667` where this one
+reports `0.6250`. **The smaller number is the correct one** —
+`test_the_rejected_costs_only_basis_is_not_what_we_report` is what fails if
+somebody "fixes" it, and carrying that difference to a user comparing against a
+competitor is real work for #66.
+
+The selling fee is in neither denominator. It is paid out of proceeds rather
+than committed up front, which is why `grading_costs` is five line items.
+
+### Nothing recomputed, nothing re-decided
+
+Both functions take the profit figure's `Uncertain` and read numerator and
+denominator off it, so a ratio can never drift from the profit it is a ratio of,
+and an unanswerable question is answered once where it arose:
+`no_raw_price_available`, `no_graded_price_available` and
+`acquisition_cost_not_supplied` all travel back out wearing their own reason.
+An absent acquisition cost never becomes zero here because it never reaches
+here.
+
+### A zero denominator is an admission, not infinity
+
+`InsufficientInformation("no_capital_at_risk")`, while the profit figure is
+still reported. The guard is ADR 0007's zero and only its zero: `Money`
+quantises to the cent so there is no near-zero band for a threshold to catch,
+and an exact `Decimal` division cannot produce an unbounded figure the way a
+float can. "Too small a base to report meaningfully" is #64's judgement about
+the recommendation — inventing a floor here would amend an accepted ADR from
+the implementation.
+
+### Four places, and a label nothing can change
+
+A ratio quantises to four places `ROUND_HALF_UP`, never to `Money`'s two, so
+#65 can put `"0.5600"` on the wire as a string and never route a decision figure
+through a binary float. The division runs in a `localcontext` at a fixed
+precision, because `Decimal.__truediv__` otherwise reads whatever some unrelated
+code left in the thread's context.
+
+The labels are ADR 0007's — **"Return on grading"** and **"Return on your
+investment"** — and each is a `ClassVar` rather than a field with a default: a
+default can be overridden at construction, and the whole point is that nothing
+can display `0.5600` under the investor's label.
