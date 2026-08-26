@@ -231,7 +231,10 @@ def open_an_analysis() -> None:
                 {
                     "id": SESSION_ID,
                     "anonymous_session_id": "wCq3nB0Xr4h8kJ2vL7pT1yZ6sD9aF5gE",
-                    "expires_at": SEEN_AT + timedelta(days=7),
+                    # Off the real clock, for the reason
+                    # `test_analysis_schema.py`'s `session_values` is: this one
+                    # was five days from the same failure.
+                    "expires_at": datetime.now(UTC) + timedelta(days=7),
                     "application_version": "0.1.0",
                 },
             ),
