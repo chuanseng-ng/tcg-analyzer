@@ -70,6 +70,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analyses/{analysis_id}/economic-configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure the economics of one analysis
+         * @description Records spec §46's cost line items, §45's optional acquisition cost, the grading companies to compare and §43's optimization mode, and attaches them to the analysis as the immutable configuration spec §57's reproducibility record names.
+         *
+         *     **Absent is not zero.** Omitting `acquisition_cost` means the user did not say, and the investment figures are then reported as `null` with `acquisition_cost_not_supplied`. `"0.00"` is a real acquisition cost. Nothing infers one.
+         *
+         *     **A configuration is written once.** Spec §5 puts this step immediately after card confirmation, so an analysis takes one while it is `analyzing`; a second submission is a 409, and pricing the card differently is a new analysis rather than an edit.
+         */
+        post: operations["configure_economics_analyses__analysis_id__economic_configuration_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analyses/{analysis_id}/images": {
         parameters: {
             query?: never;
@@ -88,6 +112,32 @@ export interface paths {
          *     The analysis moves to `uploading` on the first photograph and to `uploaded` once both sides have arrived, which is the state `POST /analyses/{id}/run` requires.
          */
         post: operations["upload_image_analyses__analysis_id__images_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analyses/{analysis_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The economics and recommendation for one analysis
+         * @description Spec §64's results endpoint: §6's economics per company, §41's **two separately named** profit figures, ADR 0007's two ratios, the full grade distribution (§2.1) and §44's recommendation.
+         *
+         *     **Nothing is conflated.** `incremental_grading_decision` answers 'should I grade the card I own?' and `investment_return` answers 'did buying it to grade make money?'. They share no field name, and neither ratio is called `roi`.
+         *
+         *     **`companies` is empty and `recommendation` is `null` until the analysis has been calculated.** No milestone predicts a grade distribution yet, so that is today's answer for every analysis. It is an empty result rather than an error because the analysis is fine — it simply has not got there.
+         *
+         *     `Cache-Control: no-store`: every figure here descends from prices whose confidence is discounted for age at the moment of asking.
+         */
+        get: operations["read_results_analyses__analysis_id__results_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -666,6 +716,75 @@ export interface components {
             version: string;
         };
         /**
+         * CompanyComparisonResponse
+         * @description Spec §49's compare table, in the order the chosen mode produced.
+         */
+        CompanyComparisonResponse: {
+            /** Label */
+            label: string;
+            /** Mode */
+            mode: string;
+            /** Ranked */
+            ranked: components["schemas"]["RankedCompanyResponse"][];
+            /**
+             * Tied At The Top
+             * @description Companies that tied for first. The order among them is alphabetical and **means nothing** — say so rather than presenting an arbitrary winner.
+             */
+            tied_at_the_top: string[];
+            /** Unranked */
+            unranked: components["schemas"]["UnrankedCompanyResponse"][];
+        };
+        /**
+         * CompanyEconomicsResponse
+         * @description Every M5 figure for one grading company.
+         *
+         *     Four figures, four reasons. Each figure is `null` when it could not be
+         *     computed and its reason says which question could not be asked —
+         *     `no_raw_price_available`, `no_graded_price_available`,
+         *     `acquisition_cost_not_supplied`, `no_capital_at_risk`. Present-and-null
+         *     beside a reason, never omitted, and never zero.
+         */
+        CompanyEconomicsResponse: {
+            /**
+             * Company
+             * @example psa
+             */
+            company: string;
+            costs: components["schemas"]["CostConfigurationResponse"];
+            /**
+             * Distribution Confidence
+             * @description How far this company's model is trusted. Never assumed.
+             */
+            distribution_confidence: number;
+            /** @description Spec §43's `expected_graded_value` — ADR 0007's `graded_proceeds`, **net of the selling fee**, the fee applied inside the sum. */
+            expected_graded_value: components["schemas"]["ExpectedValueResponse"] | null;
+            /**
+             * Expected Graded Value Reason
+             * @description Why there is no expectation, when there is none.
+             */
+            expected_graded_value_reason: string | null;
+            /**
+             * Grade Distribution
+             * @description **The full distribution, always** — spec §2.1 retains it even when a UI shows one number. Ascending by grade.
+             */
+            grade_distribution: components["schemas"]["GradeProbabilityResponse"][];
+            incremental_grading_decision: components["schemas"]["IncrementalGradingDecisionResponse"] | null;
+            /** Incremental Reason */
+            incremental_reason: string | null;
+            incremental_roi: components["schemas"]["RatioResponse"] | null;
+            /** Incremental Roi Reason */
+            incremental_roi_reason: string | null;
+            /** Investment Reason */
+            investment_reason: string | null;
+            investment_return: components["schemas"]["InvestmentReturnResponse"] | null;
+            investment_roi: components["schemas"]["RatioResponse"] | null;
+            /**
+             * Investment Roi Reason
+             * @description `acquisition_cost_not_supplied` when the user did not say what they paid — ADR 0007's own string, and never a zero standing in for it.
+             */
+            investment_roi_reason: string | null;
+        };
+        /**
          * ConditionVerdict
          * @description What the gate was able to say about one condition.
          *
@@ -675,6 +794,129 @@ export interface components {
          * @enum {string}
          */
         ConditionVerdict: "clear" | "detected" | "undetermined";
+        /**
+         * CostConfigurationRequest
+         * @description Spec §46's six line items. **Never a total** — #58 binds that there is none.
+         *
+         *     Every field has the engine's own default, so a client that has nothing to say
+         *     about shipping does not have to invent a number, and the defaults live in one
+         *     place rather than being restated in `apps/web`. They are illustrative
+         *     placeholders and deliberately non-zero: an all-zero configuration reports
+         *     grading as costless and tilts every recommendation toward *grade*.
+         */
+        CostConfigurationRequest: {
+            /**
+             * Grading Fee
+             * @example 40.00
+             */
+            grading_fee?: number | string;
+            /**
+             * Insurance
+             * @example 40.00
+             */
+            insurance?: number | string;
+            /**
+             * Miscellaneous
+             * @example 40.00
+             */
+            miscellaneous?: number | string;
+            /**
+             * Outbound Shipping
+             * @example 40.00
+             */
+            outbound_shipping?: number | string;
+            /**
+             * Return Shipping
+             * @example 40.00
+             */
+            return_shipping?: number | string;
+            selling_fee?: components["schemas"]["SellingFeeRequest"];
+        };
+        /**
+         * CostConfigurationResponse
+         * @description Spec §46's line items as stored. **There is no total, by design.**
+         *
+         *     §47's future dimensions — country, tax, service tier, shipping provider —
+         *     attach to individual lines, so a total is a figure that would have to be
+         *     unpicked again. A client that wants one adds five numbers and knows which
+         *     five it added; the selling fee is not one of them, because ADR 0007 nets it
+         *     out of proceeds rather than committing it up front.
+         */
+        CostConfigurationResponse: {
+            /** Grading Fee */
+            grading_fee: string;
+            /** Insurance */
+            insurance: string;
+            /** Miscellaneous */
+            miscellaneous: string;
+            /** Outbound Shipping */
+            outbound_shipping: string;
+            /** Return Shipping */
+            return_shipping: string;
+            selling_fee: components["schemas"]["SellingFeeResponse"];
+        };
+        /**
+         * EconomicConfigurationRequest
+         * @description What the user says the economics of their decision are — spec §45, §46, §43.
+         */
+        EconomicConfigurationRequest: {
+            /**
+             * Acquisition Cost
+             * @description What the user paid, if they said. **Absent is not zero**: `null` means they did not say and is reported as `acquisition_cost_not_supplied`, while `"0.00"` is a real acquisition cost — a raffle win, a pull from somebody else's pack. Spec §45 forbids inferring it, so nothing here fills it in from the market price.
+             * @example 120.00
+             */
+            acquisition_cost?: (number | string) | null;
+            costs?: components["schemas"]["CostConfigurationRequest"];
+            /**
+             * Grading Companies
+             * @description Which companies to compare, as the slugs `GET /grading-companies` uses. At least one, and no duplicates — two entries for one company would list it twice and make 'best' meaningless.
+             * @example [
+             *       "psa",
+             *       "bgs"
+             *     ]
+             */
+            grading_companies: string[];
+            /**
+             * Optimization Mode
+             * @description Spec §43's optimization mode: `expected_profit`, `roi`, `highest_grade_probability`, `lowest_total_cost` or `expected_graded_value`. **`roi` is a mode name, never a figure** — the results name two ratios and neither is called `roi`.
+             * @example expected_profit
+             */
+            optimization_mode: string;
+        };
+        /**
+         * EconomicConfigurationResponse
+         * @description One stored configuration, read back exactly as it was written.
+         */
+        EconomicConfigurationResponse: {
+            /**
+             * Acquisition Cost
+             * @description What the user paid, or `null` if they did not say. **`null` is not `"0.00"`** — the second is a real acquisition cost, and the two reach different §41 answers.
+             */
+            acquisition_cost: string | null;
+            costs: components["schemas"]["CostConfigurationResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Currency
+             * @description ISO 4217 code for every amount in this object.
+             * @example SGD
+             */
+            currency: string;
+            /** Grading Companies */
+            grading_companies: string[];
+            /**
+             * Id
+             * Format: uuid
+             * @description Spec §57's `economic_configuration`. Immutable: an analysis references this identifier for as long as it exists, and pricing the card differently is a new analysis rather than an edit.
+             */
+            id: string;
+            /** Optimization Mode */
+            optimization_mode: string;
+            thresholds: components["schemas"]["RecommendationThresholdsResponse"];
+        };
         /**
          * ErrorCode
          * @description Spec §66, verbatim. The closed set of things that can go wrong.
@@ -710,6 +952,44 @@ export interface components {
              * @description Human-readable summary. Safe to show a user; never contains internal detail.
              */
             message: string;
+        };
+        /**
+         * ExpectedValueResponse
+         * @description Spec §40's expectation, and what it could not see.
+         */
+        ExpectedValueResponse: {
+            /**
+             * Amount
+             * @description The expectation **conditional on a priced grade occurring**: an unpriced grade is excluded and the rest renormalised, never valued at zero.
+             * @example 234.00
+             */
+            amount: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Unpriced Grades
+             * @description Which grades the snapshot held no price for. Empty is the good case.
+             */
+            unpriced_grades: string[];
+            /**
+             * Unpriced Probability
+             * @description How much of the distribution those grades carried.
+             */
+            unpriced_probability: number;
+        };
+        /**
+         * GradeProbabilityResponse
+         * @description One term of a grade distribution — spec §2.1's `P(g)`.
+         */
+        GradeProbabilityResponse: {
+            /**
+             * Grade
+             * @description A grade key, spelled as `GET /grading-companies` spells it. A collapsed tail such as `7_or_lower` is a grade key too.
+             * @example 10
+             */
+            grade: string;
+            /** Probability */
+            probability: number;
         };
         /**
          * GradedPriceResponse
@@ -931,6 +1211,106 @@ export interface components {
          */
         ImageSide: "front" | "back" | "angled_front" | "angled_back" | "surface_front" | "surface_back";
         /**
+         * IncrementalGradingDecisionResponse
+         * @description Spec §41's first figure: **should I grade the card I already own?**
+         *
+         *     The acquisition cost is a sunk cost here and cannot reach this figure — there
+         *     is no field for it, which is how the engine keeps it out and how this keeps
+         *     it out. Compare `InvestmentReturnResponse`, which answers a different
+         *     question with different numbers; the two share no field name on purpose.
+         */
+        IncrementalGradingDecisionResponse: {
+            /** Confidence */
+            confidence: number;
+            /**
+             * Graded Proceeds
+             * @description Sum over grades of P(g)*(V(g) less the selling fee on V(g)), the fee applied per outcome.
+             */
+            graded_proceeds: string;
+            /**
+             * Grading Costs
+             * @description Five of spec §46's six line items. The selling fee is deliberately not among them: ADR 0007 nets it out of proceeds rather than counting it as capital committed up front.
+             */
+            grading_costs: string;
+            /**
+             * Incremental Profit
+             * @description Expected graded proceeds, less the raw-sale opportunity value, less grading costs. **A negative figure is an answer**, not an error: it means selling the card raw is the better move.
+             * @example 24.00
+             */
+            incremental_profit: string;
+            /**
+             * Raw Market Value
+             * @description What the card fetches ungraded, gross.
+             */
+            raw_market_value: string;
+            /**
+             * Raw Opportunity Value
+             * @description The raw sale, net of its own selling fee. **Both branches pay the fee** — charging it only to the graded side is a systematic bias toward grading.
+             */
+            raw_opportunity_value: string;
+            /**
+             * Raw Selling Fee
+             * @description What selling it raw would cost.
+             */
+            raw_selling_fee: string;
+            /** Unpriced Grades */
+            unpriced_grades: string[];
+            /** Unpriced Probability */
+            unpriced_probability: number;
+        };
+        /**
+         * InvestmentReturnResponse
+         * @description Spec §41's second figure: **did buying this card to grade make money?**
+         *
+         *     Answerable only when the user said what they paid. Shares no field name with
+         *     the incremental decision, so no client can render one under the other's
+         *     label.
+         */
+        InvestmentReturnResponse: {
+            /**
+             * Acquisition Cost
+             * @description What the user said they paid.
+             */
+            acquisition_cost: string;
+            /** Confidence */
+            confidence: number;
+            /** Graded Proceeds */
+            graded_proceeds: string;
+            /** Grading Costs */
+            grading_costs: string;
+            /**
+             * Investment Profit
+             * @description Expected graded proceeds, less the acquisition cost, less grading costs.
+             */
+            investment_profit: string;
+            /** Unpriced Grades */
+            unpriced_grades: string[];
+            /** Unpriced Probability */
+            unpriced_probability: number;
+        };
+        /**
+         * MarketSnapshotReference
+         * @description Which cut of the market these economics were computed against — spec §36.
+         */
+        MarketSnapshotReference: {
+            /**
+             * Data Version
+             * @description **Show this beside the figures.** A dated record of a past market is honest; the same numbers presented as current are not.
+             * @example 2026-08-25
+             */
+            data_version: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /**
          * MarketSnapshotResponse
          * @description Which cut of the market these prices came from — spec §36.
          */
@@ -1036,6 +1416,49 @@ export interface components {
          * @enum {string}
          */
         QualityStatus: "good" | "acceptable" | "poor" | "unusable";
+        /** RankedCompanyResponse */
+        RankedCompanyResponse: {
+            /** Company */
+            company: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Figure
+             * @description **What was ranked** — `incremental_roi`, `incremental_profit`, `grading_costs`, `graded_proceeds` or a `P(g)`. Never `roi`: §43's `roi` is a mode name and no figure carries it, so a comparison cannot be shown under a label its number does not match.
+             * @example incremental_profit
+             */
+            figure: string;
+            /**
+             * Value
+             * @description The figure this company was ranked on, as a decimal string.
+             */
+            value: string;
+        };
+        /**
+         * RatioResponse
+         * @description One of ADR 0007's two ratios. **Neither is ever called `roi` alone.**
+         */
+        RatioResponse: {
+            /**
+             * Capital At Risk
+             * @description The denominator. **It includes the card**, which is why this number is smaller than figures quoted elsewhere: the numerator has already subtracted the raw-sale opportunity value, so a denominator omitting it would pretend the card is not committed. See ADR 0007.
+             */
+            capital_at_risk: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Label
+             * @description What to call this ratio on screen, from ADR 0007.
+             * @example Return on grading
+             */
+            label: string;
+            /**
+             * Value
+             * @description A ratio quantised to **four** places, as a decimal string. `"0.6250"` is 62.5%. Four rather than money's two because a ratio is not money, and a string for the same reason an amount is one.
+             * @example 0.6250
+             */
+            value: string;
+        };
         /**
          * ReadinessChecks
          * @description Per-dependency outcome. Further dependencies join this model as they land.
@@ -1066,6 +1489,105 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded";
+        };
+        /**
+         * ReasonResponse
+         * @description Why the recommendation is what it is — spec §44's `reason`.
+         *
+         *     **Four fields and no sentence.** Spec §50 forbids explanations unrelated to
+         *     model evidence, and a reason that is nothing but the figure, its value and
+         *     the threshold it was measured against cannot be unrelated to the evidence.
+         *     The copy that turns this into English lives in `apps/web`; adding a message
+         *     here would put a second, unverifiable explanation on the wire.
+         */
+        ReasonResponse: {
+            /**
+             * Code
+             * @description What fired, as a stable machine name. Key your copy off this.
+             * @example profit_clears_margin
+             */
+            code: string;
+            /**
+             * Figure
+             * @description What was measured.
+             * @example incremental_profit
+             */
+            figure: string;
+            /**
+             * Threshold
+             * @description What it was measured against, on the same terms.
+             */
+            threshold: string | null;
+            /**
+             * Value
+             * @description The number measured, as a decimal string. `null` when there was no number — a propagated admission is the absence of a figure, not a figure with a bad value.
+             */
+            value: string | null;
+        };
+        /**
+         * RecommendationResponse
+         * @description Spec §44's output. The mode picks the company; the economics pick the action.
+         */
+        RecommendationResponse: {
+            comparison: components["schemas"]["CompanyComparisonResponse"] | null;
+            /**
+             * Comparison Reason
+             * @description `no_company_can_be_ranked` when no company could be ordered at all.
+             */
+            comparison_reason: string | null;
+            /**
+             * Confidence
+             * @description The weakest of the confidences that exist — a minimum, never a product.
+             */
+            confidence: number;
+            /**
+             * Failed Gates
+             * @description Every gate that failed, not only the decisive one, so a user who fixes the first is not sent into a second wall nobody mentioned.
+             */
+            failed_gates: components["schemas"]["ReasonResponse"][];
+            /** Figure Confidence */
+            figure_confidence: number | null;
+            /** Grade Confidence */
+            grade_confidence: number | null;
+            /** Image Quality */
+            image_quality: number;
+            reason: components["schemas"]["ReasonResponse"];
+            /**
+             * Recommended Action
+             * @description `grade`, `do_not_grade` or `insufficient_information`.
+             * @example grade
+             */
+            recommended_action: string;
+            /**
+             * Recommended Company
+             * @description **`null` whenever the action is `insufficient_information`.** Naming a company beside 'we cannot tell' is exactly the forced recommendation §44 forbids — a screen shown both renders the company as the answer.
+             */
+            recommended_company: string | null;
+        };
+        /**
+         * RecommendationThresholdsResponse
+         * @description Where the answer changes — #64's five gates, as they stood for this analysis.
+         *
+         *     Reported rather than accepted: they are policy, not a card's costs. They are
+         *     stored per configuration so a recommendation stays reproducible when M7/M8's
+         *     calibration moves them, and they are shown so a user can see that
+         *     "insufficient information" was a threshold being missed rather than an
+         *     opinion.
+         */
+        RecommendationThresholdsResponse: {
+            /** Maximum Unpriced Probability */
+            maximum_unpriced_probability: number;
+            /** Minimum Figure Confidence */
+            minimum_figure_confidence: number;
+            /** Minimum Grade Confidence */
+            minimum_grade_confidence: number;
+            /** Minimum Image Quality */
+            minimum_image_quality: number;
+            /**
+             * Minimum Incremental Profit
+             * @example 5.00
+             */
+            minimum_incremental_profit: string;
         };
         /**
          * RecordCounts
@@ -1150,6 +1672,87 @@ export interface components {
              * @description The model bundle that produced the condition and grade predictions. Always null in V1: no model exists yet, and an explicit identifier — never `/latest/` — is what will go here when one does (spec §31).
              */
             model_bundle_version: string | null;
+        };
+        /**
+         * ResultsResponse
+         * @description The body of `GET /analyses/{analysis_id}/results` — spec §64, §6, §41, §44.
+         */
+        ResultsResponse: {
+            /**
+             * Analysis Id
+             * Format: uuid
+             */
+            analysis_id: string;
+            /**
+             * Card Id
+             * @description The confirmed card, or `null` before confirmation.
+             */
+            card_id: string | null;
+            /**
+             * Companies
+             * @description One entry per configured company. **Empty until a grade distribution exists** — no milestone predicts one yet, so this is `[]` today, and it is empty rather than absent so a client parses the same shape either way.
+             */
+            companies: components["schemas"]["CompanyEconomicsResponse"][];
+            /**
+             * Currency
+             * @description ISO 4217 code for every amount below.
+             * @example SGD
+             */
+            currency: string;
+            /** @description What the economics were computed under, or `null` if none was supplied. */
+            economic_configuration: components["schemas"]["EconomicConfigurationResponse"] | null;
+            /** @description The snapshot recorded on this analysis, or `null` when nothing had been ingested when it ran. */
+            market_snapshot: components["schemas"]["MarketSnapshotReference"] | null;
+            /** @description Spec §44's answer, or `null` when the analysis has not been calculated. **`null` is not `insufficient_information`**: the first means nobody has asked yet, the second that we asked and the data did not support an answer. */
+            recommendation: components["schemas"]["RecommendationResponse"] | null;
+            /**
+             * Status
+             * @description The analysis's state, so a client can tell 'not finished yet' from 'we could not tell'. Spec §65's states; poll `GET /analyses/{id}` for it.
+             */
+            status: string;
+        };
+        /**
+         * SellingFeeRequest
+         * @description Spec §46's `selling_fee`: a proportion of the sale price, plus a flat part.
+         */
+        SellingFeeRequest: {
+            /**
+             * Flat
+             * @description The fixed part, charged per sale regardless of price.
+             * @example 40.00
+             */
+            flat?: number | string;
+            /**
+             * Rate
+             * @description The proportion of the realised sale price taken as commission. **A proportion in [0, 1], never a percentage**: ten percent is `"0.10"`, and `"10"` is refused rather than silently read as 1000%.
+             * @example 0.10
+             */
+            rate?: number | string;
+        };
+        /** SellingFeeResponse */
+        SellingFeeResponse: {
+            /**
+             * Flat
+             * @description The fixed part, per sale.
+             * @example 0.00
+             */
+            flat: string;
+            /**
+             * Rate
+             * @description A proportion in [0, 1], as a decimal string.
+             * @example 0.1000
+             */
+            rate: string;
+        };
+        /** UnrankedCompanyResponse */
+        UnrankedCompanyResponse: {
+            /** Company */
+            company: string;
+            /**
+             * Reason
+             * @description Why this company has no place in the order. **It is unranked, not last** — a sentinel sorted to the bottom would read as 'the worst company', which is a claim nobody computed.
+             */
+            reason: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1350,6 +1953,79 @@ export interface operations {
             };
         };
     };
+    configure_economics_analyses__analysis_id__economic_configuration_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EconomicConfigurationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EconomicConfigurationResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. The bare 404 `GET /analyses/{id}` answers with. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The analysis is not ready for a configuration, or already has one. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The configuration is malformed — a negative amount, a selling-fee rate outside [0, 1], an unknown grading company or an unknown optimization mode. FastAPI's own validation body: spec §66 has no code for a malformed request, and forcing one would be a lie in the field callers trust. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store or the configuration store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     upload_image_analyses__analysis_id__images_post: {
         parameters: {
             query: {
@@ -1428,6 +2104,63 @@ export interface operations {
                 };
             };
             /** @description The analysis store or the image store could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_results_analyses__analysis_id__results_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultsResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. The bare 404 `GET /analyses/{id}` answers with. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The analysis store, the configuration store or the market snapshot store could not be reached. */
             503: {
                 headers: {
                     [name: string]: unknown;
