@@ -367,3 +367,120 @@ The labels are ADR 0007's — **"Return on grading"** and **"Return on your
 investment"** — and each is a `ClassVar` rather than a field with a default: a
 default can be overridden at construction, and the whole point is that nothing
 can display `0.5600` under the investor's label.
+
+## Optimization strategies
+
+```python
+company_outlook(company, distribution, prices, raw_price, acquisition_cost, costs,
+                distribution_confidence=...)      -> CompanyOutlook
+rank(outlooks, strategy_for("roi"))               -> Uncertain[CompanyComparison]
+```
+
+Spec §43 fixes five modes and requires the architecture to admit more:
+
+| mode | ranks on | direction |
+| --- | --- | --- |
+| `expected_profit` | `incremental_profit` | highest |
+| `roi` | `incremental_roi` | highest |
+| `highest_grade_probability` | `P(the distribution's top grade)` | highest |
+| `lowest_total_cost` | `grading_costs` — five line items | **lowest** |
+| `expected_graded_value` | `graded_proceeds` | highest |
+
+The point of having five is that they disagree. On the three-company fixture in
+`tests/test_strategies.py` — one card, PSA, TAG and BGS — PSA wins on profit,
+ROI and graded value, TAG on the odds of a ten, and BGS on cost. If one company
+won everything, these would not be five objectives.
+
+`rank` returns spec §49's "Compare PSA / TAG / BGS": an order, best first, plus
+the companies it could not rank and why. It carries **no** `recommended_action`,
+`recommended_company` or `reason` — that is §44's vocabulary and #64's work.
+
+### Two of the five are not economic objectives
+
+`highest_grade_probability` ranks by the odds of the best outcome and can
+recommend a company that loses money; `lowest_total_cost` ranks by what the
+submission costs and ignores what comes back. Both are legitimate user
+preferences, and "improving" either by blending profit back in deletes the
+preference the user expressed.
+`test_a_money_losing_company_still_wins_the_two_non_economic_modes` is what
+fails when somebody tries.
+
+`lowest_total_cost` reads `grading_costs` as it stands — no total is computed
+and none is stored, because #58 binds that costs stay named line items. The
+selling fee is excluded twice over: ADR 0007 keeps it out of committed capital,
+and it is a function of the sale price, so including it would fold the outcome
+into the one mode that exists to ignore the outcome.
+
+### The incremental pair, always
+
+`expected_profit` and `roi` read the collector's figures whether or not an
+acquisition cost was supplied. It is the ordinary question, the one #66 shows by
+default, and the only one answerable without user input; the investment figures
+are computed and carried on every `CompanyOutlook` for #64 to report, and simply
+never decide an order. A mode whose denominator depended on which form field had
+been filled would be the casual choice §42 forbids.
+
+**`roi` is a mode name, and no figure is ever called `roi`.** What a candidate
+was ranked on is named in `RankedCompany.figure` — `incremental_roi`,
+`incremental_profit`, `grading_costs`, `graded_proceeds`, or `P(10)`. #64 builds
+§44's reason from that name, which is how §50's "never generate explanations
+unrelated to model evidence" is kept by construction.
+
+### The top grade is the distribution's, not the scale's
+
+`highest_grade_probability` reads the highest grade the *distribution* names —
+never `most_likely_grade`, and never the top of the company's scale, because the
+economics cannot see a scale and asking for one would be this package reaching
+into the grading models. A distribution whose head is a bucket reports
+`P(9_or_higher)`, and carrying the grade in `figure` is what stops a bare `0.7`
+from being compared silently against another company's `P(10)`.
+
+### An undefined figure is unranked, not last
+
+A company whose figure for the selected mode is `InsufficientInformation` leaves
+the order entirely and appears in `unranked` wearing its own reason. Sorting it
+last behind a sentinel would read as "this is the worst company", which is a
+claim nobody computed — ADR 0007's `no_capital_at_risk` is a question with no
+answer, not a poor return. When nobody can be ranked the result is
+`InsufficientInformation("no_company_can_be_ranked")`; an empty order is never
+returned as a comparison.
+
+Each ranked figure carries **its own** confidence rather than a blended score —
+the incremental figure's `min`, the expectation's product, the distribution's
+own for a probability, and full confidence for a cost the user typed. §44 hands
+#64 three independent sources and requires they be combined explicitly.
+
+### Ties break alphabetically, and say so
+
+Deterministically, and for want of anything meaningful: breaking a tie on a
+second figure would fold economics into the two modes that exclude it.
+`tied_at_the_top` names the companies sharing the best value so nobody reports a
+coin-flip as a verdict.
+
+The sort is two stable passes — by slug, then by value with
+`reverse=higher_is_better` — rather than one composite key. Python leaves equal
+elements in place, `reverse=True` included, so ties come out alphabetical in
+both directions; a single key of `(value, company)` reversed would reverse the
+tie order on the four descending modes, which is a bug that only appears on a
+tie.
+
+### A sixth mode needs no change here
+
+`rank` takes a strategy *object*, so a future mode is built at the call site:
+
+```python
+rank(
+    outlooks,
+    OptimizationStrategy(
+        mode="highest_expected_grade",
+        label="Highest expected grade",
+        higher_is_better=True,
+        read=expected_grade,  # CompanyOutlook -> Uncertain[RankedCompany]
+    ),
+)
+```
+
+No registration, no subclass, and no edit to the five that already exist.
+`STRATEGIES` is only the lookup table for §43's names, and a mode is a `str`
+rather than a closed enum for the reason `GradingCompany` is not closed: a mode
+nobody wrote a strategy for is still a mode.

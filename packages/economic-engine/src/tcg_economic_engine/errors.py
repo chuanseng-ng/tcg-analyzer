@@ -18,8 +18,10 @@ from __future__ import annotations
 __all__ = [
     "EconomicEngineError",
     "InvalidAcquisitionCost",
+    "InvalidComparison",
     "InvalidCostConfiguration",
     "InvalidGradedPrice",
+    "UnknownOptimizationMode",
 ]
 
 
@@ -76,4 +78,28 @@ class InvalidGradedPrice(EconomicEngineError, ValueError):
     :func:`~tcg_economic_engine.expectation.expected_value` records in
     ``unpriced_grades`` and renormalises around. This error means a price was
     supplied and could not be read.
+    """
+
+
+class UnknownOptimizationMode(EconomicEngineError, KeyError):
+    """No strategy carries the mode name a caller asked for.
+
+    Spec §43 fixes five modes and requires the architecture to admit more, so
+    :func:`~tcg_economic_engine.strategies.rank` takes a strategy *object* and a
+    mode nobody registered still ranks. This is raised only by
+    :func:`~tcg_economic_engine.strategies.strategy_for`, which is the lookup
+    from §43's names — a caller that hands over its own strategy never sees it.
+
+    A caller's mistake rather than an unanswerable question: "we do not know what
+    you meant by `blended_score`" is not a result about a card, and #65 turns it
+    into a 422 rather than a §66 code.
+    """
+
+
+class InvalidComparison(EconomicEngineError, ValueError):
+    """A set of company outlooks cannot be compared.
+
+    Today that means two outlooks naming the same company, which would list one
+    company twice and leave "best" meaning nothing. Also a caller's mistake: the
+    companies to compare are the application's own, not user input.
     """
