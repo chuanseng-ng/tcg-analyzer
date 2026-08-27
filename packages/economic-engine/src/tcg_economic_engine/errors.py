@@ -21,6 +21,7 @@ __all__ = [
     "InvalidComparison",
     "InvalidCostConfiguration",
     "InvalidGradedPrice",
+    "InvalidRecommendationThresholds",
     "UnknownOptimizationMode",
 ]
 
@@ -102,4 +103,19 @@ class InvalidComparison(EconomicEngineError, ValueError):
     Today that means two outlooks naming the same company, which would list one
     company twice and leave "best" meaning nothing. Also a caller's mistake: the
     companies to compare are the application's own, not user input.
+    """
+
+
+class InvalidRecommendationThresholds(EconomicEngineError, ValueError):
+    """A recommendation threshold is not representable.
+
+    Deliberately **not** :class:`InvalidCostConfiguration`: thresholds are a
+    product policy rather than a card's costs, and #65 will read them from the
+    economic configuration, which makes them a trust boundary of their own.
+
+    Note what this is *not*. A threshold that declines to recommend is not an
+    error — that is the whole point of spec §44's `insufficient_information`.
+    This means a value arrived that is not a
+    :class:`~tcg_domain.confidence.Confidence`, not a
+    :class:`~tcg_domain.money.Money`, or a coverage ceiling outside ``[0, 1]``.
     """
