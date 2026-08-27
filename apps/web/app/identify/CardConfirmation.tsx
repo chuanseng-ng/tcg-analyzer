@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { currentAnalysis } from "@/lib/analysis-session";
@@ -48,9 +48,14 @@ type ConfirmationState =
  * the card — which in M1 is always, because no producer of a
  * `CardIdentification` exists until M2's image pipeline.
  *
- * There is deliberately no `useRouter` here. Change is a plain link, so nothing
- * in this component can navigate on its own — recording a confirmation does not
- * move the user anywhere, it says what happened.
+ * **Nothing navigates on its own until a confirmation has actually been
+ * recorded.** Change is a plain link, and every failing branch returns to the
+ * question rather than moving the user. The one exception is deliberate and
+ * arrived with #66: once the card is recorded against an analysis, the next step
+ * exists — spec §5 puts the economics behind a confirmed card — so
+ * {@link Confirmed} announces it and advances to `/configure`, with the link
+ * present throughout as the immediate path. A confirmation this page kept to
+ * itself gets neither: there is no analysis to price.
  *
  * **The confirmation is recorded against the analysis when there is one.** The
  * identifier comes from `sessionStorage` (`lib/analysis-session.ts`), left there
@@ -328,6 +333,15 @@ function SaveFailure({
   );
 }
 
+/**
+ * How long the recorded confirmation stays on screen before the next step.
+ *
+ * Long enough to read the card back and see that it is the right one — the
+ * point of the gate — rather than a flash on the way past. The link below is
+ * live the whole time, so nobody has to wait for it.
+ */
+const ADVANCE_AFTER_MS = 4_000;
+
 function Confirmed({
   candidate,
   saved,
@@ -336,12 +350,21 @@ function Confirmed({
   readonly saved: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const router = useRouter();
 
   // The Confirm button unmounts with the gate, so without this a keyboard user
   // is dropped back at the top of the document with nothing announced.
   useEffect(() => {
     heading.current?.focus();
   }, []);
+
+  // Only when there is an analysis: a confirmation this page kept to itself has
+  // nothing to price, and `/configure` would answer with its own empty state.
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => router.push("/configure"), ADVANCE_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [saved, router]);
 
   return (
     <div className={styles.gate} role="status">
@@ -353,7 +376,7 @@ function Confirmed({
 
       <p className={styles.body}>
         {saved
-          ? "Your photographs are now recorded as being of this card. Nothing has analysed them yet — reading the card's condition, the likely grades from PSA, TAG and BGS, and the economics of sending it in are still being built."
+          ? "Your photographs are now recorded as being of this card. Nothing has analysed them yet — next is what grading it would cost you, and what you paid for it if you know."
           : "Nothing has been analysed. Reading this card's condition, the likely grades from PSA, TAG and BGS, and the economics of sending it in are still being built."}
       </p>
       <p className={styles.footnote}>
@@ -363,10 +386,17 @@ function Confirmed({
       </p>
 
       <div className={styles.actions}>
+        {saved && (
+          <Link className={styles.confirm} href="/configure">
+            Set the costs
+          </Link>
+        )}
         <Link className={styles.change} href="/cards">
           Start over with another card
         </Link>
       </div>
+
+      {saved && <p className={styles.footnote}>Taking you there in a moment.</p>}
     </div>
   );
 }

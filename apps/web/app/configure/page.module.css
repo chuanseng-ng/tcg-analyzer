@@ -1,0 +1,396 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--space-5) var(--space-6);
+}
+
+.brand {
+  padding-block-start: var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.brandLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.brandLink:hover {
+  color: var(--color-accent);
+}
+
+.status {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.form,
+.gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.heading {
+  max-width: var(--measure);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
+}
+
+.heading:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: var(--space-2);
+}
+
+.body {
+  max-width: var(--measure);
+  line-height: var(--leading-normal);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+/*
+ * Spec §45's two questions, stated before anything is asked for.
+ *
+ * Accent-weighted rather than warning-weighted: nothing has gone wrong, and
+ * this is the frame the rest of the screen is read through. It sits above the
+ * acquisition cost because that one field is the entire difference between them.
+ */
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--measure);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-inline-start: var(--space-1) solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.questionList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.questionTerm {
+  font-weight: var(--weight-medium);
+}
+
+.questionBody {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ---------------------------------------------------------------- fields */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: var(--measure);
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.optional {
+  color: var(--color-muted);
+  font-weight: var(--weight-regular);
+}
+
+/*
+ * The currency sits beside the field rather than inside it, because what the
+ * field takes is a plain decimal — anything else is refused rather than
+ * stripped, and an "S$" the user could delete would invite typing one back in.
+ */
+.amountRow {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.currency {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.input {
+  flex: 1 1 8ch;
+  min-inline-size: 0;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-fg);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.hint {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.problem {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* --------------------------------------------------------------- choices */
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/*
+ * The whole row is the target, not the box: a checkbox is a few pixels across
+ * and this screen is used one-handed. The grid keeps the note under the label
+ * rather than under the control.
+ */
+.choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-block-size: var(--tap-target);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  cursor: pointer;
+}
+
+.choice:has(.checkbox:checked) {
+  border-color: var(--color-accent);
+}
+
+.choice:has(.checkbox:focus-visible) {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.checkbox {
+  grid-row: 1;
+  inline-size: var(--space-4);
+  block-size: var(--space-4);
+  accent-color: var(--color-accent);
+}
+
+.choiceLabel {
+  grid-row: 1;
+  font-weight: var(--weight-medium);
+}
+
+.choiceNote {
+  grid-column: 2;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ----------------------------------------------------------------- costs */
+
+.costs {
+  max-width: var(--measure);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.summary {
+  min-block-size: var(--tap-target);
+  display: flex;
+  align-items: center;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.costFields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block-start: var(--space-4);
+}
+
+/* --------------------------------------------------------------- actions */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background-color: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.submit:hover {
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+/* The button stays in place rather than being swapped for a spinner, so
+   nothing moves under a thumb mid-tap. */
+.submit:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.footnote {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* ------------------------------------------------------- what was recorded */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+}
+
+.term {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.value {
+  margin: 0;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* "Not supplied" is not a figure, and must not be able to read as one — the
+   same rule as #91's "Not measured" is never 0%. */
+.value[data-supplied="false"] {
+  font-weight: var(--weight-regular);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+/* ------------------------------------------------------------- failures */
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: var(--measure);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-inline-start: var(--space-1) solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.failureHeading {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+}
+
+.failureBody {
+  max-width: var(--measure);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.failureActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.retry {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--tap-target);
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--color-accent);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}

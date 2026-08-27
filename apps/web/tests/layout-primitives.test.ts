@@ -33,6 +33,10 @@ const MODULES = [
   // The identification-confirmation gate (#91). It carries the M1 acceptance
   // criterion, so it is the last screen that may be unusable on a phone.
   "app/identify/page.module.css",
+  // The configuration screen (#66) — the only form in the product that asks
+  // for numbers, and the one most likely to be filled in one-handed with a card
+  // in the other hand.
+  "app/configure/page.module.css",
 ] as const;
 
 // Vitest runs with `apps/web` as its root.
@@ -91,6 +95,29 @@ describe("app/identify/page.module.css", () => {
       expect(readModule("app/identify/page.module.css")).toMatch(rule);
     },
   );
+});
+
+describe("app/configure/page.module.css", () => {
+  // A form filled in with a thumb: every field, every choice and the one button
+  // that commits figures which cannot be changed afterwards.
+  it.each(["input", "choice", "summary", "submit", "retry"])(
+    "gives .%s a comfortable touch target",
+    (name) => {
+      const rule = new RegExp(
+        String.raw`\.${name}\s*\{[^}]*min-block-size\s*:\s*var\(--tap-target\)`,
+      );
+
+      expect(readModule("app/configure/page.module.css")).toMatch(rule);
+    },
+  );
+
+  it("lets the amount fields shrink to the device", () => {
+    // `flex: 1 1 8ch` without this floors the input at its content width, and a
+    // row with a currency beside it then overflows a 375px screen.
+    expect(readModule("app/configure/page.module.css")).toMatch(
+      /\.input\s*\{[^}]*min-inline-size\s*:\s*0/,
+    );
+  });
 });
 
 describe("app/analyze/CardUpload.module.css", () => {

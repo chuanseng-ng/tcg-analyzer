@@ -66,6 +66,30 @@ export type ImageResponse = components["schemas"]["ImageResponse"];
 /** `POST /analyses/{id}/run`'s acknowledgement. `queued` is not a state (§65). */
 export type AnalysisRunResponse = components["schemas"]["AnalysisRunResponse"];
 
+/** `GET /grading-companies` — the companies, their scales and their published rules. */
+export type GradingCompaniesResponse = components["schemas"]["GradingCompaniesResponse"];
+
+/**
+ * One company, as a client needs to render it. **The scale is the whole reason
+ * this endpoint exists**: PSA and TAG issue no 9.5 and BGS does, so a screen
+ * that spelled a shared scale of its own would misrender one of them.
+ */
+export type GradingCompanyResponse = components["schemas"]["GradingCompanyResponse"];
+
+/**
+ * `POST /analyses/{id}/economic-configuration` — what the user says the
+ * economics of their decision are (spec §45, §46, §43).
+ *
+ * Every cost field is optional and **the endpoint defaults it from the engine's
+ * own placeholders**. That is why nothing in `apps/web` writes a cost down: a
+ * second copy of `40.00` here would drift from the one the recommendation is
+ * actually computed against, silently.
+ */
+export type EconomicConfigurationRequest = components["schemas"]["EconomicConfigurationRequest"];
+
+/** The stored configuration, read back exactly as it was written. */
+export type EconomicConfigurationResponse = components["schemas"]["EconomicConfigurationResponse"];
+
 /**
  * Which view of the card an upload is.
  *
@@ -201,6 +225,36 @@ function isAnalysisRunResponse(payload: unknown): payload is AnalysisRunResponse
     return false;
   }
   return typeof payload.analysis_id === "string" && payload.status === "queued";
+}
+
+function isGradingCompaniesResponse(payload: unknown): payload is GradingCompaniesResponse {
+  if (!isRecord(payload) || !Array.isArray(payload.companies)) {
+    return false;
+  }
+  return payload.companies.every(
+    (company) =>
+      isRecord(company) &&
+      typeof company.company === "string" &&
+      typeof company.display_name === "string" &&
+      Array.isArray(company.grades),
+  );
+}
+
+function isEconomicConfigurationResponse(
+  payload: unknown,
+): payload is EconomicConfigurationResponse {
+  if (!isRecord(payload) || !isRecord(payload.costs) || !isRecord(payload.thresholds)) {
+    return false;
+  }
+  // `acquisition_cost` is nullable rather than optional, so its presence is not
+  // what narrows this — and a payload that omitted it would be one where the
+  // screen could not tell "not supplied" from "not sent".
+  return (
+    typeof payload.id === "string" &&
+    typeof payload.optimization_mode === "string" &&
+    typeof payload.currency === "string" &&
+    Array.isArray(payload.grading_companies)
+  );
 }
 
 function isImageResponse(payload: unknown): payload is ImageResponse {
@@ -573,6 +627,60 @@ export async function confirmCard(
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     isPayload: isAnalysisResponse,
     payloadName: "analysis",
+  });
+}
+
+/**
+ * `GET /grading-companies` — the supported companies, their grade scales and the
+ * version of each published standard in force today (spec §64, §22, §23).
+ *
+ * Deliberately **not** session-scoped: the list belongs to nobody, so it is sent
+ * without credentials like the catalog reads. Everything a screen needs to name
+ * a company — its slug, its display name and its scale — comes from here rather
+ * than from a constant, which is what lets a fourth company appear with no
+ * frontend change.
+ */
+export async function getGradingCompanies(signal?: AbortSignal): Promise<GradingCompaniesResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/grading-companies`,
+    signal,
+    timeoutMs: CATALOG_TIMEOUT_MS,
+    isPayload: isGradingCompaniesResponse,
+    payloadName: "grading companies",
+  });
+}
+
+/**
+ * `POST /analyses/{id}/economic-configuration` — record the economics of the
+ * decision (spec §45, §46, §43).
+ *
+ * **Amounts travel as decimal strings, in as well as out.** The service refuses
+ * a JSON number where an amount is meant, because a JSON number is a binary
+ * float in most clients and money must stay exact — so a caller builds the
+ * request from strings and never from `Number`.
+ *
+ * **Omitting a cost is how the engine's default is asked for**, and omitting
+ * `acquisition_cost` — or sending `null` — is how "I don't know what I paid" is
+ * said. `"0.00"` is a real acquisition cost and reaches a different answer.
+ *
+ * Written once, while the analysis is `analyzing`: a second call is a 409, and
+ * so is one made in any other state. Rate-limited, sharing one bucket with the
+ * other analysis writes (ADR 0005).
+ */
+export async function configureEconomics(
+  analysisId: string,
+  request: EconomicConfigurationRequest,
+  signal?: AbortSignal,
+): Promise<EconomicConfigurationResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/economic-configuration`,
+    method: "POST",
+    credentials: "include",
+    body: request,
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isEconomicConfigurationResponse,
+    payloadName: "economic configuration",
   });
 }
 

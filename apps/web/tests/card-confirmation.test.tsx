@@ -14,8 +14,12 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }));
 
 let currentParams = new URLSearchParams();
+// Recorded rather than stubbed away: a confirmation that was saved advances to
+// the configuration screen (#66), and where it goes is the assertion.
+const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
   useSearchParams: () => currentParams,
 }));
 
@@ -87,6 +91,7 @@ beforeEach(() => {
   window.sessionStorage.clear();
   confirmCardMock.mockReset();
   confirmCardMock.mockResolvedValue(confirmed());
+  push.mockReset();
 });
 
 describe("the confirmation gate", () => {
@@ -200,6 +205,41 @@ describe("the confirmation gate", () => {
     await screen.findByRole("heading", { name: /^Confirmed/ });
 
     expect(screen.getByText(/nothing has analysed them yet/i)).toBeInTheDocument();
+  });
+
+  it("leads on to the costs once the confirmation was recorded", async () => {
+    // Spec §5 puts the economics behind a confirmed card, and #66 built the
+    // screen. Without this link the step is reachable only by typing its URL.
+    getCardMock.mockResolvedValue(card());
+    withPhotographs();
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+    await screen.findByRole("heading", { name: /^Confirmed/ });
+
+    expect(screen.getByRole("link", { name: "Set the costs" })).toHaveAttribute(
+      "href",
+      "/configure",
+    );
+
+    // And it goes there on its own, with the link live throughout for anyone
+    // who would rather not wait. The pause is four seconds — long enough to
+    // read the card back, which is the whole point of the gate — so this waits
+    // past it rather than hurrying the component.
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/configure"), { timeout: 6_000 });
+  }, 10_000);
+
+  it("offers no way on when the confirmation was this page's alone", async () => {
+    // No analysis in this tab means nothing to price: `/configure` would answer
+    // with its own empty state, which is not a step forward.
+    getCardMock.mockResolvedValue(card());
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+    await screen.findByRole("heading", { name: /^Confirmed/ });
+
+    expect(screen.queryByRole("link", { name: "Set the costs" })).not.toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("does not claim a confirmation the service refused", async () => {
