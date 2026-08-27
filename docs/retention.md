@@ -20,6 +20,7 @@ started, and nothing is kept beyond that.**
 | The preprocessing cache entry | 7 days | it *is* the `images` row |
 | The analysis, including spec §57's reproducibility record | 7 days | `analyses` |
 | The anonymous session | 7 days | `analysis_sessions` |
+| The economic configuration, including what the user said they paid | 7 days | `economic_configurations` |
 
 Seven days is `TCG_API_SESSION_TTL_SECONDS`, and it is the only knob. It is
 applied once, in Python, when the session is opened —
@@ -30,6 +31,16 @@ There is one period rather than several because there is one cascade:
 `analysis_sessions` → `analyses` → `images`, each child owned by its parent
 through `ON DELETE CASCADE`. A second horizon would be a second thing to keep in
 step, and a policy with an exception nobody tracks is not a policy.
+
+**One row is outside that cascade and is swept anyway.** An analysis
+*references* its economic configuration — `analyses.economic_configuration_id`,
+spec §57 — rather than owning it, so `ON DELETE CASCADE` runs the wrong way and
+the row would survive the session that produced it. It holds spec §45's optional
+acquisition cost: what the user says they paid for their card, which is theirs
+and is not a fact about a printed card the way a market price is. So the sweep
+reads the identifiers before the cascade and deletes the rows after it, which is
+the order the foreign key's `RESTRICT` requires. The `economic_configurations`
+immutability trigger guards `UPDATE` and not `DELETE` for exactly this reason.
 
 ### Why expiry is the default rather than the exception
 
@@ -63,9 +74,13 @@ Hourly, for up to two hundred sessions at a time, oldest first:
    extend or shorten anyone's retention.
 2. For each one, in its own transaction:
    1. read every key its images name — `original_uri` **and** `normalized_uri`;
-   2. delete those objects from object storage;
-   3. delete the session row, which cascades to its analyses and their images;
-   4. commit.
+   2. read the `economic_configuration_id` of every analysis it holds, while
+      there are still rows to read them from;
+   3. delete those objects from object storage;
+   4. delete the session row, which cascades to its analyses and their images;
+   5. delete the configurations from step 2, which the cascade did not reach and
+      which nothing references any more;
+   6. commit.
 3. Log `retention.swept` with three counts and nothing else.
 
 ### Objects before rows

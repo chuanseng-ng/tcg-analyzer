@@ -12,6 +12,15 @@ entries, analyses and the session row all go together, because they are one
 cascade. There is no second horizon to keep in step and no exception to track.
 `docs/retention.md` is the written version.
 
+**One thing is not in that cascade and is swept anyway.** An analysis
+*references* its economic configuration rather than owning it, so
+`ON DELETE CASCADE` runs the other way and the configuration row would outlive
+the session — holding what a user said they paid for their card, which is
+theirs. The identifiers are read before the session goes and the rows deleted
+after, which is the order the foreign key's RESTRICT requires; the
+`economic_configurations` trigger guards `UPDATE` only so that this delete is
+possible at all.
+
 **The session row is deleted, not marked.** `analysis_sessions.
 anonymous_session_id` *is* the browser's bearer token, so a row kept for
 auditing is a per-browser identifier kept forever — which is what §53's "do not
@@ -50,6 +59,7 @@ from tcg_shared.storage import ObjectStorage, StorageError, StorageKey
 
 from tcg_api.analysis.sessions import execute
 from tcg_api.analysis.tables import analyses, analysis_sessions, images
+from tcg_api.economics.tables import economic_configurations
 
 __all__ = ["SWEEP_INTERVAL_SECONDS", "SWEEP_LIMIT", "Swept", "purge_expired"]
 
@@ -143,9 +153,30 @@ async def _sweep_one(db: AsyncSession, storage: ObjectStorage, session_id: UUID)
     result = await execute(db, objects)
     keys = [uri for row in result for uri in (row.original_uri, row.normalized_uri) if uri]
 
+    # Read before the cascade, because after it there is no row left to read
+    # them from — an orphaned configuration would be unreachable rather than
+    # merely undeleted.
+    referenced = await execute(
+        db,
+        sa.select(analyses.c.economic_configuration_id).where(
+            analyses.c.session_id == session_id,
+            analyses.c.economic_configuration_id.is_not(None),
+        ),
+    )
+    configurations = [row.economic_configuration_id for row in referenced]
+
     for key in keys:
         await storage.delete(StorageKey(key))
 
     await execute(db, sa.delete(analysis_sessions).where(analysis_sessions.c.id == session_id))
+    if configurations:
+        # After the cascade: the foreign key is RESTRICT, so a configuration an
+        # analysis still names cannot go first.
+        await execute(
+            db,
+            sa.delete(economic_configurations).where(
+                economic_configurations.c.id.in_(configurations)
+            ),
+        )
     await db.commit()
     return len(keys)

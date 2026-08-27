@@ -16,6 +16,7 @@ Table modules import `metadata` from here and attach to it:
 * `tcg_api.grading.tables` — spec §23's `grading_rules`.
 * `tcg_api.market.tables` — spec §35's `market_providers` and
   `market_observations`.
+* `tcg_api.economics.tables` — spec §46's `economic_configurations`.
 
 This module imports nothing from `tcg_api`, and must not: the table modules
 import *it*, so anything here that reached back for them would be a cycle. What

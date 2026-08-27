@@ -34,6 +34,7 @@ import sys
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from tcg_api.analysis.retention import purge_expired
 from tcg_api.analysis.tables import analyses, analysis_sessions, images
+from tcg_api.economics.tables import economic_configurations
 from tcg_domain.analysis import ImageSide
 from tcg_shared.storage import InMemoryObjectStorage, ObjectStorage, StorageKey, StorageUnavailable
 
@@ -90,7 +92,10 @@ def empty_tables():
             try:
                 async with engine.begin() as connection:
                     await connection.execute(
-                        sa.text("TRUNCATE analysis_sessions RESTART IDENTITY CASCADE")
+                        sa.text(
+                            "TRUNCATE analysis_sessions, economic_configurations "
+                            "RESTART IDENTITY CASCADE"
+                        )
                     )
             finally:
                 await engine.dispose()
@@ -106,15 +111,21 @@ def seed(
     *,
     due: bool,
     sides: dict[ImageSide, tuple[str, str | None]] | None = None,
+    configured: bool = False,
 ) -> uuid.UUID:
     """Write one session, one analysis and its images. Returns the session id.
 
     `sides` maps a side to `(original_uri, normalized_uri)`; the columns hold a
     bare storage key despite the name, which is what the sweep turns back into a
     `StorageKey`.
+
+    `configured` attaches an economic configuration, which is the one thing
+    hanging off an analysis that the cascade does **not** reach: the analysis
+    references it rather than owning it, so the sweep has to delete it itself.
     """
     session_id = uuid.uuid4()
     analysis_id = uuid.uuid4()
+    configuration_id = uuid.uuid4() if configured else None
     lifetime = (
         {"created_at": LAPSED - timedelta(days=7), "expires_at": LAPSED}
         if due
@@ -134,8 +145,38 @@ def seed(
                         **lifetime,
                     },
                 )
+                if configuration_id is not None:
+                    await connection.execute(
+                        sa.insert(economic_configurations),
+                        {
+                            "id": configuration_id,
+                            "currency": "SGD",
+                            # What the user says they paid — the reason this row
+                            # is swept rather than left behind.
+                            "acquisition_cost": Decimal("120.00"),
+                            "grading_fee": Decimal("40.00"),
+                            "outbound_shipping": Decimal("30.00"),
+                            "return_shipping": Decimal("30.00"),
+                            "insurance": Decimal("0.00"),
+                            "miscellaneous": Decimal("0.00"),
+                            "selling_fee_rate": Decimal("0.1000"),
+                            "selling_fee_flat": Decimal("0.00"),
+                            "grading_companies": ["psa"],
+                            "optimization_mode": "expected_profit",
+                            "minimum_image_quality": 0.5,
+                            "minimum_grade_confidence": 0.5,
+                            "minimum_figure_confidence": 0.4,
+                            "maximum_unpriced_probability": 0.25,
+                            "minimum_incremental_profit": Decimal("5.00"),
+                        },
+                    )
                 await connection.execute(
-                    sa.insert(analyses), {"id": analysis_id, "session_id": session_id}
+                    sa.insert(analyses),
+                    {
+                        "id": analysis_id,
+                        "session_id": session_id,
+                        "economic_configuration_id": configuration_id,
+                    },
                 )
                 for side, (original, normalized) in (sides or {}).items():
                     await connection.execute(
@@ -353,3 +394,42 @@ def test_one_failing_session_does_not_hold_up_the_others() -> None:
     assert (swept.sessions, swept.failed) == (1, 1)
     assert set(inner.objects) == {StorageKey("uploads/stuck")}
     assert counts() == (1, 1, 1)
+
+
+def configurations() -> int:
+    async def scenario() -> int:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.connect() as connection:
+                result = await connection.execute(
+                    sa.select(sa.func.count()).select_from(economic_configurations)
+                )
+                return int(result.scalar_one())
+        finally:
+            await engine.dispose()
+
+    return run(scenario)
+
+
+def test_an_expired_session_takes_its_economic_configuration_with_it() -> None:
+    """The one row the cascade does not reach — #65.
+
+    An analysis *references* its configuration, so `ON DELETE CASCADE` runs the
+    other way and the row would outlive the session that produced it, holding
+    what the user said they paid for their card. Spec §54 is about exactly that.
+    """
+    seed(due=True, configured=True)
+    assert configurations() == 1
+
+    sweep(InMemoryObjectStorage())
+
+    assert configurations() == 0
+
+
+def test_a_live_sessions_configuration_is_left_alone() -> None:
+    """The sweep deletes what is due and nothing else."""
+    seed(due=False, configured=True)
+
+    sweep(InMemoryObjectStorage())
+
+    assert configurations() == 1

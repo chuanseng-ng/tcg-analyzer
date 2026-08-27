@@ -60,6 +60,7 @@ MARKET_DATA_REVISION = "b5bca50f46c0"
 # Spec §36's snapshots, and the first revision to reuse an immutability trigger
 # function it did not create. Pinned for the same reason as the rest.
 MARKET_SNAPSHOTS_REVISION = "3ac71e5d92f8"
+ECONOMIC_CONFIGURATION_REVISION = "9d2f61c47ab3"
 
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
@@ -295,6 +296,36 @@ def test_downgrading_the_market_snapshots_revision_keeps_the_shared_trigger_func
     alembic("downgrade", "-1")
 
     assert function_exists("market_rows_are_immutable()")
+
+
+def test_downgrading_the_economics_revision_leaves_the_rest_standing() -> None:
+    """Reversing this drops a foreign key on `analyses`, which is another domain's.
+
+    `analyses` and everything hanging off it must survive intact, exactly as the
+    market-snapshot revision's own reversal has to leave the prices standing.
+    """
+    alembic("upgrade", ECONOMIC_CONFIGURATION_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("economic_configurations")
+    for table in ANALYSIS_TABLES:
+        assert table_exists(table), table
+    assert table_exists("market_snapshots")
+
+
+def test_downgrading_the_economics_revision_leaves_no_orphaned_trigger_function() -> None:
+    """This revision *creates* its own function, so reversing it must drop one.
+
+    The opposite of the market-snapshot revision, which reuses a function two
+    other tables still call and must therefore leave it alone. Getting the two
+    the wrong way round leaves either an orphan or an unguarded table.
+    """
+    alembic("upgrade", ECONOMIC_CONFIGURATION_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not function_exists("economic_configuration_is_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:
