@@ -22,6 +22,7 @@ from typing import Final
 
 from tcg_api.analysis.tables import TABLES as ANALYSIS_TABLES
 from tcg_api.catalog.tables import TABLES as CATALOG_TABLES
+from tcg_api.economics.tables import TABLES as ECONOMICS_TABLES
 from tcg_api.grading.tables import TABLES as GRADING_TABLES
 from tcg_api.market.tables import TABLES as MARKET_TABLES
 from tcg_api.tables import metadata
@@ -38,4 +39,5 @@ DECLARED_TABLES: Final = (
     *ANALYSIS_TABLES,
     *GRADING_TABLES,
     *MARKET_TABLES,
+    *ECONOMICS_TABLES,
 )

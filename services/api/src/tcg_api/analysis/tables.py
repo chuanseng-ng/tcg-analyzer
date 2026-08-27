@@ -83,6 +83,13 @@ from tcg_api.catalog.tables import cards
 # "market_snapshots.id" for the reason `market/tables.py` gives about `cards`:
 # the dependency is then visible to a reader and to mypy. The direction is safe —
 # nothing in the market domain reads this one.
+# `analyses.economic_configuration_id` points at §46's configuration, and the
+# same NoReferencedTableError argument applies: the key resolves against the
+# shared `MetaData`, so the economics module has to have been executed. #58
+# deferred this key to #65 by name — the column carried none until the table it
+# names existed. The direction is safe: nothing in the economics domain reads
+# this one.
+from tcg_api.economics.tables import economic_configurations
 from tcg_api.market.tables import market_snapshots
 from tcg_api.tables import PRINTED, metadata, one_of
 
@@ -270,11 +277,19 @@ analyses = sa.Table(
     sa.Column(
         "economic_configuration_id",
         sa.Uuid(),
+        sa.ForeignKey(
+            economic_configurations.c.id,
+            ondelete="RESTRICT",
+            name="fk_analyses_economic_configuration_id_economic_configurations",
+        ),
         nullable=True,
         comment=(
-            "The fee and cost configuration used. No foreign key yet — the table it "
-            "will point at arrives with the economics milestone, and adding the "
-            "constraint then is cheaper than changing this column's type."
+            "Which immutable economic configuration the economics were computed under — "
+            "spec §57, recorded when the user supplied it rather than when the run "
+            "claimed the analysis, because it is user input and does not exist at claim "
+            "time. RESTRICT for `market_snapshot_id`'s reason: a configuration *is* the "
+            "numbers, so one an analysis references must stay resolvable for as long as "
+            "the analysis does. NULL until the user has configured the economics."
         ),
     ),
     sa.Column(

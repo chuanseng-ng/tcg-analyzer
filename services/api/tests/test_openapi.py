@@ -210,3 +210,56 @@ def test_every_documented_path_can_answer_with_the_envelope() -> None:
         for method, operation in operations.items():
             content = operation["responses"]["500"]["content"]["application/json"]
             assert content["schema"]["$ref"].endswith("/ErrorResponse"), f"{method} {path}"
+
+
+# ---------------------------------------------------------------------------
+# The economics — spec §64, §41 (#65)
+# ---------------------------------------------------------------------------
+def test_openapi_documents_the_economic_configuration_path() -> None:
+    """Spec §64's endpoint list is conceptual; this is an addition to it (#65)."""
+    paths = create_app().openapi()["paths"]
+
+    assert "post" in paths["/analyses/{analysis_id}/economic-configuration"]
+    assert "get" in paths["/analyses/{analysis_id}/results"]
+
+
+def test_openapi_names_the_two_profit_figures_separately() -> None:
+    """#65's acceptance criterion, read off the contract `apps/web` compiles against.
+
+    Spec §41 says the distinction between the incremental grading decision and
+    the investment return "must be implemented rather than conflated". A generic
+    `expected_profit` on the wire would force a client to guess which one it
+    holds, which is the conflation itself.
+    """
+    schemas = create_app().openapi()["components"]["schemas"]
+    company = schemas["CompanyEconomicsResponse"]["properties"]
+
+    assert "incremental_grading_decision" in company
+    assert "investment_return" in company
+    assert "expected_profit" not in company
+
+
+def test_openapi_documents_two_ratios_and_never_one_called_roi() -> None:
+    """ADR 0007: two ROIs, never one. A single headline number is a new ADR."""
+    schemas = create_app().openapi()["components"]["schemas"]
+    company = schemas["CompanyEconomicsResponse"]["properties"]
+
+    assert "incremental_roi" in company
+    assert "investment_roi" in company
+    assert "roi" not in company
+
+
+def test_openapi_documents_no_cost_total() -> None:
+    """#58: §46's costs are named line items, and nothing computes a grand total."""
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    for name in ("CostConfigurationRequest", "CostConfigurationResponse"):
+        assert not [field for field in schemas[name]["properties"] if "total" in field]
+
+
+def test_the_configuration_endpoint_is_rate_limited_and_the_results_are_not() -> None:
+    """ADR 0005: §55 names the analysis writes. Polling a result is not one of them."""
+    paths = create_app().openapi()["paths"]
+
+    assert "429" in paths["/analyses/{analysis_id}/economic-configuration"]["post"]["responses"]
+    assert "429" not in paths["/analyses/{analysis_id}/results"]["get"]["responses"]

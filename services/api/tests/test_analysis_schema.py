@@ -27,6 +27,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from tcg_api.analysis.tables import (
     images,
 )
 from tcg_api.catalog.tables import cards, sets
+from tcg_api.economics.tables import economic_configurations
 from tcg_api.market.tables import market_providers, market_snapshots
 from tcg_domain.analysis import AnalysisStatus, ImageSide, QualityStatus, SessionStatus
 
@@ -120,11 +122,13 @@ def empty_tables():
             # these tests and a card inserted here must not survive out of them.
             # The market tables join the list because `analyses.market_snapshot_id`
             # now references `market_snapshots` — the reproducibility record
-            # points at something real, and the fixtures have to supply it.
+            # points at something real, and the fixtures have to supply it. So
+            # does `economic_configurations`, since #65 gave
+            # `analyses.economic_configuration_id` its key on the same terms.
             connection.execute(
                 sa.text(
                     "TRUNCATE images, analyses, analysis_sessions, market_snapshots, "
-                    "market_observations, market_providers, "
+                    "market_observations, market_providers, economic_configurations, "
                     "card_external_ids, cards, sets RESTART IDENTITY CASCADE"
                 )
             )
@@ -150,10 +154,10 @@ DIGEST = "a" * 64
 #: Two of the six are UUIDs and four are printed identifiers, so the pair cannot
 #: be a single literal reused across the parametrisation.
 #:
-#: The two `market_snapshot_id` values are not arbitrary any more: the column
-#: carries a foreign key, so `insert_analysis` publishes two snapshots with
-#: exactly these ids. `economic_configuration_id` still is arbitrary, because the
-#: table it will point at does not exist yet.
+#: Neither the two `market_snapshot_id` values nor the two
+#: `economic_configuration_id` values are arbitrary: both columns carry a foreign
+#: key, so `insert_analysis` publishes two snapshots and two configurations with
+#: exactly these ids.
 VALUE_FOR: dict[str, Any] = {
     "application_version": "0.1.0",
     "model_bundle_version": "pokemon-condition-v0.3.0",
@@ -267,10 +271,65 @@ def publish_snapshots() -> None:
     )
 
 
+def publish_configurations() -> None:
+    """Two economic configurations, for `publish_snapshots`'s reason (#65).
+
+    `analyses.economic_configuration_id` is a foreign key, so the reproducibility
+    record cannot name a configuration that was never written. Idempotent, since
+    a test may open more than one analysis and both need these two to exist.
+    """
+    write(
+        [
+            (
+                insert(economic_configurations).on_conflict_do_nothing(index_elements=["id"]),
+                [
+                    {
+                        "id": VALUE_FOR["economic_configuration_id"],
+                        "acquisition_cost": None,
+                        "grading_fee": Decimal("40.00"),
+                        "outbound_shipping": Decimal("30.00"),
+                        "return_shipping": Decimal("30.00"),
+                        "insurance": Decimal("0.00"),
+                        "miscellaneous": Decimal("0.00"),
+                        "selling_fee_rate": Decimal("0.1000"),
+                        "selling_fee_flat": Decimal("0.00"),
+                        "grading_companies": ["psa"],
+                        "optimization_mode": "expected_profit",
+                        "minimum_image_quality": 0.5,
+                        "minimum_grade_confidence": 0.5,
+                        "minimum_figure_confidence": 0.4,
+                        "maximum_unpriced_probability": 0.25,
+                        "minimum_incremental_profit": Decimal("5.00"),
+                    },
+                    {
+                        "id": OTHER_VALUE_FOR["economic_configuration_id"],
+                        "acquisition_cost": Decimal("120.00"),
+                        "grading_fee": Decimal("40.00"),
+                        "outbound_shipping": Decimal("30.00"),
+                        "return_shipping": Decimal("30.00"),
+                        "insurance": Decimal("0.00"),
+                        "miscellaneous": Decimal("0.00"),
+                        "selling_fee_rate": Decimal("0.1000"),
+                        "selling_fee_flat": Decimal("0.00"),
+                        "grading_companies": ["bgs"],
+                        "optimization_mode": "roi",
+                        "minimum_image_quality": 0.5,
+                        "minimum_grade_confidence": 0.5,
+                        "minimum_figure_confidence": 0.4,
+                        "maximum_unpriced_probability": 0.25,
+                        "minimum_incremental_profit": Decimal("5.00"),
+                    },
+                ],
+            ),
+        ]
+    )
+
+
 def insert_analysis(**overrides: Any) -> uuid.UUID:
     values = analysis_values(**overrides)
     write([(sa.insert(analyses), values)])
     publish_snapshots()
+    publish_configurations()
     return uuid.UUID(str(values["id"]))
 
 

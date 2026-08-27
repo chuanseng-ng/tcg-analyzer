@@ -41,6 +41,13 @@ dependencies = [
     # entity, so a malformed record fails with the domain's own message rather
     # than as a constraint violation mid-transaction.
     "tcg-domain",
+    # Spec §39–§47's economics: the cost configuration and the recommendation
+    # thresholds `tcg_api.economics` stores, and the figures
+    # `GET /analyses/{id}/results` reports. Declared for the reason
+    # `tcg-shared`'s entry gives below. It brings nothing transitive — it depends
+    # on `tcg-domain` and nothing else, which its own purity test enforces — and
+    # it reaches no network, database or vendor SDK.
+    "tcg-economic-engine",
     # Spec §23's published rules records, which `tcg_api.grading.seed` writes
     # into `grading_rules` and `tcg_api.grading.rules` reads back out. Declared
     # for the reason `tcg-shared`'s entry gives below. It brings nothing
@@ -84,6 +91,7 @@ worker = ["tcg-ml-card-detection", "tcg-ml-image-quality", "tcg-ml-normalization
 
 [tool.uv.sources]
 tcg-domain = { workspace = true }
+tcg-economic-engine = { workspace = true }
 tcg-grading-companies = { workspace = true }
 tcg-market-data = { workspace = true }
 tcg-ml-card-detection = { workspace = true }
