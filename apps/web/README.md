@@ -23,16 +23,17 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path            | Contents                                                                                                                                      |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`          | App Router routes. `/` is the landing page                                                                                                    |
-| `app/analyze/`  | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                               |
-| `app/cards/`    | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                 |
-| `app/identify/` | `/identify` — the identification-confirmation gate (spec §20)                                                                                 |
-| `components/`   | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                    |
-| `lib/`          | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts` and `analysis-session.ts` |
-| `styles/`       | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                        |
-| `tests/`        | Vitest + React Testing Library, jsdom environment                                                                                             |
+| Path             | Contents                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`           | App Router routes. `/` is the landing page                                                                                                                                              |
+| `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                         |
+| `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                           |
+| `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                           |
+| `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                   |
+| `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                              |
+| `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `amount-input.ts` and `analysis-session.ts` |
+| `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                  |
+| `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                       |
 
 ## Styling
 
@@ -168,13 +169,57 @@ has a route of its own instead of a button somewhere in the catalog.
   `lib/confirm-errors.ts` is a third sibling of `card-errors.ts` and
   `upload-errors.ts`, because a 409 here means "your photographs are not ready
   for this yet" where the upload's means "start a new analysis".
-- **Confirming still leads nowhere, and there is no route into analysis** in any
-  branch, including the failures. The confirmed screen says that nothing is
-  analysing the photographs yet, because nothing is: the analysis rests in
-  `analyzing` until the condition stages exist.
+- **There is no route into analysis** in any branch, including the failures:
+  `/analyze` is where an analysis begins and this gate is not a second door into
+  it. Forwards is different. Once the confirmation has actually been recorded,
+  spec §5's next step exists, so the screen offers **Set the costs** and advances
+  to `/configure` on its own after four seconds, with the link live throughout. A
+  confirmation the page kept to itself gets neither: there is no analysis to
+  price. The confirmed screen still says that nothing has analysed the
+  photographs yet, because nothing has.
 - **The gate shows no `metadata` and no provider identifiers.** They are catalog
   bookkeeping rather than something a person checks against a card in their
   hand; the full record is one link away.
+
+## The configuration screen
+
+`/configure` is where the user prices their own decision — spec §48's
+Configuration screen, filled in against §45, §46 and §43. It is the step after
+the confirmation gate, because `POST /analyses/{id}/economic-configuration`
+accepts figures only while the analysis is `analyzing`, which is the state
+confirming the card reaches. Four decisions shape it:
+
+- **Blank means unknown, and never zero.** Spec §45 makes the acquisition cost
+  optional and forbids inferring it. A field pre-filled with `0.00` would turn
+  "I don't remember what I paid" into "it was free", and the investment return
+  computed from that is not imprecise — it is a different, confidently wrong
+  answer. So the field starts empty with no placeholder amount, a blank one
+  reaches the wire as `null`, and `"0.00"` typed in is sent as the real
+  acquisition cost it is. The screen says which of the two questions that costs
+  the user, on the way in and again on the way out.
+- **Spec §45's two questions are named apart, in the user's language.** _Is it
+  worth grading this card?_ and _did this card make money?_ head the screen,
+  above the one field that is the whole difference between them. The domain's
+  own vocabulary — `incremental_roi`, `investment_return` — is not what a
+  collector asks.
+- **The costs carry no defaults of their own.** Every cost field on the request
+  is optional and the endpoint fills it from the engine's `CostConfiguration`,
+  which is the single place those figures are written down. Restating them here
+  would be a second copy that drifts from the one the recommendation is computed
+  against, silently and in the direction of the user's money. So the six fields
+  sit blank inside a collapsed section, an untouched form sends no `costs` key at
+  all, and the amounts that were actually used are read off the 201 and shown on
+  the way out — which is the only place they are ever seen. `apps/web` does not
+  know what they are, and must not learn.
+- **The selling fee is asked for as a percentage and sent as a proportion.** The
+  engine refuses `Decimal("10")` by name — ten percent is `0.10` — so
+  `lib/amount-input.ts` shifts the decimal point rather than dividing by 100.
+  Nothing on this screen converts an amount to a `number`: the service refuses a
+  JSON number where money is meant, because it is a binary float in most clients.
+
+Everything else follows the gate: one `lib/economics-errors.ts` classifier, a 429
+counted down with no button (ADR 0005), and no total anywhere — §46's line items
+are named and are never added into one figure.
 
 ## Configuration
 
