@@ -433,6 +433,18 @@ right. The training pipeline rejects images whose commercial-use status is
 unknown. Public accessibility is not permission, and a smaller dataset that is
 legally usable is worth more than a large one that is not.
 
+Which sources qualify was a separate open decision and is now settled:
+[ADR 0008](adr/0008-permitted-training-image-sources.md) approves photographs
+this project takes of cards it owns, photographs contributed under a written
+grant, and — once a consent mechanism exists — this product's own user uploads.
+Every third-party corpus is rejected, and the evidence for each is in
+[`training-image-provenance-research.md`](training-image-provenance-research.md).
+Two rights layers are determined separately there, because neither answers the
+other: the photographer's copyright in the photograph, and the depicted card's
+own artwork. The second is granted by nobody, which is why no dataset produced
+here is ever published — `redistribution_allowed` is `false` even on an image
+this project took itself.
+
 No model weights and no card photography are committed to this repository —
 enforced by `tests/test_repository_structure.py`.
 
