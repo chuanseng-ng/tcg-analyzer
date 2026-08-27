@@ -50,6 +50,7 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "docs/README.md",
     "docs/architecture.md",
     "docs/market-provider-research.md",
+    "docs/training-image-provenance-research.md",
     "docs/retention.md",
 )
 
