@@ -120,12 +120,72 @@ already slabbed.
 `sha256` is unique here, where `images.sha256` in the analysis domain
 deliberately is not — the same photograph uploaded to two analyses is two
 images, and the same photograph ingested twice is one training image. That is
-the exact-duplicate half of deduplication; near-duplicates are a separate
-question and need no column here.
+the exact-duplicate half of deduplication; the near half is
+`training_image_fingerprints` below, which is its own table because a hash is
+derived data rather than a fact about provenance.
 
 `source_reference` holds a consented upload's analysis identifier as **text and
 not a foreign key**: spec §54 deletes that analysis on schedule and the training
 image outlives it.
+
+## `training_image_fingerprints` — the near-duplicate half
+
+Spec §32 forbids splitting near-identical photographs of one card across train
+and test. `uq_training_images_sha256` catches the case where the bytes are
+identical; a retake under different light is a different digest and the same
+card, which is exactly the leakage §32 names. This table is that half.
+
+| Column | Meaning |
+| --- | --- |
+| `training_image_id` | Primary key and foreign key both — a derived row has no identity of its own. `ON DELETE CASCADE`. |
+| `perceptual_hash` | A 64-bit difference hash over the **normalized artifact**, as 16 lowercase hex characters. `NULL` when no card could be located. |
+| `perceptual_hash_rotated` | The same hash of the artifact turned 180 degrees. |
+| `hash_version` | The hash, the detector and the normalizer, composed. A row whose version is stale is recomputed. |
+| `computed_at` | |
+
+**The hash is taken over the artifact, not the photograph.** `ml/normalization`
+has already removed framing and perspective, so two shots of one card from
+different angles compare as the same card without this table knowing anything
+about geometry.
+
+**Two hashes, because orientation is genuinely unknown.**
+`Normalized.quarter_turns` puts the card's short edge first and makes no claim
+about which way up the card is *printed* — only reading the artwork could say —
+so an artifact is in exactly one of two orientations. The second hash is
+computed rather than derived: a 180-degree turn reverses the direction of the
+left-to-right comparison the hash is built from, so it is not a bit reversal of
+the first. Canonicalising the two into one is the obvious wrong simplification,
+because two near-identical artifacts can canonicalise to opposite orientations.
+
+**Both hash columns are nullable, together.** An image the detector finds no card
+in yields no artifact and therefore no hash, and the row is written anyway under
+the version that examined it — that is an answer rather than a gap, and it is
+what stops the next pass decoding those bytes again. `both_hashes_or_neither`
+keeps it honest.
+
+**`ON DELETE CASCADE`, where every other key into `training_images` restricts.**
+`dataset_members` restricts because §31 means a version cannot un-include an
+image. A hash means nothing without the bytes it describes, so it must never be
+the reason a row cannot be removed.
+
+**Pairs and groups are deliberately not stored.** A duplicate relationship is a
+pure function of two hashes and a threshold, the threshold is not persisted, and
+a stored pair is a second answer that drifts from the first the moment the number
+moves — the same argument `market_snapshots` makes for deriving its membership
+from a cut-line. The relationship is computed by
+[`tcg_api/datasets/fingerprints.py`](../../services/api/src/tcg_api/datasets/fingerprints.py),
+which imports no CV stack precisely so §32's splitter can consume it.
+
+**What the hash cannot do, stated rather than hidden.** It is designed to
+collapse what two copies of one printing share — the artwork — and condition
+differences are sub-pixel at this scale, so two different copies of one common
+card are reported as near duplicates. That is the safe direction: over-grouping
+costs a little balance in the split, under-grouping leaks. Tightening the
+threshold until such a pair separated would make it tight enough to miss a real
+retake.
+
+Not write-once: a detector or normalizer version bump rewrites every row, so this
+table carries no immutability trigger.
 
 ## `dataset_versions` — one frozen corpus
 
@@ -172,7 +232,7 @@ split — an image in two splits of one version is the leakage §32 is about.
 ## What is not here
 
 Annotations are their own table, their own migration and their own issue. So are
-near-duplicate detection, the splitter and manifest generation.
+the splitter and manifest generation.
 `datasets/manifests/` holds what a version leaves behind, generated from these
 rows.
 

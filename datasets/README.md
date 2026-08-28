@@ -27,3 +27,9 @@ Images enter the corpus through `uv run tcg-ingest-training-images`, one
 physical card per invocation, and only from one of ADR 0008's four approved
 sources — see [the database guide](../docs/database.md). There is deliberately
 no HTTP route: nothing in this domain is a consumer surface.
+
+`uv run tcg-detect-duplicate-training-images` then finds the photographs that are
+near duplicates of each other, so spec §32's splitter does not put two shots of
+one card on opposite sides of a train/test boundary. **Nothing is deleted**: a
+duplicate is linked rather than rejected, because the splitter needs the
+relationship rather than one side of it.

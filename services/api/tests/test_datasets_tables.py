@@ -37,19 +37,19 @@ from tcg_api.datasets.tables import (
     dataset_members,
     dataset_versions,
     physical_copies,
+    training_image_fingerprints,
     training_images,
 )
 from tcg_api.table_registry import DECLARED_TABLES
 from tcg_domain import DatasetSplit, ImageSide
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MIGRATION = (
-    REPO_ROOT
-    / "database"
-    / "migrations"
-    / "versions"
-    / "20260828_add_the_dataset_and_provenance_schema.py"
-)
+VERSIONS = REPO_ROOT / "database" / "migrations" / "versions"
+MIGRATION = VERSIONS / "20260828_add_the_dataset_and_provenance_schema.py"
+#: #155's fingerprints landed in a revision of their own, so the generic source
+#: search below reads both files: a CHECK declared in `tables.py` is in *one* of
+#: them, and which one is not the drift this test is about.
+FINGERPRINTS_MIGRATION = VERSIONS / "20260829_add_the_training_image_fingerprints.py"
 
 #: Spec §29's list, verbatim apart from `source_url/reference`, which the
 #: specification spells with a slash and no column may.
@@ -75,12 +75,15 @@ COMPOSED_CHECKS = (
     "ck_training_images_provenance_permits_training",
     "ck_training_images_sha256_is_lowercase_hex",
     "ck_dataset_versions_version_is_an_explicit_identifier",
+    "ck_training_image_fingerprints_hashes_are_lowercase_hex",
 )
 
 
 @pytest.fixture(scope="module")
 def migration_source() -> str:
-    return MIGRATION.read_text(encoding="utf-8")
+    return "\n".join(
+        path.read_text(encoding="utf-8") for path in (MIGRATION, FINGERPRINTS_MIGRATION)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -91,7 +94,17 @@ def migration() -> ModuleType:
     importable from `tables.py`; loading it here is how the two copies are held
     to each other without either reading the other.
     """
-    spec = importlib.util.spec_from_file_location("datasets_migration", MIGRATION)
+    return _imported("datasets_migration", MIGRATION)
+
+
+@pytest.fixture(scope="module")
+def fingerprints_migration() -> ModuleType:
+    """#155's revision, for the same reason and by the same means."""
+    return _imported("fingerprints_migration", FINGERPRINTS_MIGRATION)
+
+
+def _imported(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -107,10 +120,11 @@ def test_the_domain_is_registered() -> None:
     assert set(TABLES) <= set(DECLARED_TABLES)
 
 
-def test_the_four_tables_are_declared_on_the_shared_metadata() -> None:
+def test_the_five_tables_are_declared_on_the_shared_metadata() -> None:
     assert {table.name for table in TABLES} == {
         "physical_copies",
         "training_images",
+        "training_image_fingerprints",
         "dataset_versions",
         "dataset_members",
     }
@@ -393,3 +407,102 @@ def one_check(table: sa.Table, short_name: str) -> str:
         if isinstance(constraint, sa.CheckConstraint) and constraint.name == full:
             return str(constraint.sqltext)
     raise AssertionError(f"{full} is not declared on {table.name}")
+
+
+# ---------------------------------------------------------------------------
+# #155's fingerprints, and what is deliberately not stored beside them
+# ---------------------------------------------------------------------------
+
+
+def test_a_fingerprint_is_keyed_on_the_image_and_nothing_else() -> None:
+    """A derived row has no identity of its own to be keyed on."""
+    key = training_image_fingerprints.primary_key.columns
+
+    assert [column.name for column in key] == ["training_image_id"]
+
+
+def test_a_fingerprint_cascades_where_every_other_key_into_the_image_restricts() -> None:
+    """A hash must never be the reason a training image cannot be removed.
+
+    `dataset_members` restricts because §31 means a version cannot un-include an
+    image; a fingerprint means nothing without the bytes it describes, so it goes
+    with them. The contrast is the assertion.
+    """
+    (fingerprint_key,) = training_image_fingerprints.c.training_image_id.foreign_keys
+    (member_key,) = dataset_members.c.training_image_id.foreign_keys
+
+    assert fingerprint_key.ondelete == "CASCADE"
+    assert member_key.ondelete == "RESTRICT"
+
+
+def test_a_fingerprint_may_record_that_no_card_was_found() -> None:
+    """Both hashes nullable, together — a row rather than a gap.
+
+    An image the detector finds nothing in still gets a row, under the version
+    that examined it, so the next pass does not decode those bytes again.
+    """
+    assert training_image_fingerprints.c.perceptual_hash.nullable
+    assert training_image_fingerprints.c.perceptual_hash_rotated.nullable
+    assert not training_image_fingerprints.c.hash_version.nullable
+    assert one_check(training_image_fingerprints, "both_hashes_or_neither")
+
+
+def test_no_pair_and_no_group_is_stored() -> None:
+    """The decision this table exists to embody, asserted as an absence.
+
+    A duplicate relationship is a pure function of two hashes and a threshold,
+    and the threshold is not stored — so it is derived when asked, exactly as
+    `market_snapshots` derives its membership from a cut-line. A stored pair is a
+    second answer that drifts from the first the moment the number moves.
+    """
+    for table in TABLES:
+        assert not str(table.name).endswith(("_duplicates", "_pairs", "_groups")), table.name
+
+    columns = {column.name for column in training_image_fingerprints.columns}
+    assert not columns & {"distance", "threshold", "duplicate_of", "duplicate_group_id"}
+
+
+def test_the_stored_version_names_the_hash_and_not_the_threshold() -> None:
+    """Moving the threshold invalidates no row, so it is not part of what is stored."""
+    from tcg_api.datasets.deduplication import HASH_VERSION
+    from tcg_api.datasets.fingerprints import DHASH_VERSION, NEAR_DUPLICATE_DISTANCE
+
+    assert HASH_VERSION.startswith(DHASH_VERSION)
+    assert str(NEAR_DUPLICATE_DISTANCE) not in HASH_VERSION.split("+")
+
+
+def test_the_fingerprint_migration_and_the_declaration_share_the_hash_grammar(
+    fingerprints_migration: ModuleType,
+) -> None:
+    """The composed CHECK the generic source search skips, compared by value.
+
+    Both hash columns share one grammar and therefore one constraint, built from
+    one pattern — so the width of the hash is stated in exactly one place per
+    copy, and this holds the two copies together.
+    """
+    assert one_check(training_image_fingerprints, "hashes_are_lowercase_hex") == (
+        fingerprints_migration.HASHES_ARE_HEX
+    )
+    assert fingerprints_migration.PERCEPTUAL_HASH_PATTERN == "^[0-9a-f]{16}$"
+    assert fingerprints_migration.PERCEPTUAL_HASH_PATTERN in fingerprints_migration.HASHES_ARE_HEX
+
+
+def test_the_fingerprint_migration_creates_no_trigger_and_drops_no_function() -> None:
+    """Recomputing under a new version is an UPDATE, so no trigger — and the
+    shared function still guards the two tables that do carry one.
+
+    A `DROP FUNCTION` copied into this revision's `downgrade()` would silently
+    unguard `dataset_versions` and `dataset_members`; `test_migrations.py` proves
+    it against a real database, and this catches it by reading.
+    """
+    source = FINGERPRINTS_MIGRATION.read_text(encoding="utf-8")
+
+    assert "CREATE OR REPLACE FUNCTION" not in source
+    assert "trg_training_image_fingerprints" not in source
+    assert "DROP FUNCTION" not in source
+    assert "op.bulk_insert" not in source
+
+
+def test_the_fingerprints_table_carries_no_index() -> None:
+    """The pass reads it whole, joins by primary key and compares every pair."""
+    assert training_image_fingerprints.indexes == set()

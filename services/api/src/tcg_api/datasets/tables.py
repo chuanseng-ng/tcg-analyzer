@@ -1,9 +1,10 @@
 """Spec §29's provenance, §31's versions and §32's grouping keys, as SQLAlchemy Core.
 
-Four tables, and the constraint ADR 0008 exists to make unavoidable. Together
+Five tables, and the constraint ADR 0008 exists to make unavoidable. Together
 they say which physical object a photograph is of, what rights came with it,
-and which frozen dataset version it was included in. **Core, not ORM**, on the
-same terms as every other domain here.
+which other photographs it is a near duplicate of, and which frozen dataset
+version it was included in. **Core, not ORM**, on the same terms as every other
+domain here.
 
 The tables attach to the service-wide `MetaData` in `tcg_api.tables`, which
 `database/migrations/env.py` compares a database against, and the domain is
@@ -77,6 +78,7 @@ __all__ = [
     "dataset_members",
     "dataset_versions",
     "physical_copies",
+    "training_image_fingerprints",
     "training_images",
 ]
 
@@ -453,6 +455,119 @@ training_images = sa.Table(
 )
 
 
+#: The grammar of a 64-bit difference hash rendered as text: 16 lowercase hex
+#: characters, the spelling `_SHA256_PATTERN` uses one table up. Text rather than
+#: a `BIGINT` for that consistency, and because a 64-bit hash does not fit a
+#: signed bigint without a cast nobody should have to remember.
+_PERCEPTUAL_HASH_PATTERN: Final = "^[0-9a-f]{16}$"
+
+#: Both hash columns share one grammar, so they share one CHECK. Composed rather
+#: than written out, so the pattern above is the only place the width is stated —
+#: `test_datasets_tables.py` holds this against the migration's copy by value.
+_HASHES_ARE_HEX: Final = (
+    f"(perceptual_hash IS NULL OR perceptual_hash ~ '{_PERCEPTUAL_HASH_PATTERN}') "
+    f"AND (perceptual_hash_rotated IS NULL "
+    f"OR perceptual_hash_rotated ~ '{_PERCEPTUAL_HASH_PATTERN}')"
+)
+
+
+training_image_fingerprints = sa.Table(
+    "training_image_fingerprints",
+    metadata,
+    sa.Column(
+        "training_image_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            training_images.c.id,
+            ondelete="CASCADE",
+            # Shortened away from the convention's own rendering, which is
+            # `fk_training_image_fingerprints_training_image_id_training_images`
+            # — 64 bytes, one over PostgreSQL's limit. The two names on
+            # `physical_copies` are shortened for the same reason and it is the
+            # same failure: a truncated name reflects back differently from the
+            # declared one, and `--autogenerate` then reports a drop-and-re-add
+            # for ever.
+            name="fk_training_image_fingerprints_image",
+        ),
+        primary_key=True,
+        comment=(
+            "The image this fingerprint was taken over, and this table's whole identity "
+            "— a derived row has nothing else to be keyed on. **CASCADE, where every "
+            "other key into `training_images` is RESTRICT**: `dataset_members` restricts "
+            "because §31 means a version cannot un-include an image, but a hash means "
+            "nothing without the bytes it describes, so it must never be the reason a "
+            "row cannot be removed."
+        ),
+    ),
+    sa.Column(
+        "perceptual_hash",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "A 64-bit difference hash over the **normalized artifact**, as 16 lowercase "
+            "hex characters. Hashing the 756x1056 artifact rather than the photograph "
+            "takes framing and perspective out of the comparison for free. NULL when no "
+            "card could be located in the bytes: that is an answer rather than a gap — "
+            "these bytes were examined under this `hash_version` and yielded no artifact "
+            "— and it is what keeps a re-run from decoding them again."
+        ),
+    ),
+    sa.Column(
+        "perceptual_hash_rotated",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "The same hash of the artifact turned 180 degrees. `Normalized.quarter_turns` "
+            "only puts the card's short edge first and makes no claim about which way up "
+            "it is printed, so an artifact is in exactly one of two orientations and an "
+            "upside-down retake hashes to something unrelated to its twin. **Stored "
+            "rather than derived**: a 180-degree turn reverses the direction of the "
+            "left-to-right comparison the hash is built from, so this is not a bit "
+            "reversal of the column beside it."
+        ),
+    ),
+    sa.Column(
+        "hash_version",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "What produced these — the hash, the detector and the normalizer, composed as "
+            "`tcg_api.analysis.quality.PIPELINE_VERSION` composes its three. A row whose "
+            "version is not the current one is recomputed by the next pass, which is the "
+            "only invalidation there is. The **threshold is deliberately not in it**: "
+            "nothing about the threshold is stored, so changing it invalidates no row."
+        ),
+    ),
+    sa.Column(
+        "computed_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+    ),
+    sa.CheckConstraint(_HASHES_ARE_HEX, name="hashes_are_lowercase_hex"),
+    # `physical_copies`' certification pattern: half a fingerprint is not a
+    # smaller fingerprint, it is a row whose distance to anything is undefined.
+    sa.CheckConstraint(
+        "(perceptual_hash IS NULL) = (perceptual_hash_rotated IS NULL)",
+        name="both_hashes_or_neither",
+    ),
+    # No index. The pass reads this table whole, joins it to `training_images` by
+    # primary key, and then compares every surviving pair against every other —
+    # an index helps none of those. No trigger either: recomputing a fingerprint
+    # under a new `hash_version` is an UPDATE, and the two mutable tables above
+    # are the precedent.
+    comment=(
+        "One perceptual fingerprint per training image — the **near-duplicate half** of "
+        "deduplication, where uq_training_images_sha256 is the exact half. **Pairs and "
+        "groups are deliberately not stored**: they are a pure function of these hashes "
+        "and a threshold, computed when asked, exactly as `market_snapshots` derives its "
+        "membership from a cut-line rather than listing it. A stored pair is a second "
+        "answer that drifts from the first the moment the threshold moves. Not "
+        "write-once: a version bump rewrites the row."
+    ),
+)
+
+
 dataset_versions = sa.Table(
     "dataset_versions",
     metadata,
@@ -587,8 +702,15 @@ dataset_members = sa.Table(
 
 
 #: Every table this module contributes to the shared `MetaData`, in creation
-#: order — `dataset_members` references two of the others.
-TABLES: Final = (physical_copies, training_images, dataset_versions, dataset_members)
+#: order — `dataset_members` references two of the others, and
+#: `training_image_fingerprints` one.
+TABLES: Final = (
+    physical_copies,
+    training_images,
+    training_image_fingerprints,
+    dataset_versions,
+    dataset_members,
+)
 
 
 # ---------------------------------------------------------------------------
