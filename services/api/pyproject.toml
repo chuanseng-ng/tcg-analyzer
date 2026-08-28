@@ -124,6 +124,11 @@ tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
 # **Runs from the worker image**: hashing needs the normalized artifact, which
 # needs the CV stack in the `worker` extra above.
 tcg-detect-duplicate-training-images = "tcg_api.datasets.deduplication:main"
+# Freezes the corpus as it stands into spec §31's immutable `dataset_version`,
+# writing the version and every member's split in one transaction, and renders
+# the manifest into `datasets/manifests/`. The manifest is a render of the rows
+# rather than a record, so `--regenerate` reproduces it byte for byte.
+tcg-publish-dataset-version = "tcg_api.datasets.versioning:main"
 
 [build-system]
 requires = ["hatchling"]

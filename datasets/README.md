@@ -33,3 +33,11 @@ near duplicates of each other, so spec §32's splitter does not put two shots of
 one card on opposite sides of a train/test boundary. **Nothing is deleted**: a
 duplicate is linked rather than rejected, because the splitter needs the
 relationship rather than one side of it.
+
+`uv run tcg-publish-dataset-version` then freezes the corpus as it stands into
+spec §31's `dataset_version` — the version row, every member's split and the seed
+the splitter used, all in one transaction, which is what makes a member
+impossible to add afterwards. It renders the manifest into `manifests/`, and
+`--regenerate` reproduces that file byte for byte: the manifest is a render of the
+rows rather than a record, so the counts, the achieved proportions and the
+provenance mix are recomputed each time instead of being stored twice.

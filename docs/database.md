@@ -221,6 +221,53 @@ under-grouping leaks, which is the failure §32 exists to prevent, so the pass
 errs towards grouping and the report names the ambiguity rather than resolving
 it.
 
+## Publishing a dataset version
+
+Spec §31 requires every training run to reference a `dataset_version` and forbids
+a model referencing `/latest/`. This is what produces one:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+uv run tcg-publish-dataset-version --version pokemon-condition-v0.1.0 --seed 20260828
+```
+
+It splits the corpus as it stands, writes the version row, every member's split
+and the seed **in one transaction**, and renders the manifest into
+`datasets/manifests/`. Both tables refuse an `UPDATE` in a trigger, so a frozen
+version cannot be edited; that a member cannot be *added* afterwards is held by
+the members being written by the transaction that created the version and by
+nothing else. A re-split is a new version, and a republished name is refused by
+`uq_dataset_versions_version`.
+
+**The seed is required and is not defaulted.** It is derivable from nothing, and
+it is the only thing that makes the split re-derivable years later — which is why
+`dataset_versions.split_seed` is a NOT NULL column and the achieved proportions
+are not.
+
+**The manifest is a render of the rows, never a record.** Counts, achieved
+proportions and the per-source provenance mix are recomputed on every render:
+
+```bash
+uv run tcg-publish-dataset-version --version pokemon-condition-v0.1.0 --regenerate
+```
+
+That reads the database, writes nothing to it, and reproduces the file **byte for
+byte** — which is also how a lost or truncated manifest is recovered. Nothing is
+stamped at render time, no generated-at and no application version, because
+either would make the first regeneration differ from the file it replaced.
+
+**It runs from the API image**, unlike the deduplication pass: freezing a corpus
+decodes no photograph, so nothing on this path needs OpenCV.
+
+A manifest carries identifiers, content hashes, splits, storage keys and the
+provenance pair — never bytes. ADR 0008 makes `redistribution_allowed` false on
+every approved source, including the photographs this project took itself, so no
+dataset is ever published; a list of identifiers and hashes carries no artwork and
+is the most a version can leave behind. Each member carries enough for a training
+run to resolve its file without reading the database, which is what ADR 0009
+requires of `ml/*`.
+
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
 

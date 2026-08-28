@@ -269,12 +269,37 @@ than fixed by splitting a group.
 Grades are not stratified over. That needs grades to exist, which is M8's, and
 only if the corpus is large enough for a stratum to mean anything.
 
+## Versioning a corpus
+
+```bash
+uv run tcg-publish-dataset-version --version pokemon-condition-v0.1.0 --seed 20260828
+uv run tcg-publish-dataset-version --version pokemon-condition-v0.1.0 --regenerate
+```
+
+Spec §31 requires every training run to reference a `dataset_version` and forbids
+a model referencing `/latest/`, which is why the identifier carries a CHECK on its
+grammar rather than a convention. Publishing writes the version row, every
+member's split and the seed **in one transaction**. Both tables refuse an `UPDATE`
+in a trigger, so a frozen version cannot be edited; that a member cannot be
+*added* afterwards is held by there being no code path which does it — the members
+are written by the transaction that created the version and by nothing else. A
+re-split is a new version.
+
+**The manifest is a render of the rows, never a record.** The counts, the achieved
+proportions and the per-source provenance mix are recomputed from
+`dataset_members` on every render, so `--regenerate` reproduces the file byte for
+byte and none of the three is a column — the same relationship `market_snapshots`
+has with its derived `data_version`. `split_seed` is stored because it is the only
+one derivable from nothing.
+
+A version over an empty corpus is refused: §31's point is that the reference means
+something, and a version with no members resolves to nothing.
+
 ## What is not here
 
-Annotations are their own table, their own migration and their own issue. So is
-manifest generation.
+Annotations are their own table, their own migration and their own issue.
 `datasets/manifests/` holds what a version leaves behind, generated from these
-rows.
+rows by the command above.
 
 The ingestion path is
 [`services/api/src/tcg_api/datasets/ingestion.py`](../../services/api/src/tcg_api/datasets/ingestion.py),
