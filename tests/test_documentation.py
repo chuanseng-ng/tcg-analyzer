@@ -44,7 +44,10 @@ DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = (
     "docs/development.md",
 )
 # `docs/architecture.md` has no commands but plenty of links, so the link check
-# covers more than the command check does.
+# covers more than the command check does. The `datasets/` files are here
+# because ADR 0009 is what stops that directory reading as though it were the
+# store: each of them now points at the record, and a link that stops resolving
+# puts the contradiction back.
 LINKED_DOCUMENTS: tuple[str, ...] = (
     *DOCUMENTED_COMMAND_SOURCES,
     "docs/README.md",
@@ -52,6 +55,9 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "docs/market-provider-research.md",
     "docs/training-image-provenance-research.md",
     "docs/retention.md",
+    "datasets/README.md",
+    "datasets/schemas/README.md",
+    "datasets/manifests/README.md",
 )
 
 _BASH_BLOCK = re.compile(r"^```bash\n(.*?)^```", re.MULTILINE | re.DOTALL)
