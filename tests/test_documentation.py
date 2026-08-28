@@ -57,6 +57,7 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "docs/retention.md",
     "datasets/README.md",
     "datasets/schemas/README.md",
+    "datasets/schemas/dataset-schema.md",
     "datasets/manifests/README.md",
 )
 

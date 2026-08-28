@@ -1,0 +1,173 @@
+# The dataset, provenance and membership schema
+
+Four tables, described here for a human. **The DDL is
+[the migration](../../database/migrations/versions/20260828_add_the_dataset_and_provenance_schema.py)**
+and the declaration is
+[`services/api/src/tcg_api/datasets/tables.py`](../../services/api/src/tcg_api/datasets/tables.py);
+this file is documentation, and a line here that disagrees with either of them
+is stale — see [ADR 0009](../../docs/adr/0009-the-dataset-store-as-a-database-domain.md).
+
+Image bytes live in object storage. A row carries the storage key and the
+`sha256`; the bytes are never a column and never in git.
+
+## `physical_copies` — one physical card
+
+Spec §32 requires a train/validation/test split that does not leak, by grouping
+on the physical card, the source, the card instance or the slab. **None of spec
+§29's nine provenance fields identifies a physical copy**, which is the gap
+[ADR 0008](../../docs/adr/0008-permitted-training-image-sources.md) found while
+filling those fields in. This table closes it.
+
+| Column | Meaning |
+| --- | --- |
+| `id` | The per-copy identifier, assigned when the card is acquired. |
+| `certification_company` | `psa`, `tag` or `bgs`, where the copy has been slabbed. |
+| `certification_number` | The number printed on the slab. |
+| `created_at` | |
+
+The pair `(certification_company, certification_number)` is unique, and either
+both are present or neither is. Two copies with no certification are two rows:
+`NULLS NOT DISTINCT` is deliberately not set, so nothing collapses every
+unidentified copy into one.
+
+**The catalog card is not on this table.** Two copies of one Base Set Charizard
+share a `card_id` and must be splittable apart; one copy photographed twice
+shares no `sha256` and must not be. Which card a copy depicts is recorded on the
+image, which is the row that can exist before anybody has identified it.
+
+**This table is not write-once**, unlike a dataset version. A certification
+number arrives weeks after the photographs do.
+
+### Deriving the identifier, per approved source
+
+ADR 0008 approves four sources and no others. Each one answers "which physical
+object is this?" differently, and one of them cannot answer it at all.
+
+| Approved source | Identifier | How it is derived |
+| --- | --- | --- |
+| 1 — photographs we take of raw cards we own, then submit for grading | `physical_copies.id`, then the certification number | A copy row is created when the card is photographed. The submission's certification number is written back onto the same row when it returns, so the pre- and post-grading photographs group together. |
+| 2 — photographs we take of graded slabs we own | The certification number | Printed on the slab and visible in the photograph itself. The copy row carries it from the start. |
+| 3 — photographs contributed under a written grant | `physical_copies.id`, from the contributor's own copy reference | The [grant template](../documentation/) asks the contributor which photographs are of the same card; one copy row per distinct card they name. Where a contributed photograph is of a slab, its certification number goes on the row and takes over. |
+| 4 — this product's own user uploads, where the user consented | **None — the grouping falls back to `source`** | See below. |
+
+**Class 4 has no per-copy identifier, and says so.** §29's record for a consented
+upload references the `analysis_id`, which groups the front and back of one card
+but not two analyses of the same card by the same person — and nothing in an
+anonymous session (spec §53) can tell those apart. `training_images.physical_copy_id`
+is therefore NULL for this class and the splitter groups it by `source`, which
+§32 lists among its acceptable keys precisely for this case. A grouping key that
+is honestly coarse beats one that is confidently wrong. If the consent mechanism
+turns out to carry something that identifies a copy, that is a refinement of this
+row rather than a correction of it.
+
+## `training_images` — one image and the rights that came with it
+
+Spec §29's nine fields are columns on this row, beside the digest, which is what
+lets the ingestion gate be a constraint rather than a function a loader must
+remember to call.
+
+| §29 field | Column | Notes |
+| --- | --- | --- |
+| `source` | `source` | `first_party`, `contributed` or `product_upload`. Also §32's fallback grouping key. |
+| `source_url/reference` | `source_reference` | The specification spells this one field two ways and neither is a legal column name. |
+| `acquisition_method` | `acquisition_method` | How, where `source` is who. |
+| `license` | `license` | Ownership, the grant by identifier and date, or the consent text by version. |
+| `commercial_use_allowed` | `commercial_use_allowed` | Read by the gate. |
+| `derivative_use_allowed` | `derivative_use_allowed` | Read by the gate. |
+| `redistribution_allowed` | `redistribution_allowed` | Recorded, never gated. |
+| `permission_notes` | `permission_notes` | The grant's own limits, the consent version, ADR 0008's standing risk R1. |
+| `acquired_at` | `acquired_at` | When the photograph was taken, not when the row was written. |
+
+Beside them: `physical_copy_id`, `card_id`, `side`, `original_uri`, `sha256`,
+`mime_type`, `width`, `height` and `created_at`.
+
+### The gate
+
+```sql
+CONSTRAINT ck_training_images_provenance_permits_training CHECK (
+    commercial_use_allowed IS TRUE
+    AND derivative_use_allowed IS TRUE
+    AND license IS NOT NULL
+    AND btrim(license) <> ''
+)
+```
+
+ADR 0008's rule is that **a null, an empty string and an absent field are one
+answer, and it is refusal**. Three things about this constraint follow from that
+and are not free to change:
+
+- **`IS TRUE`, never a bare column reference.** `NULL AND true` is `NULL` in SQL,
+  and a `CHECK` **passes** on `NULL` — so the obvious spelling would admit
+  exactly the unknown-provenance image the gate exists to refuse.
+- **The three columns it reads are nullable.** `NOT NULL` would refuse a null
+  under a different constraint with a different message; one refusal with one
+  name is what makes the rule reviewable.
+- **`redistribution_allowed` is not in it.** ADR 0008 makes it `false` on all
+  four approved sources, including the photographs this project took itself,
+  because the artwork is not ours. The column records that answer and is not a
+  switch to be waived — which is why **no dataset is ever published** and why a
+  manifest of identifiers and hashes is all a version leaves behind.
+
+`source` carries no membership `CHECK`, following `grading_rules.company`: the
+allow-list is enforced in the ingestion path, where it changes, and the rights
+are enforced here, where they do not. A fifth approved source costs an ADR and
+no migration.
+
+`sha256` is unique here, where `images.sha256` in the analysis domain
+deliberately is not — the same photograph uploaded to two analyses is two
+images, and the same photograph ingested twice is one training image. That is
+the exact-duplicate half of deduplication; near-duplicates are a separate
+question and need no column here.
+
+`source_reference` holds a consented upload's analysis identifier as **text and
+not a foreign key**: spec §54 deletes that analysis on schedule and the training
+image outlives it.
+
+## `dataset_versions` — one frozen corpus
+
+Spec §31 requires every training run to reference a `dataset_version` such as
+`pokemon-condition-v0.3.0`, and forbids a model referencing `/latest/`. The
+grammar is a `CHECK`, so `/latest/` is not storable.
+
+| Column | Meaning |
+| --- | --- |
+| `id` | A surrogate key; the identity is `version`. |
+| `ordinal` | Publication order, `GENERATED ALWAYS`. The current version is the highest ordinal — a query, never a mutable pointer. |
+| `version` | `pokemon-condition-v0.3.0`. |
+| `split_seed` | The seed the splitter ran with. |
+| `created_at` | |
+
+**The achieved split proportions are not stored.** They are a count over
+`dataset_members`, and a stored copy is a second answer that can drift from the
+first. The seed is stored because it is derivable from nothing, and a split that
+cannot be reproduced makes a version reproducible in name only.
+
+A version is write-once: `trg_dataset_versions_immutable` refuses an `UPDATE`.
+
+## `dataset_members` — one image's place in one version
+
+| Column | Meaning |
+| --- | --- |
+| `dataset_version_id` | `ON DELETE CASCADE`. Part of the primary key. |
+| `training_image_id` | `ON DELETE RESTRICT`. Part of the primary key. |
+| `split` | `train`, `validation` or `test`. |
+| `created_at` | |
+
+**This is a real membership list, and that differs from `market_snapshots` on
+purpose.** A market snapshot stores no members because its membership is
+derivable from a cut-line on `created_at`; a train/validation/test assignment is
+a *decision* and is derivable from nothing.
+
+`training_image_id` is `RESTRICT` because ADR 0008 grants retention after a
+contributor withdraws, precisely because §31 means a version cannot un-include
+an image. Deleting one would leave a manifest naming bytes nobody can produce.
+
+The primary key is the pair, so an image appears in a version once, in one
+split — an image in two splits of one version is the leakage §32 is about.
+
+## What is not here
+
+Annotations are their own table, their own migration and their own issue. So are
+the ingestion path, deduplication, the splitter and manifest generation.
+`datasets/manifests/` holds what a version leaves behind, generated from these
+rows.
