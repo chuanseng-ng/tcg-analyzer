@@ -71,6 +71,7 @@ def test_the_public_surface_is_explicit() -> None:
         "catalog",
         "catalog_version",
         "confidence",
+        "dataset",
         "distribution",
         "errors",
         "grade",

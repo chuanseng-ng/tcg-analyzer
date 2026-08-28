@@ -44,7 +44,9 @@ The schema's source of truth is the `MetaData` in
 `target_metadata`. The tables themselves are declared per domain — the card
 catalog in `tcg_api/catalog/tables.py`, the analysis spine in
 `tcg_api/analysis/tables.py`, the published grading standards in
-`tcg_api/grading/tables.py` and the market data in `tcg_api/market/tables.py` —
+`tcg_api/grading/tables.py`, the market data in `tcg_api/market/tables.py`, the
+economic configuration in `tcg_api/economics/tables.py` and the dataset,
+provenance and membership records in `tcg_api/datasets/tables.py` —
 and `tcg_api/table_registry.py` imports them all,
 which is what makes that `MetaData` complete. `env.py` reads it from the registry
 for exactly that reason. Declare a new table in one of those modules as well as in

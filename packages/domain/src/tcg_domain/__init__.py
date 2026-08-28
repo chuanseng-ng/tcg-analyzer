@@ -39,6 +39,7 @@ from tcg_domain.confidence import (
     InsufficientInformation,
     Uncertain,
 )
+from tcg_domain.dataset import DatasetSplit
 from tcg_domain.distribution import SUM_TOLERANCE, GradeDistribution
 from tcg_domain.errors import (
     CatalogUnavailable,
@@ -109,6 +110,7 @@ __all__ = [
     "Corner",
     "Currency",
     "CurrencyMismatch",
+    "DatasetSplit",
     "DomainError",
     "Game",
     "Grade",

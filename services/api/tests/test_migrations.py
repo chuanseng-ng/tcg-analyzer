@@ -61,6 +61,9 @@ MARKET_DATA_REVISION = "b5bca50f46c0"
 # function it did not create. Pinned for the same reason as the rest.
 MARKET_SNAPSHOTS_REVISION = "3ac71e5d92f8"
 ECONOMIC_CONFIGURATION_REVISION = "9d2f61c47ab3"
+# Spec §29-§32's dataset domain, the sixth, and the second revision where one
+# trigger function serves two tables. Pinned for the same reason as the rest.
+DATASETS_REVISION = "6f49252e81d4"
 
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
@@ -326,6 +329,33 @@ def test_downgrading_the_economics_revision_leaves_no_orphaned_trigger_function(
     alembic("downgrade", "-1")
 
     assert not function_exists("economic_configuration_is_immutable()")
+
+
+def test_downgrading_the_datasets_revision_leaves_the_rest_standing() -> None:
+    """The sixth domain reverses without taking the other five with it."""
+    alembic("upgrade", DATASETS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    for table in ("physical_copies", "training_images", "dataset_versions", "dataset_members"):
+        assert not table_exists(table), table
+    assert table_exists("economic_configurations")
+    assert table_exists("market_snapshots")
+    assert table_exists("cards")
+
+
+def test_downgrading_the_datasets_revision_leaves_no_orphaned_trigger_function() -> None:
+    """This revision creates its own shared function, so reversing it must drop one.
+
+    `DROP TABLE` takes each trigger with it but never the function the two share,
+    which is why the drop is named explicitly and runs last.
+    """
+    alembic("upgrade", DATASETS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not function_exists("dataset_records_are_immutable()")
+    assert function_exists("market_rows_are_immutable()")
 
 
 def test_the_harness_table_documents_why_it_exists() -> None:
