@@ -46,6 +46,9 @@ jobs:
           # are cheap on a codebase this size and the noise is manageable now,
           # which is not true if it is switched on years later.
           queries: security-and-quality
+          # One rule of that pack is excluded, by name and with its reasoning —
+          # `query-filters` is honoured only in a config file, never here.
+          config-file: ./.github/codeql/codeql-config.yml
 
       # Both languages are interpreted, so CodeQL's own extraction is enough —
       # no build step to configure.

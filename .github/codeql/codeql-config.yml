@@ -1,0 +1,34 @@
+# CodeQL configuration — one rule excluded, and only one.
+#
+# `py/unused-global-variable` reports every Alembic migration's `revision`,
+# `down_revision`, `branch_labels` and `depends_on` as dead code. It is wrong
+# rather than merely noisy: Alembic's `ScriptDirectory` imports each version
+# module and reads those four names **off the module object by attribute**, so
+# the read is reflective and CodeQL's dataflow cannot see it. The variables are
+# the interface Alembic requires and they come from Alembic's own template —
+# there is nothing a migration could do differently.
+#
+# Fifty-two alerts across thirteen migrations were dismissed by hand before this
+# file existed, and every one of them was this. Four more arrive with every
+# migration written from here on, and a triage queue that is permanently four
+# items of noise deep is one nobody reads carefully.
+#
+# **Excluded by rule, not by path.** `paths-ignore` on
+# `database/migrations/versions/**` would have been the obvious reach and it is
+# the wrong trade: a migration is one of the few places in this repository that
+# writes SQL, and `op.execute()` with anything interpolated into it is exactly
+# the shape `codeql.yml`'s own header says this scan exists to catch. Removing
+# one quality rule everywhere is narrower than removing every rule somewhere.
+#
+# The rule has never once been true here. If it starts flagging application
+# code, that is a reason to reconsider — and it is this one block to delete.
+#
+# `queries: security-and-quality` stays where it is, in the workflow. A
+# `query-filters` block is honoured only in a config file, and it composes with
+# the workflow's `queries:` rather than replacing it.
+
+name: tcg-analyzer
+
+query-filters:
+  - exclude:
+      id: py/unused-global-variable
