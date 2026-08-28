@@ -229,10 +229,50 @@ an image. Deleting one would leave a manifest naming bytes nobody can produce.
 The primary key is the pair, so an image appears in a version once, in one
 split — an image in two splits of one version is the leakage §32 is about.
 
+## Splitting a corpus — spec §32
+
+The assignment `dataset_members.split` records is decided by
+[`services/api/src/tcg_api/datasets/splitting.py`](../../services/api/src/tcg_api/datasets/splitting.py),
+which stores nothing: it reads the grouping keys and the fingerprints and returns
+an assignment, and the versioning issue writes that assignment and its version in
+one transaction.
+
+**It groups first and splits the groups.** Assigning images and repairing
+collisions afterwards is the same bug with more steps. Three relations put two
+images in one group, and they compose:
+
+| Relation | Where it comes from |
+| --- | --- |
+| A shared `physical_copy_id` | §32's primary key, and the reason `physical_copies` exists. |
+| A shared `source`, where `physical_copy_id` is NULL | §32's documented fallback — see the per-source table above; it is approved class 4 and nothing else. |
+| A near-duplicate group | `training_image_fingerprints`, so two images the provenance did not link but the hash did stay together. |
+
+Because they compose, one hash linking a consented upload to a first-party copy
+merges that whole source group with the copy. The merge is unbounded and it is
+the safe direction — over-grouping costs a little balance, under-grouping leaks —
+and the result reports its group sizes largest-first so a runaway group is
+visible rather than silent.
+
+**The order is seeded with a hash, not with a PRNG.** Groups are considered in
+order of `sha256(seed:smallest member id)`, which is stable across Python
+versions, platforms and languages; `random.shuffle`'s sequence is an
+implementation detail nobody promised, and `split_seed` exists so a split can be
+re-derived years later. Each whole group then goes to whichever split is furthest
+below its share, measured in exact fractions.
+
+**The proportions are targeted, not forced.** Groups have different sizes, and a
+split that hits 70/15/15 exactly has almost certainly broken one apart. What was
+achieved comes back on the result and is countable from `dataset_members`; a
+corpus small enough that a split comes back empty is logged as a warning rather
+than fixed by splitting a group.
+
+Grades are not stratified over. That needs grades to exist, which is M8's, and
+only if the corpus is large enough for a stratum to mean anything.
+
 ## What is not here
 
-Annotations are their own table, their own migration and their own issue. So are
-the splitter and manifest generation.
+Annotations are their own table, their own migration and their own issue. So is
+manifest generation.
 `datasets/manifests/` holds what a version leaves behind, generated from these
 rows.
 
