@@ -23,4 +23,7 @@ trained on. Nothing here is ever published: `redistribution_allowed` is `false`
 on every approved source, so a manifest of identifiers and content hashes is the
 most a dataset version can leave behind.
 
-Populated in M6.
+Images enter the corpus through `uv run tcg-ingest-training-images`, one
+physical card per invocation, and only from one of ADR 0008's four approved
+sources — see [the database guide](../docs/database.md). There is deliberately
+no HTTP route: nothing in this domain is a consumer surface.
