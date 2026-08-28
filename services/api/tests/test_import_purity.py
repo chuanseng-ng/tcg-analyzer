@@ -181,3 +181,23 @@ def test_splitting_a_corpus_pulls_in_neither_opencv_nor_the_analysis_stages() ->
         "artifact is tcg_api.datasets.deduplication's, and the splitter must not reach it."
     )
     assert stages == [], stages
+
+
+def test_versioning_a_dataset_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#157 publishes a version from the API image, not the worker one.
+
+    It reaches the corpus through the splitter, which reaches stored hashes
+    through `tcg_api.datasets.fingerprints`. Freezing a corpus decodes no
+    photograph, so a CV stack in this path would be a dependency for a step it
+    never runs — and `tcg-publish-dataset-version` would need the worker image to
+    write a row.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.versioning")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.versioning")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.versioning pulled in {cv}. Publishing a version "
+        "reads rows and writes rows; it never produces a normalized artifact, which is "
+        "tcg_api.datasets.deduplication's work and the only reason OpenCV is installed."
+    )
+    assert stages == [], stages
