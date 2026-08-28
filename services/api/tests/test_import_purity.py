@@ -122,3 +122,43 @@ def test_the_quality_wiring_is_the_module_that_binds_to_opencv() -> None:
         "tcg_ml_image_quality",
         "tcg_ml_normalization",
     } <= set(stages), stages
+
+
+def test_deriving_duplicate_groups_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#155's pure half stays runnable outside the worker image, and #156 needs it to.
+
+    The splitter is a plain command over the database: it reads stored hashes and
+    groups them, and runs no image processing at all. If the grouping lived beside
+    the warp it would acquire OpenCV for a step it never executes — the same
+    failure the two tests above exist for, one milestone later.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.fingerprints")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.fingerprints")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.fingerprints pulled in {cv}. The hash, the "
+        "distance and the grouping are Pillow and arithmetic; producing an artifact "
+        "is tcg_api.datasets.deduplication's, which is the module that may."
+    )
+    assert stages == [], stages
+
+
+def test_the_deduplication_pass_is_the_module_that_binds_to_opencv() -> None:
+    """Guard the guard: without this, deleting the seam would 'fix' the test above."""
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.deduplication")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.deduplication")
+
+    assert "cv2" in cv
+    assert {"tcg_ml_card_detection", "tcg_ml_normalization"} <= set(stages), stages
+
+
+def test_ingesting_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#154's own claim, which nothing asserted until #155 gave it a sibling.
+
+    Ingestion validates with Pillow and stores the bytes; the artifact is
+    produced on demand by the deduplication pass, which is why OpenCV is not on
+    the ingest path.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.ingestion")
+
+    assert cv == [], cv

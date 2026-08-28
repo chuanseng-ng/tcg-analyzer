@@ -18,8 +18,8 @@ Table modules import `metadata` from here and attach to it:
   `market_observations`.
 * `tcg_api.economics.tables` — spec §46's `economic_configurations`.
 * `tcg_api.datasets.tables` — spec §29's `training_images` with their
-  provenance, §32's `physical_copies` and §31's `dataset_versions` and
-  `dataset_members`.
+  provenance, §32's `physical_copies` and `training_image_fingerprints`, and
+  §31's `dataset_versions` and `dataset_members`.
 
 This module imports nothing from `tcg_api`, and must not: the table modules
 import *it*, so anything here that reached back for them would be a cycle. What

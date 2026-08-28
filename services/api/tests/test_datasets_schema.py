@@ -39,6 +39,7 @@ from tcg_api.datasets.tables import (
     dataset_members,
     dataset_versions,
     physical_copies,
+    training_image_fingerprints,
     training_images,
 )
 
@@ -125,7 +126,10 @@ def empty_tables() -> Iterator[None]:
     `dataset_versions` and `dataset_members` refuse an UPDATE; nothing refuses a
     DELETE, and TRUNCATE would work either way.
     """
-    tables = "dataset_members, dataset_versions, training_images, physical_copies, cards, sets"
+    tables = (
+        "training_image_fingerprints, dataset_members, dataset_versions, "
+        "training_images, physical_copies, cards, sets"
+    )
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
@@ -514,3 +518,126 @@ def test_the_ordinal_is_assigned_by_the_database() -> None:
     rows = fetch(sa.select(dataset_versions.c.ordinal).order_by(dataset_versions.c.ordinal))
 
     assert [row.ordinal for row in rows] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# #155's fingerprints, against the real constraints
+# ---------------------------------------------------------------------------
+
+#: A hash the grammar accepts: 16 lowercase hex characters, 64 bits.
+A_HASH = "0f1e2d3c4b5a6978"
+
+
+def insert_fingerprint(image_id: uuid.UUID, **overrides: Any) -> None:
+    execute(
+        sa.insert(training_image_fingerprints),
+        {
+            "training_image_id": image_id,
+            "perceptual_hash": A_HASH,
+            "perceptual_hash_rotated": A_HASH,
+            "hash_version": "dhash-8x8-v0.1.0+detector+normalizer",
+            **overrides,
+        },
+    )
+
+
+def test_a_fingerprint_is_stored_for_an_image() -> None:
+    image_id = insert_image()
+
+    insert_fingerprint(image_id)
+
+    rows = fetch(sa.select(training_image_fingerprints))
+    assert len(rows) == 1
+    assert rows[0].perceptual_hash == A_HASH
+
+
+def test_an_uppercase_hash_is_refused() -> None:
+    """The grammar is the same one `sha256` uses, and for the same reason.
+
+    Two spellings of one hash compare as different bits, so the column admits one.
+    """
+    image_id = insert_image()
+
+    with pytest.raises(IntegrityError, match="hashes_are_lowercase_hex"):
+        insert_fingerprint(image_id, perceptual_hash=A_HASH.upper())
+
+
+def test_a_hash_of_the_wrong_width_is_refused() -> None:
+    image_id = insert_image()
+
+    with pytest.raises(IntegrityError, match="hashes_are_lowercase_hex"):
+        insert_fingerprint(image_id, perceptual_hash="0f1e2d3c")
+
+
+def test_half_a_fingerprint_is_refused() -> None:
+    """`physical_copies`' certification rule, one table along.
+
+    Half a fingerprint is not a smaller fingerprint; it is a row whose distance
+    to anything is undefined, because the rotated hash is one of three terms the
+    comparison takes.
+    """
+    image_id = insert_image()
+
+    with pytest.raises(IntegrityError, match="both_hashes_or_neither"):
+        insert_fingerprint(image_id, perceptual_hash_rotated=None)
+
+
+def test_an_image_with_no_card_located_records_a_row_with_no_hashes() -> None:
+    """Neither hash, and that is an answer rather than a gap.
+
+    It is what stops the next pass decoding those same bytes again — and a
+    version bump is what makes it try once more.
+    """
+    image_id = insert_image()
+
+    insert_fingerprint(image_id, perceptual_hash=None, perceptual_hash_rotated=None)
+
+    assert fetch(sa.select(training_image_fingerprints))[0].perceptual_hash is None
+
+
+def test_a_fingerprint_can_be_recomputed() -> None:
+    """The inverse assertion: this table carries no immutability trigger.
+
+    A detector or normalizer bump rewrites every row, so a trigger added here
+    later fails this test rather than being discovered by a pass that cannot
+    finish.
+    """
+    image_id = insert_image()
+    insert_fingerprint(image_id)
+
+    execute(
+        sa.update(training_image_fingerprints).values(
+            perceptual_hash="ffffffffffffffff",
+            perceptual_hash_rotated="ffffffffffffffff",
+            hash_version="dhash-8x8-v0.2.0+detector+normalizer",
+        )
+    )
+
+    assert fetch(sa.select(training_image_fingerprints))[0].perceptual_hash == "f" * 16
+
+
+def test_one_image_carries_at_most_one_fingerprint() -> None:
+    image_id = insert_image()
+    insert_fingerprint(image_id)
+
+    with pytest.raises(IntegrityError, match="pk_training_image_fingerprints"):
+        insert_fingerprint(image_id)
+
+
+def test_a_fingerprint_goes_when_its_image_does() -> None:
+    """CASCADE, where `dataset_members` restricts.
+
+    Spec §54's disposal and a withdrawn contributor both need an image removable,
+    and derived data must never be the thing standing in the way.
+    """
+    image_id = insert_image()
+    insert_fingerprint(image_id)
+
+    execute(sa.delete(training_images).where(training_images.c.id == image_id))
+
+    assert fetch(sa.select(training_image_fingerprints)) == []
+
+
+def test_a_fingerprint_needs_an_image_that_exists() -> None:
+    with pytest.raises(IntegrityError, match="fk_training_image_fingerprints_image"):
+        insert_fingerprint(uuid.uuid4())

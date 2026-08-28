@@ -118,6 +118,12 @@ tcg-seed-grading-rules = "tcg_api.grading.seed:main"
 # stored. There is deliberately no HTTP route: nothing in the dataset domain is
 # a consumer surface.
 tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
+# Fingerprints every training image that has none and reports the near-duplicate
+# groups spec §32's splitter must not break apart. Exact duplicates are already
+# unrepresentable (uq_training_images_sha256), so this is only the near half.
+# **Runs from the worker image**: hashing needs the normalized artifact, which
+# needs the CV stack in the `worker` extra above.
+tcg-detect-duplicate-training-images = "tcg_api.datasets.deduplication:main"
 
 [build-system]
 requires = ["hatchling"]

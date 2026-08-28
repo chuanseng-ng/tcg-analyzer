@@ -8,8 +8,8 @@ file here that disagrees with a migration is stale documentation, never a second
 definition.
 
 - [The dataset, provenance and membership schema](dataset-schema.md) —
-  `physical_copies`, `training_images`, `dataset_versions` and
-  `dataset_members`, and how the per-copy identifier is derived for each of
-  ADR 0008's four approved sources.
+  `physical_copies`, `training_images`, `training_image_fingerprints`,
+  `dataset_versions` and `dataset_members`, and how the per-copy identifier is
+  derived for each of ADR 0008's four approved sources.
 
 **Schemas only — never images.**

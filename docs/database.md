@@ -164,6 +164,63 @@ digest is over the bytes that were kept. A camera export larger than
 `TCG_API_UPLOAD_MAX_BYTES` is refused; raise it for the run rather than
 expecting a second limit to exist.
 
+## Detecting near-duplicate training images
+
+Spec §28 puts deduplication between image validation and annotation, and §32
+forbids splitting near-identical photographs of one card across train and test.
+**The exact half of that is already unrepresentable**: `sha256` is unique on
+`training_images`, so re-ingesting identical bytes is refused before anything is
+stored. What is left is the near half — the same photograph resized,
+recompressed, or the same card retaken under different light, each of which is a
+different digest and the same card.
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
+uv run tcg-detect-duplicate-training-images
+```
+
+It fingerprints every training image that has none, then reports the groups the
+splitter must not break apart. **It runs from the worker image**, not the API
+one: a fingerprint is taken over the standardized 756x1056 artifact, so producing
+one needs card detection and normalization and therefore OpenCV, which only
+`worker.Dockerfile` installs. Hashing the artifact rather than the photograph is
+what takes framing and perspective out of the comparison for free.
+
+Two hashes are stored per image, the second of the artifact turned 180 degrees.
+Normalization puts the card's short edge first but makes no claim about which way
+up it is *printed* — only reading the artwork could say — so an upside-down
+retake would otherwise hash to something unrelated to its twin.
+
+**Pairs and groups are not stored.** They are a pure function of the stored
+hashes and a threshold, computed when asked, the same way a market snapshot
+derives its membership from a cut-line rather than listing it. Re-running is
+cheap: an image whose fingerprint is already current is skipped, and only a
+detector or normalizer version bump invalidates one.
+
+**The threshold is provisional and the command says so on every run.** Ten of 64
+bits was chosen against synthetic fixtures, because no real card photographs
+exist in this repository and none may be committed — ADR 0008 makes
+`redistribution_allowed` false on every approved source. Measure it against your
+own photographs and read the valley off the histogram:
+
+```bash
+uv run tcg-detect-duplicate-training-images --measure ~/cards
+```
+
+That mode reads a local directory, reports the distance distribution, and touches
+neither the database nor object storage.
+
+**A group is a finding for a person, not a verdict.** A perceptual hash cannot
+tell two copies of one printing apart — the artwork is identical and condition
+differences are sub-pixel — so a group spanning two `physical_copies` rows is
+either one card entered twice under two submissions, or two genuine copies the
+hash cannot separate. Over-grouping costs a little balance in the split;
+under-grouping leaks, which is the failure §32 exists to prevent, so the pass
+errs towards grouping and the report names the ambiguity rather than resolving
+it.
+
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
 
