@@ -319,6 +319,25 @@ def test_the_digest_is_bare_lowercase_hex() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The dimensions
+# ---------------------------------------------------------------------------
+def test_the_dimensions_describe_the_bytes_that_are_stored() -> None:
+    """`training_images.width`/`height` are NOT NULL, and this is where they come from.
+
+    Read from the header the pixel-limit check already reads, so nothing parses
+    the file twice. Both strip paths preserve the raster, which is what makes it
+    honest to report them as the *stored* image's — asserted here against the
+    stripped bytes rather than against `SIZE`, so a strip that resized would
+    fail rather than agree with a constant.
+    """
+    for data in (a_jpeg(exif=personal_metadata()), a_png()):
+        validated = validate_image(data, max_pixels=GENEROUS_PIXELS)
+
+        with Image.open(BytesIO(validated.data)) as stored:
+            assert (validated.width, validated.height) == stored.size == SIZE
+
+
+# ---------------------------------------------------------------------------
 # The endpoint's side vocabulary
 # ---------------------------------------------------------------------------
 def test_the_upload_accepts_exactly_the_v1_sides() -> None:

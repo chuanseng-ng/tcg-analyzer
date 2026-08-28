@@ -113,6 +113,11 @@ tcg-import-catalog = "tcg_api.catalog.import_catalog:main"
 # into `grading_rules` (spec §23). Idempotent; a published version is never
 # rewritten, and the database refuses it if anything tries.
 tcg-seed-grading-rules = "tcg_api.grading.seed:main"
+# One invocation is one physical card (spec §32's grouping key), and every
+# photograph it ingests passes ADR 0008's provenance gate before a byte is
+# stored. There is deliberately no HTTP route: nothing in the dataset domain is
+# a consumer surface.
+tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
 
 [build-system]
 requires = ["hatchling"]

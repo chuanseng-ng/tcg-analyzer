@@ -111,7 +111,11 @@ and are not free to change:
 `source` carries no membership `CHECK`, following `grading_rules.company`: the
 allow-list is enforced in the ingestion path, where it changes, and the rights
 are enforced here, where they do not. A fifth approved source costs an ADR and
-no migration.
+no migration. That allow-list is `APPROVED_SOURCES` in
+[`tcg_api/datasets/ingestion.py`](../../services/api/src/tcg_api/datasets/ingestion.py),
+and it is keyed on the **pair** `(source, acquisition_method)` — classes 1 and 2
+are both `first_party`, and what separates them is whether the card was raw or
+already slabbed.
 
 `sha256` is unique here, where `images.sha256` in the analysis domain
 deliberately is not — the same photograph uploaded to two analyses is two
@@ -168,6 +172,12 @@ split — an image in two splits of one version is the leakage §32 is about.
 ## What is not here
 
 Annotations are their own table, their own migration and their own issue. So are
-the ingestion path, deduplication, the splitter and manifest generation.
+near-duplicate detection, the splitter and manifest generation.
 `datasets/manifests/` holds what a version leaves behind, generated from these
 rows.
+
+The ingestion path is
+[`services/api/src/tcg_api/datasets/ingestion.py`](../../services/api/src/tcg_api/datasets/ingestion.py),
+reached through `uv run tcg-ingest-training-images`. It reuses the upload
+validation the analysis domain already owns rather than carrying a second copy,
+and it verifies provenance *before* storing anything, per spec §28's ordering.

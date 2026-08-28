@@ -86,7 +86,7 @@ class InvalidImage(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ValidatedImage:
-    """An upload that passed, and the three facts a row is written from.
+    """An upload that passed, and the facts a row is written from.
 
     Args:
         data: The bytes to store — stripped of personal metadata, and *not* the
@@ -94,11 +94,23 @@ class ValidatedImage:
         mime_type: The sniffed type, one of :data:`ACCEPTED_MIME_TYPES`.
         sha256: A digest over ``data``, as 64 lowercase hex characters, which is
             the form `images.sha256`'s CHECK constraint requires.
+        width: The stored image's width in pixels, read from the header that the
+            pixel-limit check already reads. Both strip paths preserve the
+            raster — a JPEG's scan is copied byte for byte and a PNG is re-saved
+            unchanged — so this describes ``data`` and not merely what arrived.
+        height: The stored image's height in pixels, as above.
+
+    ``width`` and ``height`` are here for `training_images`, where they are NOT
+    NULL because a training image is decoded to be validated (#154). The
+    analysis domain's `images.width` is a different measurement — the
+    *normalized* artifact's — and is deliberately not written from these.
     """
 
     data: bytes
     mime_type: str
     sha256: str
+    width: int
+    height: int
 
 
 def validate_image(data: bytes, *, max_pixels: int) -> ValidatedImage:
@@ -147,11 +159,15 @@ def validate_image(data: bytes, *, max_pixels: int) -> ValidatedImage:
             raise InvalidImage(_NOT_DECODABLE) from error
 
         stripped = _strip_jpeg(data) if image.format == "JPEG" else _repack_png(image)
+        # Read inside the `with`, because `image` is closed on the way out.
+        width, height = image.width, image.height
 
     return ValidatedImage(
         data=stripped,
         mime_type=mime_type,
         sha256=sha256(stripped).hexdigest(),
+        width=width,
+        height=height,
     )
 
 

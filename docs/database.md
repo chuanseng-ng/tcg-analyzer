@@ -123,6 +123,47 @@ Published versions are never rewritten: a database trigger refuses `UPDATE` and
 old one. Identifiers are explicit and ordered — `pokemon-catalog-v0.3.0`, never
 `/latest/`.
 
+## Training images
+
+Training photographs enter the corpus through their own command, never through
+the API — nothing in the dataset domain is a consumer surface. One invocation is
+one physical card, because the front and back of one copy must group together
+and never split across a train/test boundary:
+
+```bash
+uv run tcg-ingest-training-images --front front.jpg --back back.jpg --source first_party --acquisition-method photographed_before_submission --license "owned outright" --source-reference "PSA 12345678" --commercial-use-allowed --derivative-use-allowed --acquired-at 2026-08-01T10:00:00+08:00
+```
+
+It creates one `physical_copies` row and reports its identifier; pass that back
+as `--physical-copy-id` to add a later session's photographs of the same card —
+which is how a card's post-grading photographs join its pre-grading ones.
+`--certification-company` and `--certification-number` go together and record a
+slab already owned. `--card-id` is optional: a directory of photographs can be
+ingested before anyone has identified what is in them.
+
+**The two rights flags are deliberately not required, and omitting one is a
+refusal.** `--commercial-use-allowed` and `--derivative-use-allowed` default to
+*unstated*, and
+[ADR 0008](adr/0008-permitted-training-image-sources.md) treats a null, an empty
+string and an absent field as one answer: refusal. So does the database — the
+gate is a `CHECK` rather than a convention — but the command refuses first, so
+the message names the rule instead of a constraint. There is no
+`--redistribution-allowed` flag: ADR 0008 makes it false on every approved
+source, including photographs this project took itself, because the artwork in
+them is not ours.
+
+A source outside ADR 0008's four approved classes is refused by name. A
+photograph already in the corpus is refused too — `sha256` is unique here, where
+`images.sha256` in the analysis domain deliberately is not — and because the row
+is written before the bytes are, that refusal stores nothing at all.
+
+Validation is the analysis domain's, reused rather than reimplemented: the type
+is sniffed instead of trusted, the byte and pixel limits apply separately, and
+EXIF — GPS included — is stripped losslessly before storage, so the recorded
+digest is over the bytes that were kept. A camera export larger than
+`TCG_API_UPLOAD_MAX_BYTES` is refused; raise it for the run rather than
+expecting a second limit to exist.
+
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
 
