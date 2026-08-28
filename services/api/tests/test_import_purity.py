@@ -162,3 +162,22 @@ def test_ingesting_a_training_image_pulls_in_neither_opencv_nor_the_analysis_sta
     cv = _modules_matching("cv2", after_importing="tcg_api.datasets.ingestion")
 
     assert cv == [], cv
+
+
+def test_splitting_a_corpus_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#156's splitter is a plain command over the database, and must stay one.
+
+    It reads stored grouping keys and stored hashes. Importing
+    `tcg_api.datasets.deduplication` — which produces the artifact those hashes
+    are taken over — would bind it to OpenCV for a step it never runs, and make a
+    pure function over grouping keys a worker-image command.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.splitting")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.splitting")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.splitting pulled in {cv}. The splitter consumes "
+        "tcg_api.datasets.fingerprints, which is Pillow and arithmetic; producing an "
+        "artifact is tcg_api.datasets.deduplication's, and the splitter must not reach it."
+    )
+    assert stages == [], stages
