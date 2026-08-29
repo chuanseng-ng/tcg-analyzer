@@ -159,6 +159,42 @@ honour. Streaming from a route already behind its own ingress is less to get
 wrong. Nothing outside `packages/shared` has ever called `signed_download_url`,
 and this did not change that.
 
+`POST /internal/annotation/images/{id}/annotations` records one annotator's work
+on one image, in one transaction. **One image per request**, and that is the rule
+rather than a convenience: a marker belongs to the image whose artifact its
+coordinates are fractions of, and the viewer can be showing the other side of the
+same physical copy. **Append-only**, so there is no edit endpoint and there will
+not be one — `trg_image_annotations_immutable` refuses an `UPDATE`, a correction
+is a new annotation, and the current view of a corner is the newest row for it.
+
+**The annotator and the timestamp are the service's.** Spec §30 asks that both be
+recorded automatically rather than typed, so the request carries neither: the
+annotator comes from `TCG_API_ANNOTATOR_ID` and the timestamp from the row's
+default. Sending an `annotator_id` is **refused rather than ignored**, because a
+client that believes it set one is worse off than a client that is told it cannot
+— and spec §53's restraint, which the column's `^[a-z0-9][a-z0-9_-]*$` CHECK makes
+structural, is not something anybody should be able to think they circumvented.
+
+The three marker kinds are three request shapes discriminated on `kind`, so
+§14's, §15's and §16's label lists reach the OpenAPI document — and therefore
+`apps/annotation` — as three separate vocabularies. An edge can be `rough_cut`
+and a corner cannot; a surface names no region at all, because §16 names no
+positions and a surface defect's position is its bounding box.
+
+**Coordinates need an artifact.** A bounding box and a centering ratio are both
+fractions of the standardized artifact, so against a photograph no card was
+located in they mean nothing: sending either for an image whose `has_artifact` is
+false is a **409**. A marker with no box is still accepted there, because a
+corner's region names its position — refusing the whole request would strand such
+an image at the head of the work list for ever. An annotation recording nothing at
+all is a 422, since it would take the image off the work list having said nothing.
+
+`GET /internal/annotation/images/{id}` reports every annotation and measurement
+already recorded, oldest first and **not collapsed to a current reading**: a
+surface has as many defects as it has, so no one rule fits all three kinds. The
+work list excludes an annotated image, so this endpoint is the only way one is
+seen again.
+
 `?representation=normalized` is the standardized artifact an annotation's
 coordinates are fractions of; `?representation=original` is the photograph. Asking
 for an artifact that was never stored is a **404 rather than a substitution**: the

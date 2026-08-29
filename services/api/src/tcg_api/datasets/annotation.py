@@ -5,6 +5,12 @@ nothing else, on `routers/cards.py`'s rule, and this is where the statements
 live — which is also where #160's writes into `image_annotations` and
 `centering_measurements` belong when it lands.
 
+The writes are at the foot of the file, beside the reads and not in the
+router — `routers/cards.py`'s rule. There is **no `UPDATE` anywhere in this
+module**, deliberately: both tables refuse one, so a correction is a new row,
+and `test_datasets_annotation_writes.py` reads this source and fails if one
+appears.
+
 **Nothing here produces an artifact.** It resolves `training_images.normalized_uri`
 and fetches the object under it. Straightening a photograph needs OpenCV, which
 `tests/test_import_purity.py` keeps out of every module `tcg_api.main` can
@@ -15,10 +21,11 @@ that has none is answered honestly rather than warped on the spot.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,18 +41,27 @@ from tcg_api.datasets.tables import (
 
 __all__ = [
     "ARTIFACT_MEDIA_TYPE",
+    "BoundingBox",
+    "CenteringReading",
     "DatasetStoreUnavailable",
+    "DefectMarker",
+    "ImageAnnotations",
     "Representation",
     "StoredImage",
+    "StoredMarker",
+    "StoredMeasurement",
     "TrainingImageDetail",
     "TrainingImageSummary",
     "WorkList",
+    "read_annotations",
     "read_bytes",
     "read_image",
     "read_work_list",
+    "record_annotations",
 ]
 
 _UNREACHABLE: Final = "the training image corpus could not be read"
+_UNWRITABLE: Final = "the annotation could not be written"
 
 #: What a stored artifact is, spelled out rather than imported.
 #: `tcg_ml_normalization.MEDIA_TYPE` is the source of truth and importing it
@@ -312,3 +328,292 @@ async def read_bytes(
         key, media_type = row.original_uri, row.mime_type
 
     return StoredImage(data=await storage.get(StorageKey(key)), media_type=media_type)
+
+
+# ---------------------------------------------------------------------------
+# The writes — spec §30's controls, #160
+# ---------------------------------------------------------------------------
+#: Every column of a stored marker anything outside this module reads. The
+#: bounding box travels as four of them because that is how the schema stores it
+#: and how `num_nulls(...) IN (0, 4)` reads it; it becomes one object below,
+#: where it is one thing to a caller.
+_MARKER_COLUMNS: Final = (
+    image_annotations.c.id,
+    image_annotations.c.kind,
+    image_annotations.c.region,
+    image_annotations.c.label,
+    image_annotations.c.severity,
+    image_annotations.c.confidence,
+    image_annotations.c.bbox_x,
+    image_annotations.c.bbox_y,
+    image_annotations.c.bbox_width,
+    image_annotations.c.bbox_height,
+    image_annotations.c.annotator_id,
+    image_annotations.c.created_at,
+)
+
+_MEASUREMENT_COLUMNS: Final = (
+    centering_measurements.c.id,
+    centering_measurements.c.horizontal,
+    centering_measurements.c.vertical,
+    centering_measurements.c.confidence,
+    centering_measurements.c.notes,
+    centering_measurements.c.annotator_id,
+    centering_measurements.c.created_at,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class BoundingBox:
+    """Where a defect is, as fractions of the normalized artifact.
+
+    Never pixels, and never a fraction of the photograph: `ml/normalization`
+    warps every image to one artifact, so a coordinate in that space survives a
+    retake and compares across cards. Four values here and four columns in the
+    schema, but **one optional object** — `num_nulls(bbox_x, …) IN (0, 4)` is
+    what makes a partial box unrepresentable, and a single object is that rule
+    in Python.
+    """
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True, slots=True)
+class DefectMarker:
+    """One corner, edge or surface marker to record — spec §14, §15, §16, §17."""
+
+    kind: str
+    region: str | None
+    label: str
+    severity: str | None
+    confidence: float
+    bbox: BoundingBox | None
+
+
+@dataclass(frozen=True, slots=True)
+class CenteringReading:
+    """One centering measurement to record — spec §21, §13.
+
+    Each ratio is optional on its own and at least one must be present: §21 names
+    full-art and borderless layouts outright, so a card with no border on an axis
+    has no ratio there, and inventing `0.5` for it is the confidently-wrong
+    output spec §2.7 forbids.
+    """
+
+    horizontal: float | None
+    vertical: float | None
+    confidence: float
+    notes: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredMarker:
+    """One marker as it was stored, including what the service supplied."""
+
+    id: UUID
+    kind: str
+    region: str | None
+    label: str
+    severity: str | None
+    confidence: float
+    bbox: BoundingBox | None
+    annotator_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoredMeasurement:
+    """One centering measurement as it was stored."""
+
+    id: UUID
+    horizontal: float | None
+    vertical: float | None
+    confidence: float
+    notes: str | None
+    annotator_id: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ImageAnnotations:
+    """Everything recorded against one image, oldest first.
+
+    **Not collapsed to a current reading per region.** Both tables are
+    append-only, so a correction is a newer row and the newest row for a
+    `(kind, region)` is the current view of it — but a surface has as many
+    defects as it has, so no single collapsing rule is right for all three kinds.
+    The rows travel as they are, and the tool decides what to show.
+    """
+
+    markers: tuple[StoredMarker, ...]
+    centering: tuple[StoredMeasurement, ...]
+
+
+def _box(row: sa.Row[tuple[object, ...]]) -> BoundingBox | None:
+    if row.bbox_x is None:
+        return None
+    return BoundingBox(x=row.bbox_x, y=row.bbox_y, width=row.bbox_width, height=row.bbox_height)
+
+
+def _marker(row: sa.Row[tuple[object, ...]]) -> StoredMarker:
+    return StoredMarker(
+        id=row.id,
+        kind=row.kind,
+        region=row.region,
+        label=row.label,
+        severity=row.severity,
+        confidence=row.confidence,
+        bbox=_box(row),
+        annotator_id=row.annotator_id,
+        created_at=row.created_at,
+    )
+
+
+def _measurement(row: sa.Row[tuple[object, ...]]) -> StoredMeasurement:
+    return StoredMeasurement(
+        id=row.id,
+        horizontal=row.horizontal,
+        vertical=row.vertical,
+        confidence=row.confidence,
+        notes=row.notes,
+        annotator_id=row.annotator_id,
+        created_at=row.created_at,
+    )
+
+
+async def read_annotations(db: AsyncSession, image_id: UUID) -> ImageAnnotations:
+    """Return everything recorded against one image, oldest first.
+
+    Composed beside `read_image` by the router rather than folded into it: the
+    POST handler needs `read_image` for its own gate and has no use for these
+    rows, and `ix_image_annotations_training_image_id` was declared for exactly
+    this query.
+
+    An image nobody has annotated answers with two empty tuples — the same fact
+    the work list reports, and not an error.
+    """
+    marker_rows = (
+        await execute(
+            db,
+            sa.select(*_MARKER_COLUMNS)
+            .where(image_annotations.c.training_image_id == image_id)
+            .order_by(image_annotations.c.created_at, image_annotations.c.id),
+            unavailable=DatasetStoreUnavailable,
+            message=_UNREACHABLE,
+        )
+    ).all()
+    measurement_rows = (
+        await execute(
+            db,
+            sa.select(*_MEASUREMENT_COLUMNS)
+            .where(centering_measurements.c.training_image_id == image_id)
+            .order_by(centering_measurements.c.created_at, centering_measurements.c.id),
+            unavailable=DatasetStoreUnavailable,
+            message=_UNREACHABLE,
+        )
+    ).all()
+
+    return ImageAnnotations(
+        markers=tuple(_marker(row) for row in marker_rows),
+        centering=tuple(_measurement(row) for row in measurement_rows),
+    )
+
+
+async def record_annotations(
+    db: AsyncSession,
+    image_id: UUID,
+    *,
+    markers: Sequence[DefectMarker],
+    centering: CenteringReading | None,
+    annotator_id: str,
+) -> ImageAnnotations:
+    """Write one annotator's work on one image, and return what was stored.
+
+    **One image, one call.** A marker belongs to the image whose artifact its
+    coordinates are fractions of, and `training_images.side` is what says which
+    face that is (#158 refuses a `side` column for the same reason). Accepting
+    two images in one request would make it possible to file the back's corners
+    against the front.
+
+    Does not commit — the caller does, which is what makes every marker and the
+    measurement one transaction. **There is no `UPDATE` path here and there will
+    not be one**: `trg_image_annotations_immutable` refuses one, and a correction
+    is a new row.
+
+    The caller has already resolved the image; that read is what answers both the
+    404 and the artifact gate, so this does not look for it again.
+
+    ponytail: an image deleted between that read and this insert violates the
+    foreign key and surfaces as a 500. The deletion is an operator honouring an
+    ADR 0008 withdrawal, and `SELECT … FOR UPDATE` on every save to turn that
+    into a 409 is a lock on the annotation path for a race nobody will run.
+
+    Raises:
+        DatasetStoreUnavailable: If the rows could not be written.
+    """
+    stored_markers: tuple[StoredMarker, ...] = ()
+    if markers:
+        insert_markers = (
+            sa.insert(image_annotations)
+            .values(
+                [
+                    {
+                        "id": uuid4(),
+                        "training_image_id": image_id,
+                        "kind": marker.kind,
+                        "region": marker.region,
+                        "label": marker.label,
+                        "severity": marker.severity,
+                        "confidence": marker.confidence,
+                        "bbox_x": None if marker.bbox is None else marker.bbox.x,
+                        "bbox_y": None if marker.bbox is None else marker.bbox.y,
+                        "bbox_width": None if marker.bbox is None else marker.bbox.width,
+                        "bbox_height": None if marker.bbox is None else marker.bbox.height,
+                        "annotator_id": annotator_id,
+                    }
+                    for marker in markers
+                ]
+            )
+            .returning(*_MARKER_COLUMNS)
+        )
+        stored_markers = tuple(
+            _marker(row)
+            for row in (
+                await execute(
+                    db, insert_markers, unavailable=DatasetStoreUnavailable, message=_UNWRITABLE
+                )
+            ).all()
+        )
+
+    stored_centering: tuple[StoredMeasurement, ...] = ()
+    if centering is not None:
+        insert_centering = (
+            sa.insert(centering_measurements)
+            .values(
+                id=uuid4(),
+                training_image_id=image_id,
+                horizontal=centering.horizontal,
+                vertical=centering.vertical,
+                confidence=centering.confidence,
+                notes=centering.notes,
+                annotator_id=annotator_id,
+            )
+            .returning(*_MEASUREMENT_COLUMNS)
+        )
+        stored_centering = (
+            _measurement(
+                (
+                    await execute(
+                        db,
+                        insert_centering,
+                        unavailable=DatasetStoreUnavailable,
+                        message=_UNWRITABLE,
+                    )
+                ).one()
+            ),
+        )
+
+    return ImageAnnotations(markers=stored_markers, centering=stored_centering)

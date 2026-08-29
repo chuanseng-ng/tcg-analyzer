@@ -6,6 +6,7 @@ import {
   imageBytesUrl,
   listImagesAwaitingAnnotation,
   readTrainingImage,
+  saveAnnotations,
 } from "@/lib/api";
 
 function respondWith(body: unknown, init: ResponseInit = {}) {
@@ -125,6 +126,28 @@ const SUMMARY = {
   has_artifact: true,
 };
 
+/** A detail is a summary plus these. Written out so a guard can be tested against it. */
+const DETAIL = {
+  ...SUMMARY,
+  width: 1200,
+  height: 1600,
+  siblings: [],
+  annotations: [],
+  centering: [],
+};
+
+const STORED_MARKER = {
+  id: "33333333-3333-4333-8333-333333333333",
+  kind: "corner",
+  region: "top_left",
+  label: "whitening",
+  severity: "minor",
+  confidence: 0.8,
+  bbox: { x: 0.01, y: 0.02, width: 0.06, height: 0.05 },
+  annotator_id: "annotator",
+  created_at: "2026-08-29T10:00:00Z",
+};
+
 describe("the payload guards accept what the service actually sends", () => {
   it("accepts a work list", async () => {
     vi.stubGlobal("fetch", respondWith({ images: [SUMMARY], total: 1, limit: 25, offset: 0 }));
@@ -135,15 +158,7 @@ describe("the payload guards accept what the service actually sends", () => {
   });
 
   it("accepts an image detail with a sibling", async () => {
-    vi.stubGlobal(
-      "fetch",
-      respondWith({
-        ...SUMMARY,
-        width: 1200,
-        height: 1600,
-        siblings: [{ ...SUMMARY, side: "back" }],
-      }),
-    );
+    vi.stubGlobal("fetch", respondWith({ ...DETAIL, siblings: [{ ...SUMMARY, side: "back" }] }));
 
     const image = await readTrainingImage(SUMMARY.id);
 
@@ -152,19 +167,92 @@ describe("the payload guards accept what the service actually sends", () => {
   });
 
   it("accepts an image detail with no siblings and no artifact", async () => {
-    vi.stubGlobal(
-      "fetch",
-      respondWith({ ...SUMMARY, has_artifact: false, width: 1200, height: 1600, siblings: [] }),
-    );
+    vi.stubGlobal("fetch", respondWith({ ...DETAIL, has_artifact: false }));
 
     await expect(readTrainingImage(SUMMARY.id)).resolves.toMatchObject({ has_artifact: false });
   });
 
+  it("accepts an image detail carrying annotations already recorded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        ...DETAIL,
+        annotations: [STORED_MARKER],
+        centering: [
+          {
+            id: "44444444-4444-4444-8444-444444444444",
+            horizontal: 0.52,
+            vertical: null,
+            confidence: 0.9,
+            notes: null,
+            annotator_id: "annotator",
+            created_at: "2026-08-29T10:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    const image = await readTrainingImage(SUMMARY.id);
+
+    expect(image.annotations).toHaveLength(1);
+    expect(image.centering[0]?.vertical).toBeNull();
+  });
+
   it("still refuses a detail missing a field it depends on", async () => {
     // Guard the guard: an `isImage` that returned true unconditionally would
-    // pass all three assertions above.
-    vi.stubGlobal("fetch", respondWith({ ...SUMMARY, width: 1200, siblings: [] }));
+    // pass every assertion above.
+    vi.stubGlobal("fetch", respondWith({ ...DETAIL, height: undefined }));
 
     await expect(readTrainingImage(SUMMARY.id)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("refuses a detail whose annotations the service stopped sending", async () => {
+    // The regression #159 shipped, in the other direction: a field added to the
+    // response and not to the guard is the same bug as one removed from the
+    // response and left in the guard.
+    vi.stubGlobal("fetch", respondWith({ ...DETAIL, annotations: undefined }));
+
+    await expect(readTrainingImage(SUMMARY.id)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("saving an annotation", () => {
+  it("posts to the image's own annotations path, as JSON and without credentials", async () => {
+    const fetchMock = respondWith({ markers: [STORED_MARKER], centering: [] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = {
+      markers: [
+        {
+          kind: "corner" as const,
+          region: "top_left" as const,
+          label: "whitening" as const,
+          severity: "minor" as const,
+          confidence: 0.8,
+          bbox: { x: 0.01, y: 0.02, width: 0.06, height: 0.05 },
+        },
+      ],
+      centering: null,
+    };
+
+    const stored = await saveAnnotations(SUMMARY.id, body);
+
+    expect(stored.markers).toHaveLength(1);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`http://localhost:8000/internal/annotation/images/${SUMMARY.id}/annotations`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual(body);
+    // A write is exactly where somebody reaches for `credentials`. This surface
+    // has no session, and the key's absence is the assertion.
+    expect(init).not.toHaveProperty("credentials");
+  });
+
+  it("turns a refusal into an ApiError carrying its status", async () => {
+    vi.stubGlobal("fetch", respondWith({ detail: "no artifact" }, { status: 409 }));
+
+    await expect(
+      saveAnnotations(SUMMARY.id, { markers: [], centering: null }),
+    ).rejects.toMatchObject({ status: 409 });
   });
 });

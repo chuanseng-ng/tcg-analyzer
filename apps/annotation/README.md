@@ -1,7 +1,12 @@
 # `apps/annotation`
 
 Internal annotation tool for labelling training images: centering
-measurements, corner/edge/surface defects and grade ground truth.
+measurements and corner, edge and surface defects.
+
+**No grade and no condition score.** Neither annotation table carries one, and a
+test asserts their absence: M7 derives spec §13's neutral condition
+representation _from_ these rows, and M8 predicts a grade from that. What is
+recorded here is what a person can see on the card.
 
 Not a public surface. It is an internal tool and must never be exposed with the
 consumer application.
@@ -76,11 +81,53 @@ action has a key as well as a button.
 | <kbd>0</kbd>                                        | Fit                                              |
 | <kbd>1</kbd>                                        | Actual size, one artifact pixel per screen pixel |
 | <kbd>f</kbd>                                        | The other view of this copy                      |
+| <kbd>c</kbd> <kbd>e</kbd> <kbd>s</kbd>              | Arm the corner, edge or surface tool             |
+| <kbd>m</kbd>                                        | Arm the centering measurement                    |
+| <kbd>Esc</kbd>                                      | Back to panning                                  |
+
+**Four letters and an escape, and no more.** §14, §15 and §16 come to
+twenty-eight labels between them, and a mnemonic scheme for that many would be a
+second vocabulary free to drift from the schema's — so choosing a _tool_ is a key
+and choosing a label is a `<select>`. None of them is a digit, because
+<kbd>1</kbd> is already actual size.
 
 Paging between images is the work list, whose rows are ordinary links and
-therefore reachable with <kbd>Tab</kbd> and <kbd>Enter</kbd>. Advancing
-automatically after a save belongs to the annotation controls, which are the
-next issue.
+therefore reachable with <kbd>Tab</kbd> and <kbd>Enter</kbd>. After a save the
+tool goes to the next image awaiting annotation by itself.
+
+## Annotating
+
+**Nothing is written until you say so.** Both annotation tables refuse an
+`UPDATE`, so a marker written in error cannot be corrected — only added to. Work
+is therefore staged in the browser, where it can be removed, and one Save writes
+all of it in one transaction. Leaving the view or the tab with work staged asks
+first.
+
+**One save writes one image.** The front and the back of a card are two rows, and
+the side toggle changes which one the frame is showing without navigating — so a
+marker belongs to the view it was drawn on, and switching views with work staged
+asks before discarding it. After a save the tool takes you to the next image
+awaiting annotation: a sibling of the same copy first where one is still
+unannotated, and otherwise the head of the queue.
+
+**Centering is measured, not typed.** Drag a box round the inner frame and the
+two ratios follow from where its edges sit — the artifact's edges _are_ the
+card's, so the borders are what is left outside the box. Either axis can be
+switched off for spec §21's full-art and borderless layouts, which stores `null`
+rather than a fabricated `0.5`.
+
+**Uncertainty is one action.** _I cannot tell_ records the `unknown` label every
+vocabulary carries, which needs no severity, so admitting it costs one click
+where guessing costs three. That is deliberate: if the admission is the slower
+path, the corpus fills with confident guesses, and a model trained on those is
+the confidently-wrong output this product's invariants forbid. Nothing
+pre-selects a confidence either — the column is NOT NULL with no default on
+purpose, and a checked radio would put that default back where the schema cannot
+see it.
+
+The annotator and the timestamp are the service's. There is nothing to type and
+nothing to choose: `TCG_API_ANNOTATOR_ID` names the annotator, and a request that
+tries to name one is refused.
 
 ## What the artifact can and cannot resolve
 
@@ -103,7 +150,9 @@ sizes and is the part to argue with.)
 than one artifact pixel, so no amount of looking at a screen changes the answer —
 §16's `scratch`, `print_line`, `print_dot` and `gloss_issue` cannot be marked
 reliably against this artifact. That is a finding about
-[`ml/normalization`](../../ml/normalization), not about this viewer.
+[`ml/normalization`](../../ml/normalization), not about this viewer. **The surface
+tool says so on screen**, next to the control, because that is where somebody is
+when the question arises — and _I cannot tell_ is right there beside it.
 
 **Corners are the empirical question**, and the only one a real photograph can
 settle: 2.4–6 px is exactly the band where whether a _person_ can judge extent is

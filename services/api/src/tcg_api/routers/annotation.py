@@ -16,9 +16,10 @@ The router holds HTTP and nothing else — the statements live in
 `tcg_api.datasets.annotation`, on `routers/grading.py`'s and `routers/cards.py`'s
 rule.
 
-**Three reads and no writes.** #160 adds the writes into `image_annotations` and
-`centering_measurements`; this issue ends at the annotator being able to see the
-card properly.
+**Three reads and one write**, and the write is append-only. There is
+deliberately no edit endpoint: `trg_image_annotations_immutable` refuses an
+`UPDATE`, so a correction is a new annotation rather than a `PATCH` this router
+would have to explain to somebody who has just lost one.
 
 Not rate-limited. Spec §55 names the analysis endpoints and the uploads, and ADR
 0005 decided a read is neither — an internal tool behind its own ingress is
@@ -34,20 +35,39 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
+from tcg_domain.annotation import (
+    NO_DEFECT_LABELS,
+    AnnotationKind,
+    CornerLabel,
+    CornerRegion,
+    DefectSeverity,
+    EdgeLabel,
+    EdgeRegion,
+    SurfaceLabel,
+)
 from tcg_shared.storage import ObjectNotFound, StorageError
 from tcg_shared.storage.port import ObjectStorage
 
+from tcg_api.config import get_settings
 from tcg_api.database import get_session_factory
 from tcg_api.datasets.annotation import (
     ARTIFACT_MEDIA_TYPE,
+    BoundingBox,
+    CenteringReading,
     DatasetStoreUnavailable,
+    DefectMarker,
+    ImageAnnotations,
+    StoredMarker,
+    StoredMeasurement,
     TrainingImageDetail,
     TrainingImageSummary,
+    read_annotations,
     read_bytes,
     read_image,
     read_work_list,
+    record_annotations,
 )
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
 from tcg_api.storage import get_object_storage
@@ -55,7 +75,12 @@ from tcg_api.storage import get_object_storage
 __all__ = [
     "AnnotationImageResponse",
     "AnnotationImageSummary",
+    "AnnotationRequest",
+    "AnnotationResponse",
     "AnnotationWorkListResponse",
+    "CornerMarkerRequest",
+    "EdgeMarkerRequest",
+    "SurfaceMarkerRequest",
     "router",
 ]
 
@@ -81,6 +106,11 @@ _UNREACHABLE: Final = "The training image corpus could not be read."
 _IMAGES_UNREACHABLE: Final = "The image store could not be reached."
 _MISSING_OBJECT: Final = "The stored image could not be read."
 _NO_SUCH_IMAGE: Final = "No such training image."
+_NO_ARTIFACT: Final = (
+    "No standardized artifact has been stored for this image, so a bounding box or a "
+    "centering measurement would be a fraction of something that does not exist. "
+    "Record markers without coordinates, or normalize the image first."
+)
 
 #: The bytes are an internal tool's, and an artifact is small enough that a
 #: refetch on navigation costs nothing worth a caching bug. `no-store` rather
@@ -174,6 +204,362 @@ class AnnotationImageResponse(BaseModel):
             "consented upload a sibling of every other one."
         )
     )
+    annotations: list[StoredMarkerResponse] = Field(
+        description=(
+            "Every marker recorded against this image, oldest first. **Not collapsed to a "
+            "current reading**: both annotation tables are append-only, so a correction is "
+            "a newer row, and a surface has as many defects as it has. The work list "
+            "excludes an annotated image, so this endpoint is the only way one is ever "
+            "seen again."
+        ),
+    )
+    centering: list[StoredMeasurementResponse] = Field(
+        description="Every centering measurement recorded against this image, oldest first."
+    )
+
+
+class BoundingBoxModel(BaseModel):
+    """Spec §17's bounding box, as fractions of the normalized artifact.
+
+    **Fractions, never pixels.** The artifact's resolution is `ml/normalization`'s
+    and appears nowhere in this service — a fraction survives a change to it, and
+    a pixel would not.
+
+    One object rather than four fields, because the schema's rule is
+    `num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)`: a box is whole
+    or absent, and an optional object is that rule in a request body.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0, le=1, description="Distance from the left edge.", examples=[0.02])
+    y: float = Field(ge=0, le=1, description="Distance from the top edge.", examples=[0.03])
+    width: float = Field(gt=0, le=1, description="Width, and positive.", examples=[0.08])
+    height: float = Field(gt=0, le=1, description="Height, and positive.", examples=[0.08])
+
+    @model_validator(mode="after")
+    def _lies_inside_the_artifact(self) -> BoundingBoxModel:
+        if self.x + self.width > 1 or self.y + self.height > 1:
+            raise ValueError("must lie inside the artifact: x + width and y + height are at most 1")
+        return self
+
+
+class _MarkerRequest(BaseModel):
+    """What every marker carries, whichever of §30's three features it is.
+
+    The three kinds are three models rather than one with a `kind` field, and that
+    is what puts **§14's, §15's and §16's lists into the OpenAPI schema separately**
+    — which is the only sanctioned way `apps/annotation` learns them (ADR 0001).
+    One model with `label: str` would have made the tool keep its own copy of
+    twenty-eight strings, free to drift from `tcg_domain.annotation`, and would
+    have let it offer `rough_cut` for a corner.
+
+    The membership rules are therefore types here rather than validators, and only
+    the severity pairing is left to assert. Every one of them is *also* a CHECK on
+    `image_annotations`: **the CHECK is the guarantee and this is the message**
+    (#154's rule) — refused here, an annotator is told which field is wrong;
+    refused only by PostgreSQL, they get a 500.
+    """
+
+    #: A field this schema does not know is **refused, never dropped**. Two
+    #: things would otherwise be accepted and silently discarded: a `region` on a
+    #: surface, which §16 has no positions for, and an `annotator_id`, which spec
+    #: §30 makes the service's. Both are better answered than ignored — a client
+    #: that believes it set the annotator is worse off than one that is told it
+    #: cannot.
+    model_config = ConfigDict(extra="forbid")
+
+    severity: DefectSeverity | None = Field(
+        default=None,
+        description=(
+            "How bad it is — an **ordinal**, because there is one annotator and no "
+            "agreement study, so finer granularity would record a precision nobody "
+            "could reproduce. Null exactly when the label asserts no defect (`clean` "
+            "found nothing to rate, `unknown` could not rate what it found), and "
+            "required otherwise."
+        ),
+        examples=["minor"],
+    )
+    confidence: float = Field(
+        ge=0,
+        le=1,
+        description=(
+            "§30's uncertainty — how sure the annotator is of this call. **Required, "
+            "with no default**: a default would read as certainty for every row nobody "
+            "supplied one for, which is the fabricated confidence spec §2.7 forbids. "
+            "The other half of the same rule is the `unknown` label every vocabulary "
+            "carries."
+        ),
+        examples=[0.8],
+    )
+    bbox: BoundingBoxModel | None = Field(
+        default=None,
+        description=(
+            "§17's spatial data, where the annotator drew it. Optional: a corner's "
+            "region already names its position, so `top_left: clean` is a complete "
+            "annotation. **Only meaningful against a stored artifact** — see the "
+            "endpoint's 409."
+        ),
+    )
+
+    def label_value(self) -> str:
+        raise NotImplementedError  # pragma: no cover — every subclass overrides it
+
+    def region_value(self) -> str | None:
+        """Where on the card, or None for a surface, whose position is its box."""
+        return None
+
+    @model_validator(mode="after")
+    def _a_defect_carries_a_severity(self) -> _MarkerRequest:
+        """Mirror `ck_image_annotations_a_defect_carries_a_severity`.
+
+        An equality between two facts rather than one implication, exactly as the
+        CHECK is written: `clean` *with* a severity is as wrong as `chipping`
+        without one, because a sound corner has nothing to rate.
+        """
+        asserts_no_defect = self.label_value() in NO_DEFECT_LABELS
+        if asserts_no_defect and self.severity is not None:
+            raise ValueError(f"{self.label_value()!r} asserts no defect, so it carries no severity")
+        if not asserts_no_defect and self.severity is None:
+            raise ValueError(f"{self.label_value()!r} is a defect, so it needs a severity")
+        return self
+
+
+class CornerMarkerRequest(_MarkerRequest):
+    """One corner — spec §14. Four regions, not eight: the side is the image's."""
+
+    kind: Literal[AnnotationKind.CORNER] = Field(
+        description="Spec §30's corner annotation.", examples=["corner"]
+    )
+    region: CornerRegion = Field(
+        description=(
+            "Which corner. §14 lists eight, front- and back-prefixed; the prefix is "
+            "`training_images.side`, because the image already knows which face it "
+            "shows and naming it twice would let the two disagree."
+        ),
+        examples=["top_left"],
+    )
+    label: CornerLabel = Field(
+        description=(
+            "§14's eight potential labels. **Not §15's** — a corner cannot be "
+            "`rough_cut` or `notching`, which are cutting defects of an edge."
+        ),
+        examples=["whitening"],
+    )
+
+    def label_value(self) -> str:
+        return self.label.value
+
+    def region_value(self) -> str | None:
+        return self.region.value
+
+
+class EdgeMarkerRequest(_MarkerRequest):
+    """One edge — spec §15."""
+
+    kind: Literal[AnnotationKind.EDGE] = Field(
+        description="Spec §30's edge annotation.", examples=["edge"]
+    )
+    region: EdgeRegion = Field(description="Which edge, clockwise from the top.", examples=["left"])
+    label: EdgeLabel = Field(
+        description=(
+            "§15's eight potential labels. **Not §14's** — an edge does not round "
+            "or crease, and it does have `rough_cut` and `notching`."
+        ),
+        examples=["rough_cut"],
+    )
+
+    def label_value(self) -> str:
+        return self.label.value
+
+    def region_value(self) -> str | None:
+        return self.region.value
+
+
+class SurfaceMarkerRequest(_MarkerRequest):
+    """One surface defect — spec §16.
+
+    **No region field at all**, because §16 names no positions: a surface defect's
+    position is its bounding box. And no `clean`, which is the specification's:
+    a surface with nothing wrong is a surface nobody annotated, where a corner
+    inspected and found sound is a row saying so.
+    """
+
+    kind: Literal[AnnotationKind.SURFACE] = Field(
+        description="Spec §30's surface defect annotation.", examples=["surface"]
+    )
+    label: SurfaceLabel = Field(description="§16's twelve potential classes.", examples=["scratch"])
+
+    def label_value(self) -> str:
+        return self.label.value
+
+
+#: The three, discriminated on `kind`. A tagged union rather than a base model
+#: with optional fields, so an invalid combination is not representable and the
+#: generated TypeScript carries the same partition the specification does.
+MarkerRequest = Annotated[
+    CornerMarkerRequest | EdgeMarkerRequest | SurfaceMarkerRequest,
+    Field(discriminator="kind"),
+]
+
+
+class CenteringReadingRequest(BaseModel):
+    """One centering measurement — spec §21, §13.
+
+    §13 requires ratios rather than qualitative labels, and the direction is
+    stated once so a number cannot mean two things: `horizontal` is the **left**
+    border as a fraction of the two side borders together, `vertical` the **top**
+    of the two ends. `0.5` is perfect centering.
+
+    The tool derives both from where the annotator put the inner frame, because
+    an annotator typing a ratio is an annotator doing arithmetic under time
+    pressure.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    horizontal: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "left / (left + right). **Null where the axis has no measurable border** — "
+            "§21 names full-art and borderless layouts outright, and inventing 0.5 for "
+            "one of them is the confidently-wrong output spec §2.7 exists to forbid."
+        ),
+        examples=[0.52],
+    )
+    vertical: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="top / (top + bottom), on the same terms.",
+        examples=[0.49],
+    )
+    confidence: float = Field(
+        ge=0,
+        le=1,
+        description=(
+            "§30's uncertainty, required here exactly as on a marker. A border read off "
+            "a worn or glare-lit edge is a real measurement with a low confidence, and "
+            "recording it at 1.0 would be a fabricated certainty."
+        ),
+        examples=[0.9],
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=2000,
+        description=(
+            "Free text — in practice, which of §21's awkward layouts this card is and "
+            "what was measured against. Not one of §30's eleven and not a vocabulary: "
+            "template awareness is M7's model, and this is the human's note to it."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _measures_something(self) -> CenteringReadingRequest:
+        """Mirror `ck_centering_measurements_a_measurement_measures_something`."""
+        if self.horizontal is None and self.vertical is None:
+            raise ValueError(
+                "a measurement measures at least one axis — a reading with neither "
+                "records nothing while still taking the image off the work list"
+            )
+        return self
+
+
+class AnnotationRequest(BaseModel):
+    """One annotator's work on one image, written in one transaction.
+
+    **One image per request, deliberately.** A marker belongs to the image whose
+    artifact its coordinates are fractions of, and `training_images.side` is what
+    says which face that is — accepting two images here would make it possible to
+    file the back's corners against the front.
+
+    Carries **no annotator and no timestamp**: spec §30 asks that both be recorded
+    automatically rather than typed, so the service supplies them. That is also
+    what puts `image_annotations.annotator_id`'s grammar out of a client's reach.
+
+    Carries no `polygon` and no `metadata` either. Both are storable and read by
+    nothing (#158); a polygon is in the same fractional space, so accepting one
+    would mean it joined the artifact gate below for a control nothing draws yet.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    markers: list[MarkerRequest] = Field(
+        default_factory=list,
+        description="Corner, edge and surface markers to record.",
+    )
+    centering: CenteringReadingRequest | None = Field(
+        default=None,
+        description="The centering measurement for this image, if one was taken.",
+    )
+
+    @model_validator(mode="after")
+    def _records_something(self) -> AnnotationRequest:
+        if not self.markers and self.centering is None:
+            raise ValueError(
+                "an annotation records at least one marker or a centering measurement — "
+                "an empty one would take the image off the work list having said nothing"
+            )
+        return self
+
+    def carries_coordinates(self) -> bool:
+        """Whether anything here is a fraction of an artifact.
+
+        A centering ratio is read off where the card's borders sit in the artifact,
+        so it is as much a coordinate as a bounding box is. A marker with no box is
+        not: its region names its position.
+        """
+        return self.centering is not None or any(marker.bbox is not None for marker in self.markers)
+
+
+class StoredMarkerResponse(BaseModel):
+    """One marker as it was stored.
+
+    Flat, where the request is a tagged union: the three kinds differ in what they
+    *may* say, and a stored row has already said it. `region` is null for a
+    surface, which is the same fact the union expresses by omitting the field.
+    """
+
+    id: UUID = Field(description="The annotation's identifier.")
+    kind: str = Field(description="Corner, edge or surface.")
+    region: str | None = Field(default=None, description="Where on the card, null for a surface.")
+    label: str = Field(description="What was found.")
+    severity: str | None = Field(default=None, description="How bad, null where nothing was rated.")
+    confidence: float = Field(description="How sure the annotator was.")
+    bbox: BoundingBoxModel | None = Field(default=None, description="§17's spatial data.")
+    annotator_id: str = Field(
+        description="Who recorded it — supplied by the service, never by a client."
+    )
+    created_at: datetime = Field(description="§30's annotation timestamp.")
+
+
+class StoredMeasurementResponse(BaseModel):
+    """One centering measurement as it was stored."""
+
+    id: UUID = Field(description="The measurement's identifier.")
+    horizontal: float | None = Field(default=None, description="left / (left + right).")
+    vertical: float | None = Field(default=None, description="top / (top + bottom).")
+    confidence: float = Field(description="How sure the annotator was.")
+    notes: str | None = Field(default=None, description="The annotator's note.")
+    annotator_id: str = Field(description="Who recorded it.")
+    created_at: datetime = Field(description="§30's annotation timestamp.")
+
+
+class AnnotationResponse(BaseModel):
+    """What one save wrote.
+
+    **Oldest first and not collapsed to a current reading.** Both tables are
+    append-only, so a correction is a newer row — but a surface has as many
+    defects as it has, so no one collapsing rule fits all three kinds. The rows
+    travel as they are.
+    """
+
+    markers: list[StoredMarkerResponse] = Field(description="The markers that were stored.")
+    centering: list[StoredMeasurementResponse] = Field(
+        description="The centering measurements that were stored."
+    )
 
 
 def _summary(image: TrainingImageSummary) -> AnnotationImageSummary:
@@ -188,7 +574,7 @@ def _summary(image: TrainingImageSummary) -> AnnotationImageSummary:
     )
 
 
-def _detail(image: TrainingImageDetail) -> AnnotationImageResponse:
+def _detail(image: TrainingImageDetail, stored: ImageAnnotations) -> AnnotationImageResponse:
     return AnnotationImageResponse(
         id=image.id,
         side=image.side,
@@ -200,6 +586,83 @@ def _detail(image: TrainingImageDetail) -> AnnotationImageResponse:
         height=image.height,
         has_artifact=image.has_artifact,
         siblings=[_summary(sibling) for sibling in image.siblings],
+        annotations=[_stored_marker(marker) for marker in stored.markers],
+        centering=[_stored_measurement(measurement) for measurement in stored.centering],
+    )
+
+
+def _stored_marker(marker: StoredMarker) -> StoredMarkerResponse:
+    return StoredMarkerResponse(
+        id=marker.id,
+        kind=marker.kind,
+        region=marker.region,
+        label=marker.label,
+        severity=marker.severity,
+        confidence=marker.confidence,
+        bbox=None
+        if marker.bbox is None
+        else BoundingBoxModel(
+            x=marker.bbox.x,
+            y=marker.bbox.y,
+            width=marker.bbox.width,
+            height=marker.bbox.height,
+        ),
+        annotator_id=marker.annotator_id,
+        created_at=marker.created_at,
+    )
+
+
+def _stored_measurement(measurement: StoredMeasurement) -> StoredMeasurementResponse:
+    return StoredMeasurementResponse(
+        id=measurement.id,
+        horizontal=measurement.horizontal,
+        vertical=measurement.vertical,
+        confidence=measurement.confidence,
+        notes=measurement.notes,
+        annotator_id=measurement.annotator_id,
+        created_at=measurement.created_at,
+    )
+
+
+def _annotations(stored: ImageAnnotations) -> AnnotationResponse:
+    return AnnotationResponse(
+        markers=[_stored_marker(marker) for marker in stored.markers],
+        centering=[_stored_measurement(measurement) for measurement in stored.centering],
+    )
+
+
+def _marker_of(
+    marker: CornerMarkerRequest | EdgeMarkerRequest | SurfaceMarkerRequest,
+) -> DefectMarker:
+    """Turn a validated request marker into what the store takes.
+
+    The enums become their values here rather than at the insert:
+    `tcg_api.datasets.annotation` stores what the schema stores, which is text,
+    and a `StrEnum` reaching a driver is a repr waiting to happen.
+    """
+    return DefectMarker(
+        kind=marker.kind.value,
+        region=marker.region_value(),
+        label=marker.label_value(),
+        severity=None if marker.severity is None else marker.severity.value,
+        confidence=marker.confidence,
+        bbox=None
+        if marker.bbox is None
+        else BoundingBox(
+            x=marker.bbox.x,
+            y=marker.bbox.y,
+            width=marker.bbox.width,
+            height=marker.bbox.height,
+        ),
+    )
+
+
+def _centering_of(centering: CenteringReadingRequest) -> CenteringReading:
+    return CenteringReading(
+        horizontal=centering.horizontal,
+        vertical=centering.vertical,
+        confidence=centering.confidence,
+        notes=centering.notes,
     )
 
 
@@ -334,14 +797,14 @@ async def read_training_image(
 ) -> AnnotationImageResponse:
     try:
         image = await read_image(db, image_id)
+        if image is None:
+            raise _not_found()
+        stored = await read_annotations(db, image_id)
     except DatasetStoreUnavailable as error:
         raise _corpus_unreachable() from error
 
-    if image is None:
-        raise _not_found()
-
     response.headers["Cache-Control"] = _CACHE_CONTROL
-    return _detail(image)
+    return _detail(image, stored)
 
 
 @router.get(
@@ -403,3 +866,103 @@ async def read_training_image_bytes(
         media_type=stored.media_type or ARTIFACT_MEDIA_TYPE,
         headers={"Cache-Control": _CACHE_CONTROL},
     )
+
+
+@router.post(
+    "/images/{image_id}/annotations",
+    response_model=AnnotationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record one annotator's work on one training image",
+    description=(
+        _INTERNAL + "Write spec §30's corner, edge and surface markers and the centering "
+        "measurement for one image, in **one transaction**.\n\n"
+        "**Append-only.** `trg_image_annotations_immutable` refuses an `UPDATE`, so there "
+        "is no edit endpoint and there will not be one: a correction is a new annotation, "
+        "and the current view of a corner is the newest row for it. Nothing is unique per "
+        "image and per region, which is what makes that representable — and a surface has "
+        "as many defects as it has.\n\n"
+        "**The annotator and the timestamp are the service's.** §30 asks that both be "
+        "recorded automatically rather than typed, so the request carries neither; the "
+        "annotator comes from `TCG_API_ANNOTATOR_ID` and the timestamp from the row's "
+        "default. That is also what keeps `annotator_id`'s grammar — which spec §53 makes "
+        "structural, by having no `@` in it — out of a client's reach.\n\n"
+        "**Coordinates need an artifact.** A bounding box and a centering ratio are both "
+        "fractions of the standardized artifact; against a photograph no card was located "
+        "in, they mean nothing. Sending either for an image whose `has_artifact` is false "
+        "is a 409. A marker with no box is still accepted there, because a corner's region "
+        "names its position.\n\n"
+        "Recording anything takes the image off `GET /internal/annotation/images`."
+    ),
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "No such training image. A bare body, deliberately outside the spec §66 "
+                "envelope: none of the eight codes means 'not found'."
+            )
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "The image has no stored artifact, and the annotation carries coordinates "
+                "that would be fractions of one. Also a bare body — §66 has no code for a "
+                "conflict, and a ninth is not invented for this."
+            )
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "description": (
+                "The annotation is not one the schema would take: a label outside its "
+                "kind's list, a region on a surface or missing from a corner, a defect "
+                "with no severity or a `clean` with one, a box outside the unit square, "
+                "a measurement of neither axis, or a request recording nothing at all. "
+                "FastAPI's own validation body — §66 has no code for a malformed request."
+            )
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "model": ErrorResponse,
+            "description": "The training image corpus could not be reached.",
+        },
+    },
+)
+async def record_image_annotations(
+    db: Annotated[AsyncSession, Depends(annotation_session)],
+    body: AnnotationRequest,
+    image_id: Annotated[
+        UUID,
+        Path(description="The training image being annotated."),
+    ],
+) -> AnnotationResponse:
+    """Write the markers and the measurement, then report what was stored."""
+    image = await read_image(db, image_id)
+    if image is None:
+        raise _not_found()
+
+    # One read answers both gates. Refusing the whole request where there is no
+    # artifact would strand such an image at the head of the work list for ever;
+    # refusing only the coordinates leaves `top_left: clean` recordable, which is
+    # a true thing to say about a photograph.
+    if not image.has_artifact and body.carries_coordinates():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_NO_ARTIFACT)
+
+    try:
+        stored = await record_annotations(
+            db,
+            image_id,
+            markers=[_marker_of(marker) for marker in body.markers],
+            centering=None if body.centering is None else _centering_of(body.centering),
+            annotator_id=get_settings().annotator_id,
+        )
+        await db.commit()
+    except DatasetStoreUnavailable as error:
+        logger.warning("annotation.annotations_unwritable", exc_info=True)
+        raise _corpus_unreachable() from error
+
+    # Identifiers and counts. Never a label, a severity or the annotator's note:
+    # what somebody wrote about a card is theirs, and a log is not the place for
+    # it. structlog keywords rather than a stdlib `extra`, which this service's
+    # `ProcessorFormatter` chain discards silently.
+    logger.info(
+        "annotation.annotations_recorded",
+        image_id=str(image_id),
+        marker_count=len(stored.markers),
+        centering_recorded=bool(stored.centering),
+    )
+    return _annotations(stored)

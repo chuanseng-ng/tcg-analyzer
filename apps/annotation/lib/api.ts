@@ -21,6 +21,10 @@ export { apiBaseUrl };
 export type AnnotationWorkListResponse = components["schemas"]["AnnotationWorkListResponse"];
 export type AnnotationImageResponse = components["schemas"]["AnnotationImageResponse"];
 export type AnnotationImageSummary = components["schemas"]["AnnotationImageSummary"];
+export type AnnotationRequestBody = components["schemas"]["AnnotationRequest"];
+export type AnnotationResponse = components["schemas"]["AnnotationResponse"];
+export type StoredMarker = components["schemas"]["StoredMarkerResponse"];
+export type StoredMeasurement = components["schemas"]["StoredMeasurementResponse"];
 
 /**
  * Read off the operation's own query parameter rather than written out here, so
@@ -119,6 +123,8 @@ interface JsonRequest<T> {
   readonly signal: AbortSignal | undefined;
   readonly isPayload: (payload: unknown) => payload is T;
   readonly payloadName: string;
+  /** Absent means `GET`. A body is only sent when this is set. */
+  readonly send?: { readonly method: "POST"; readonly body: unknown };
 }
 
 async function requestJson<T>(request: JsonRequest<T>): Promise<T> {
@@ -128,7 +134,19 @@ async function requestJson<T>(request: JsonRequest<T>): Promise<T> {
   try {
     response = await fetch(url, {
       cache: "no-store",
-      headers: { accept: "application/json" },
+      /*
+       * Still no `credentials`, and a write is exactly where somebody reaches
+       * for one. This surface has no session — V1 has no accounts, and the
+       * annotation tool's isolation is deployment topology (ADR 0009) rather
+       * than a cookie. `tests/api.test.ts` asserts the key's absence.
+       */
+      ...(request.send === undefined
+        ? { headers: { accept: "application/json" } }
+        : {
+            method: request.send.method,
+            headers: { accept: "application/json", "content-type": "application/json" },
+            body: JSON.stringify(request.send.body),
+          }),
       signal: requestSignal(request.signal, READ_TIMEOUT_MS),
     });
   } catch (cause) {
@@ -202,7 +220,43 @@ function isImage(payload: unknown): payload is AnnotationImageResponse {
     typeof detail.width === "number" &&
     typeof detail.height === "number" &&
     Array.isArray(detail.siblings) &&
-    detail.siblings.every(isImageSummary)
+    detail.siblings.every(isImageSummary) &&
+    Array.isArray(detail.annotations) &&
+    detail.annotations.every(isStoredMarker) &&
+    Array.isArray(detail.centering) &&
+    detail.centering.every(isStoredMeasurement)
+  );
+}
+
+function isStoredMarker(payload: unknown): payload is StoredMarker {
+  return (
+    isRecord(payload) &&
+    typeof payload.id === "string" &&
+    typeof payload.kind === "string" &&
+    typeof payload.label === "string" &&
+    typeof payload.confidence === "number" &&
+    typeof payload.annotator_id === "string" &&
+    typeof payload.created_at === "string"
+  );
+}
+
+function isStoredMeasurement(payload: unknown): payload is StoredMeasurement {
+  return (
+    isRecord(payload) &&
+    typeof payload.id === "string" &&
+    typeof payload.confidence === "number" &&
+    typeof payload.annotator_id === "string" &&
+    typeof payload.created_at === "string"
+  );
+}
+
+function isAnnotationResponse(payload: unknown): payload is AnnotationResponse {
+  return (
+    isRecord(payload) &&
+    Array.isArray(payload.markers) &&
+    payload.markers.every(isStoredMarker) &&
+    Array.isArray(payload.centering) &&
+    payload.centering.every(isStoredMeasurement)
   );
 }
 
@@ -247,4 +301,38 @@ export function imageBytesUrl(imageId: string, representation: Representation): 
   const query = new URLSearchParams({ representation });
 
   return `${apiBaseUrl()}${WORK_LIST}/${encodeURIComponent(imageId)}/bytes?${query.toString()}`;
+}
+
+/**
+ * `POST /internal/annotation/images/{id}/annotations` — one image's annotations.
+ *
+ * **One image per call**, which is the service's rule and not a convenience: a
+ * marker belongs to the image whose artifact its coordinates are fractions of,
+ * and the viewer can be showing the *other* side of the same copy. Sending both
+ * in one request would make it possible to file the back's corners against the
+ * front.
+ *
+ * The annotator and the timestamp are not here. Spec §30 asks that both be
+ * recorded automatically rather than typed, so the service supplies them — and
+ * sending an `annotator_id` is refused rather than ignored, so nobody can believe
+ * they set one.
+ *
+ * ponytail: a save that times out client-side may have committed, and a retry
+ * would then write a second identical row. Harmless — both tables are
+ * append-only with nothing unique per image, the newest row is the current
+ * reading, and the image leaves the work list either way — so there is no
+ * idempotency key. What there is instead is no retry button on a save.
+ */
+export async function saveAnnotations(
+  imageId: string,
+  body: AnnotationRequestBody,
+  signal?: AbortSignal,
+): Promise<AnnotationResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}${WORK_LIST}/${encodeURIComponent(imageId)}/annotations`,
+    signal,
+    send: { method: "POST", body },
+    isPayload: isAnnotationResponse,
+    payloadName: "annotation",
+  });
 }

@@ -218,6 +218,11 @@ services:
       # browser client of this API too, and leaving it out fails as a fetch that
       # never arrives — which the tool can only report as "not answering".
       TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}","http://localhost:${ANNOTATION_PORT:-3001}"]'
+      # Who the annotation tool records as the author of a label. Passed rather
+      # than left to the default because a value nobody can see is being
+      # recorded is worse than one in a file — spec §30 asks that it never be
+      # typed, so this is the only place it is chosen.
+      TCG_API_ANNOTATOR_ID: ${TCG_API_ANNOTATOR_ID:-annotator}
       TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     ports:
