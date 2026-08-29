@@ -53,13 +53,17 @@ Eight things about this schema are load-bearing:
   but the annotator and the time: a marker carries a label, a severity and a
   bounding box, a measurement carries two ratios and none of those. One table
   with a `kind` would leave half of every row NULL by construction.
-* **An annotation's coordinates are fractions of the normalized artifact.** #38
-  warps every image to one 756x1056 artifact, so a coordinate in that space
-  survives a retake and compares across cards; a raw-photograph coordinate would
-  be meaningless the moment the framing changed. Fractions rather than pixels of
-  that artifact, which is also what keeps this module free of `ml/normalization`
-  — importing it for two integers would put OpenCV in the API image, and
-  `test_import_purity.py` forbids that.
+* **An annotation's coordinates are fractions of the representation the row
+  names.** #38 warps every image to one 756x1056 artifact, so a coordinate in
+  that space survives a retake and compares across cards; a raw-photograph
+  coordinate would be meaningless the moment the framing changed. That was the
+  whole rule until ADR 0010 measured that the artifact cannot resolve §16's fine
+  defect classes, and #175 admitted the one argued exception: a *surface*
+  annotation may declare its coordinates fractions of the original photograph,
+  and `representation` is that declaration on the row rather than a convention.
+  Fractions rather than pixels of either frame, which is also what keeps this
+  module free of `ml/normalization` — importing it for two integers would put
+  OpenCV in the API image, and `test_import_purity.py` forbids that.
 
 Spec §32's anti-leakage grouping is why `physical_copies` exists at all: two
 photographs of one card must never land on opposite sides of a split, and none
@@ -815,11 +819,27 @@ _RATIOS_ARE_UNIT_INTERVALS: Final = (
     "AND (vertical IS NULL OR (vertical >= 0 AND vertical <= 1))"
 )
 
+#: The unit-square rule. The constraint's name still says "artifact" because it
+#: predates #175 and renaming a CHECK is a drop-and-re-add on a frozen
+#: migration's constant; the rule itself is frame-agnostic — a box is inside
+#: the unit square of whichever representation its row names.
 _BOX_LIES_INSIDE_THE_ARTIFACT: Final = (
     "bbox_x IS NULL OR ("
     "bbox_x >= 0 AND bbox_width > 0 AND bbox_x + bbox_width <= 1 "
     "AND bbox_y >= 0 AND bbox_height > 0 AND bbox_y + bbox_height <= 1)"
 )
+
+#: The two frames a coordinate can be a fraction of — #38's standardized
+#: artifact, or the photograph as it was ingested. Spelled here rather than
+#: imported from `datasets.annotation` (which owns the `NORMALIZED`/`ORIGINAL`
+#: constants the bytes endpoint serves) because that module imports this one.
+REPRESENTATIONS: Final = ("normalized", "original")
+
+#: ADR 0010: the artifact cannot resolve §16's fine defect classes, and the
+#: original photograph is the one route back — for *surface* annotations only.
+#: Corners and edges were measured adequate against the artifact and stay
+#: fractions of it. Both operands are NOT NULL, so no `IS TRUE` wrap is needed.
+_ONLY_A_SURFACE_MARKS_THE_ORIGINAL: Final = "kind = 'surface' OR representation = 'normalized'"
 
 
 image_annotations = sa.Table(
@@ -912,14 +932,15 @@ image_annotations = sa.Table(
         sa.Double(),
         nullable=True,
         comment=(
-            "§17's bounding box, as a **fraction of the normalized artifact** rather than "
-            "a pixel of the photograph. `ml/normalization` (#38) warps every image to one "
-            "756x1056 artifact, so a coordinate in that space survives a retake and "
-            "compares across cards, where a raw-photograph coordinate would be "
-            "meaningless the moment the framing changed. A fraction rather than a pixel "
-            "of that artifact, so its resolution could change without rewriting every row "
-            "— and so this module never has to import `ml/normalization`, which would put "
-            "OpenCV in the API image. All four columns or none."
+            "§17's bounding box, as a **fraction of the representation this row names** "
+            "rather than a pixel of it. For 'normalized' that is the 756x1056 artifact "
+            "`ml/normalization` (#38) warps every image to, so the coordinate survives a "
+            "retake and compares across cards; for 'original' it is the photograph "
+            "itself, which ADR 0010 measured as the only frame that resolves §16's fine "
+            "defect classes. A fraction rather than a pixel of either, so a resolution "
+            "can change without rewriting every row — and so this module never has to "
+            "import `ml/normalization`, which would put OpenCV in the API image. All four "
+            "columns or none."
         ),
     ),
     sa.Column("bbox_y", sa.Double(), nullable=True, comment="As `bbox_x`, downward."),
@@ -930,12 +951,31 @@ image_annotations = sa.Table(
         postgresql.JSONB(),
         nullable=True,
         comment=(
-            "§17's polygon — an array of [x, y] pairs in the same fractional artifact "
-            "space as the box above, for a defect a rectangle describes badly. JSONB "
+            "§17's polygon — an array of [x, y] pairs in the same fractional space as "
+            "the box above (the representation this row names), for a defect a rectangle "
+            "describes badly. JSONB "
             "rather than a table of points, because nothing joins it and no query asks "
             "about one vertex. §17 says to capture spatial data from the beginning even "
             "though defect visualization is post-V1, and this is that: storable now, read "
             "by nothing yet."
+        ),
+    ),
+    sa.Column(
+        "representation",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "Which frame this annotation's coordinates are fractions of — 'normalized' "
+            "(#38's artifact) or 'original' (the photograph as ingested). ADR 0010 "
+            "measured that the artifact cannot resolve §16's fine defect classes and "
+            "named the original photograph the one route back, so #175 lets a *surface* "
+            "annotation declare it — and only a surface, which "
+            "ck_image_annotations_only_a_surface_marks_the_original holds. **NOT NULL on "
+            "every row**: a marker with no box still names the frame the annotator "
+            "judged the label against, and a 'scratch' call made off the 12 px/mm "
+            "artifact is a weaker claim than one made off the original. No server "
+            "default, for `confidence`'s reason: a representation nobody named must be "
+            "refused rather than read as a choice."
         ),
     ),
     sa.Column(
@@ -985,6 +1025,10 @@ image_annotations = sa.Table(
         name="bounding_box_is_whole_or_absent",
     ),
     sa.CheckConstraint(_BOX_LIES_INSIDE_THE_ARTIFACT, name="bounding_box_lies_inside_the_artifact"),
+    sa.CheckConstraint(
+        one_of("representation", REPRESENTATIONS), name="representation_is_a_known_representation"
+    ),
+    sa.CheckConstraint(_ONLY_A_SURFACE_MARKS_THE_ORIGINAL, name="only_a_surface_marks_the_original"),
     sa.CheckConstraint(
         "polygon IS NULL OR jsonb_typeof(polygon) = 'array'", name="polygon_is_an_array"
     ),
