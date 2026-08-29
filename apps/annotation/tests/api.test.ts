@@ -106,3 +106,65 @@ describe("every failure is an ApiError", () => {
     );
   });
 });
+
+/*
+ * The guards, against payloads shaped like the service's real ones.
+ *
+ * The component tests mock `readTrainingImage`, so nothing there ever runs a
+ * guard — which is how a guard that still checked a field the service had
+ * stopped sending reached a browser and turned every image into "something went
+ * wrong". A round trip through `requestJson` is the only thing that catches it.
+ */
+const SUMMARY = {
+  id: "11111111-1111-4111-8111-111111111111",
+  side: "front",
+  card_id: null,
+  physical_copy_id: "22222222-2222-4222-8222-222222222222",
+  source: "first_party",
+  created_at: "2026-08-01T10:00:00Z",
+  has_artifact: true,
+};
+
+describe("the payload guards accept what the service actually sends", () => {
+  it("accepts a work list", async () => {
+    vi.stubGlobal("fetch", respondWith({ images: [SUMMARY], total: 1, limit: 25, offset: 0 }));
+
+    const page = await listImagesAwaitingAnnotation({ limit: 25, offset: 0 });
+
+    expect(page.images[0]?.id).toBe(SUMMARY.id);
+  });
+
+  it("accepts an image detail with a sibling", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({
+        ...SUMMARY,
+        width: 1200,
+        height: 1600,
+        siblings: [{ ...SUMMARY, side: "back" }],
+      }),
+    );
+
+    const image = await readTrainingImage(SUMMARY.id);
+
+    expect(image.has_artifact).toBe(true);
+    expect(image.siblings).toHaveLength(1);
+  });
+
+  it("accepts an image detail with no siblings and no artifact", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith({ ...SUMMARY, has_artifact: false, width: 1200, height: 1600, siblings: [] }),
+    );
+
+    await expect(readTrainingImage(SUMMARY.id)).resolves.toMatchObject({ has_artifact: false });
+  });
+
+  it("still refuses a detail missing a field it depends on", async () => {
+    // Guard the guard: an `isImage` that returned true unconditionally would
+    // pass all three assertions above.
+    vi.stubGlobal("fetch", respondWith({ ...SUMMARY, width: 1200, siblings: [] }));
+
+    await expect(readTrainingImage(SUMMARY.id)).rejects.toBeInstanceOf(ApiError);
+  });
+});

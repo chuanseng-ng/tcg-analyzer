@@ -160,7 +160,9 @@ async function requestJson<T>(request: JsonRequest<T>): Promise<T> {
   return payload;
 }
 
-function isImageSummary(payload: unknown): payload is AnnotationImageSummary {
+function isImageSummary(
+  payload: unknown,
+): payload is AnnotationImageSummary & Record<string, unknown> {
   return (
     isRecord(payload) &&
     typeof payload.id === "string" &&
@@ -182,15 +184,25 @@ function isWorkList(payload: unknown): payload is AnnotationWorkListResponse {
   );
 }
 
+/*
+ * A detail is a summary with more on it, so this narrows once and then reads
+ * fields off the narrowed value. The previous version cast to
+ * `Record<string, unknown>` at each field, which silently outlived a field it
+ * was checking — a cast is a promise the compiler stops checking, and this
+ * guard exists precisely for the case where the service and this file disagree.
+ */
 function isImage(payload: unknown): payload is AnnotationImageResponse {
+  if (!isImageSummary(payload)) {
+    return false;
+  }
+
+  const detail: Record<string, unknown> = payload;
+
   return (
-    isImageSummary(payload) &&
-    typeof (payload as Record<string, unknown>).width === "number" &&
-    typeof (payload as Record<string, unknown>).height === "number" &&
-    ((payload as Record<string, unknown>).representation === "normalized" ||
-      (payload as Record<string, unknown>).representation === "original") &&
-    Array.isArray((payload as Record<string, unknown>).siblings) &&
-    ((payload as Record<string, unknown>).siblings as unknown[]).every(isImageSummary)
+    typeof detail.width === "number" &&
+    typeof detail.height === "number" &&
+    Array.isArray(detail.siblings) &&
+    detail.siblings.every(isImageSummary)
   );
 }
 
