@@ -82,20 +82,57 @@ therefore reachable with <kbd>Tab</kbd> and <kbd>Enter</kbd>. Advancing
 automatically after a save belongs to the annotation controls, which are the
 next issue.
 
-## An open question about resolution
+## What the artifact can and cannot resolve
 
-**Whether 756×1056 carries enough detail to judge a soft corner is not settled.**
-A corner is roughly 3% of the artifact's width — about 22 pixels — and at the
-viewer's maximum magnification that is around 180 screen pixels. Whitening on a
-corner is a sub-millimetre change, and no real card photographs exist in this
-repository to check it against ([ADR 0008](../../docs/adr/0008-permitted-training-image-sources.md)
-makes `redistribution_allowed` false everywhere, so none may be committed).
+`ml/normalization` warps to `pixels_per_mm = 12`, which is 756x1056 on a 63x88 mm
+card — exactly 63:88, and about 305 dpi. One artifact pixel is **83 microns**.
+Against that, the defect classes §30 asks an annotator to mark are not equal, and
+two of the three answers need no photograph to reach:
 
-Look at a real corner at maximum zoom before annotating a corpus in earnest. If
-the artifact turns out to be the limiting factor, **that is a finding about the
-normalization stage's output size, not something to work around here**: the
-target lives in `ml/normalization`, changing it bumps `NORMALIZATION_VERSION`,
-and no amount of CSS invents detail the artifact does not carry.
+| What is being judged           | Size on the card         | At 12 px/mm    |                              |
+| ------------------------------ | ------------------------ | -------------- | ---------------------------- |
+| Centering, 55/45 vs 60/40      | ~0.3 mm on a 6 mm border | ~3.6 px        | adequate                     |
+| Corner whitening, just visible | ~0.2–0.5 mm              | 2.4–6 px       | **needs checking**           |
+| Print line                     | ~50–200 µm               | 0.6–2.4 px     | marginal                     |
+| Hairline scratch               | ~10–50 µm                | **0.1–0.6 px** | **below the sampling limit** |
+
+(The first column is arithmetic; the second is an estimate of physical defect
+sizes and is the part to argue with.)
+
+**Surface defects are settled, and negatively.** A hairline scratch is smaller
+than one artifact pixel, so no amount of looking at a screen changes the answer —
+§16's `scratch`, `print_line`, `print_dot` and `gloss_issue` cannot be marked
+reliably against this artifact. That is a finding about
+[`ml/normalization`](../../ml/normalization), not about this viewer.
+
+**Corners are the empirical question**, and the only one a real photograph can
+settle: 2.4–6 px is exactly the band where whether a _person_ can judge extent is
+a question about eyes rather than about sampling. Look at a real corner at 800%
+before annotating a corpus in earnest.
+
+**Centering is fine**, which matters because it is the one measurement §21
+defines numerically.
+
+### Why this is cheap to change, and cheaper now than later
+
+`pixels_per_mm` is a **threshold, not a hard-coded size**, and the warp already
+runs at up to `max_warp_multiple = 4` — 48 px/mm, about 1219 dpi — before a box
+filter takes it down. **The detail already exists upstream and is being discarded
+on purpose.** Raising the output resolution is one number plus a
+`NORMALIZATION_VERSION` bump, not a re-architecture.
+
+That bump is what makes it a decision rather than a tweak: the version names what
+M7 and M8 were trained against, and it composes into
+`training_image_fingerprints.hash_version`, so every artifact and every
+fingerprint would be recomputed. **Today that is zero rows** — nothing is
+ingested, nothing is annotated, no model exists. The cost of this change is at
+its absolute minimum right now and rises with every image added.
+
+**It is deliberately not changed here.** #159 is the shell and the viewer, and
+the issue asks for the finding rather than the fix; the fix belongs to
+`ml/normalization` with its own acceptance criteria — and the surface answer
+above may argue for something other than a bigger number, such as annotating
+surface against the original photograph instead.
 
 ## Layout
 
