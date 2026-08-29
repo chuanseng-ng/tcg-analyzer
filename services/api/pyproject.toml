@@ -124,6 +124,11 @@ tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
 # **Runs from the worker image**: hashing needs the normalized artifact, which
 # needs the CV stack in the `worker` extra above.
 tcg-detect-duplicate-training-images = "tcg_api.datasets.deduplication:main"
+# Stores the standardized artifact spec §30's annotation tool shows and #158's
+# coordinates are fractions of, for every training image that has none. A stored
+# artifact is never replaced: an annotation is a fraction of the artifact its
+# annotator saw. **Runs from the worker image**, for deduplication's reason.
+tcg-normalize-training-images = "tcg_api.datasets.normalization:main"
 # Freezes the corpus as it stands into spec §31's immutable `dataset_version`,
 # writing the version and every member's split in one transaction, and renders
 # the manifest into `datasets/manifests/`. The manifest is a render of the rows

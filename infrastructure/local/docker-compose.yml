@@ -213,8 +213,11 @@ services:
       TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
       TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
       # Spelled out rather than left to the default, so that overriding
-      # WEB_PORT does not silently break CORS for the app that was moved.
-      TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}"]'
+      # WEB_PORT or ANNOTATION_PORT does not silently break CORS for the app
+      # that was moved. **Both applications are here**: the annotation tool is a
+      # browser client of this API too, and leaving it out fails as a fetch that
+      # never arrives — which the tool can only report as "not answering".
+      TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}","http://localhost:${ANNOTATION_PORT:-3001}"]'
       TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     ports:
@@ -348,6 +351,37 @@ services:
         - action: sync
           path: ../../apps/web
           target: /app/apps/web
+          ignore:
+            - node_modules/
+            - .next/
+        - action: rebuild
+          path: ../../pnpm-lock.yaml
+
+  # The internal annotation tool. A separate service on a separate port because
+  # it is a separate application and, in a deployment, a separate ingress: ADR
+  # 0009 requires it be unroutable from the public origin, and running it beside
+  # `web` locally is a convenience rather than a statement about where it lives.
+  annotation:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/annotation.Dockerfile
+    <<: *hardening
+    environment:
+      # The browser's view of the API, exactly as `web`'s is: every fetch this
+      # application makes runs in the browser, so `http://api:8000` would
+      # resolve for the container and for nobody else.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${API_PORT:-8000}
+    ports:
+      - "${ANNOTATION_PORT:-3001}:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ../../apps/annotation
+          target: /app/apps/annotation
           ignore:
             - node_modules/
             - .next/

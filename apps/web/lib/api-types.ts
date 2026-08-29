@@ -286,6 +286,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/annotation/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the training images awaiting annotation
+         * @description **Not part of spec §64.** The internal annotation surface (ADR 0009) — in this application and in this schema because `apps/annotation` generates its types from it, and kept off the public origin by deployment topology rather than by being a second service. Lists the training images that carry neither a defect marker nor a centering measurement, oldest first. Both tables are checked, not one: spec §30's eleven features are split across two of them, so an image carrying only a measurement has been worked on. Ordered by `(created_at, id)` — a total order, so paging neither drops nor duplicates a row. An offset past the end is an empty page, never a 404.
+         */
+        get: operations["list_images_awaiting_annotation_internal_annotation_images_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/annotation/images/{image_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one training image and the other views of its copy
+         * @description **Not part of spec §64.** The internal annotation surface (ADR 0009) — in this application and in this schema because `apps/annotation` generates its types from it, and kept off the public origin by deployment topology rather than by being a second service. Returns one image, which representation can be shown for it, and the other photographs of the same physical copy — what a front/back toggle moves between. `siblings` is empty where the image names no physical copy, which is an honest answer rather than a gap.
+         */
+        get: operations["read_training_image_internal_annotation_images__image_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/internal/annotation/images/{image_id}/bytes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve one representation of a training image
+         * @description **Not part of spec §64.** The internal annotation surface (ADR 0009) — in this application and in this schema because `apps/annotation` generates its types from it, and kept off the public origin by deployment topology rather than by being a second service. Serves the bytes themselves, read through ADR 0002's `ObjectStorage` port. `representation=normalized` is the standardized artifact and 404s where none was stored — deliberately, rather than substituting the photograph: the caller has already been told which representation exists, and a silent substitution would hand a client a frame whose coordinates mean nothing. `Cache-Control: private, no-store`.
+         */
+        get: operations["read_training_image_bytes_internal_annotation_images__image_id__bytes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/readiness": {
         parameters: {
             query?: never;
@@ -391,6 +451,136 @@ export interface components {
              * @constant
              */
             status: "queued";
+        };
+        /**
+         * AnnotationImageResponse
+         * @description One training image, with the other photographs of the same physical copy.
+         */
+        AnnotationImageResponse: {
+            /**
+             * Card Id
+             * @description Which catalog card it depicts.
+             */
+            card_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the image was ingested.
+             */
+            created_at: string;
+            /**
+             * Has Artifact
+             * @description Whether a standardized artifact was stored, and therefore which representation `…/bytes` can serve. False means all there is to show is the photograph — and a tool showing it must label it, because coordinates cannot be taken against it. The same field every summary carries, so a detail is a summary with more on it rather than a second shape.
+             */
+            has_artifact: boolean;
+            /**
+             * Height
+             * @description The stored **photograph's** height in pixels.
+             */
+            height: number;
+            /**
+             * Id
+             * Format: uuid
+             * @description The training image's identifier.
+             */
+            id: string;
+            /**
+             * Physical Copy Id
+             * @description Which physical object it is a photograph of.
+             */
+            physical_copy_id?: string | null;
+            /**
+             * Siblings
+             * @description Other photographs of the same physical copy — what the front/back toggle moves between. **Empty when `physical_copy_id` is null**, which is an honest answer rather than a gap: treating null as a group would make every consented upload a sibling of every other one.
+             */
+            siblings: components["schemas"]["AnnotationImageSummary"][];
+            /**
+             * Side
+             * @description Which view of the card this is.
+             * @example front
+             */
+            side: string;
+            /**
+             * Source
+             * @description Which ADR 0008 source class it came from.
+             */
+            source: string;
+            /**
+             * Width
+             * @description The stored **photograph's** width in pixels.
+             */
+            width: number;
+        };
+        /**
+         * AnnotationImageSummary
+         * @description One training image, as the work list and an image's siblings report it.
+         */
+        AnnotationImageSummary: {
+            /**
+             * Card Id
+             * @description Which catalog card it depicts, or null where nobody has identified it.
+             */
+            card_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the image was ingested.
+             */
+            created_at: string;
+            /**
+             * Has Artifact
+             * @description Whether a standardized artifact has been stored for it. False means the normalization pass has not run, or found no card — the tool then shows the photograph and must say so, because a coordinate taken against a photograph is not comparable with one taken against an artifact. The storage key itself is deliberately not reported: it is server-generated and internal (spec §55).
+             */
+            has_artifact: boolean;
+            /**
+             * Id
+             * Format: uuid
+             * @description The training image's identifier.
+             */
+            id: string;
+            /**
+             * Physical Copy Id
+             * @description Which physical object it is a photograph of. **Null is an honest answer**: a consented upload identifies no copy (ADR 0008's approved class 4).
+             */
+            physical_copy_id?: string | null;
+            /**
+             * Side
+             * @description Which view of the card this is — spec §30's front/back, and the same vocabulary an uploaded analysis uses. Six values, not two: a corpus may hold angled and surface views of the same copy.
+             * @example front
+             */
+            side: string;
+            /**
+             * Source
+             * @description Which ADR 0008 source class it came from.
+             * @example first_party
+             */
+            source: string;
+        };
+        /**
+         * AnnotationWorkListResponse
+         * @description The images awaiting annotation, one page at a time.
+         */
+        AnnotationWorkListResponse: {
+            /**
+             * Images
+             * @description This page of images, oldest first.
+             */
+            images: components["schemas"]["AnnotationImageSummary"][];
+            /**
+             * Limit
+             * @description The page size that was applied.
+             */
+            limit: number;
+            /**
+             * Offset
+             * @description The offset that was applied.
+             */
+            offset: number;
+            /**
+             * Total
+             * @description How many images await annotation in total. **This number falls as annotations land**, so a page boundary can move underneath a client that is annotating while it pages.
+             */
+            total: number;
         };
         /**
          * CardConfirmationRequest
@@ -2523,6 +2713,176 @@ export interface operations {
             };
             /** @description The request failed. `code` classifies it; see spec §66. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_images_awaiting_annotation_internal_annotation_images_get: {
+        parameters: {
+            query?: {
+                /** @description How many images to return. */
+                limit?: number;
+                /** @description How many to skip. */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationWorkListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The corpus could not be read. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_training_image_internal_annotation_images__image_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The training image's identifier. */
+                image_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationImageResponse"];
+                };
+            };
+            /** @description No such training image. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The corpus could not be read. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_training_image_bytes_internal_annotation_images__image_id__bytes_get: {
+        parameters: {
+            query?: {
+                /** @description Which representation to serve. */
+                representation?: "normalized" | "original";
+            };
+            header?: never;
+            path: {
+                /** @description The training image's identifier. */
+                image_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                    "image/png": unknown;
+                };
+            };
+            /** @description No such training image, or no such representation of it. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The corpus or the image store could not be reached. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

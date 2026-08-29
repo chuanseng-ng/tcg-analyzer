@@ -469,7 +469,8 @@ infrastructure/ docker, local, deployment
 ```
 
 These are **logical boundaries, not microservices**. V1 deploys as one API, one
-worker and one web application; the tree exists so the seams are in the right
+worker and two frontends — the consumer application and the internal annotation
+tool; the tree exists so the seams are in the right
 places when something eventually has to move, not so that everything is
 separately deployable now. The worker is a *process* boundary rather than a
 codebase one: it runs the same application with a different command, so the code
@@ -484,6 +485,19 @@ container answering HTTP. What holds that split up is a lazy import — the API
 imports `tcg_api.analysis.jobs` merely to enqueue, so the wiring for all three
 stages is imported inside the function that runs a job, and a purity test
 asserts that importing the application reaches neither `cv2` nor any of them.
+
+`apps/annotation` is the second frontend and the only surface here that is not
+part of the consumer product. It is spec §30's annotation tool: it reads
+`/internal/annotation` on the same FastAPI application, because §7 forbids an
+unnecessary microservice and a second application would duplicate the
+error-envelope and migration wiring in order to enforce a boundary the
+deployment already enforces ([ADR 0009](adr/0009-the-dataset-store-as-a-database-domain.md)).
+**Its isolation is deployment topology** — the `/internal` prefix is what an
+ingress rule matches, and the tool is served from an origin the public one does
+not route to. It runs on `apps/web`'s stack so there is one toolchain rather than
+two, and its layout primitives and design tokens are *copied* rather than shared:
+ADR 0001 gives the two applications no TypeScript package in common, so a third
+application is what would earn one.
 
 `ml/normalization` is not one of spec §7's names. §18 makes perspective
 correction and normalization a stage of its own, and it got a package of its own

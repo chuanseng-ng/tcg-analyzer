@@ -30,7 +30,9 @@ COMPOSE_FILE = REPO_ROOT / "infrastructure" / "local" / "docker-compose.yml"
 #: Every service a developer expects after one `up`. `migrate` is deliberately
 #: included: it is not a service in the running sense, but its absence would
 #: mean the database is never migrated, which is the failure this list guards.
-EXPECTED_SERVICES = frozenset({"postgres", "minio", "redis", "migrate", "api", "worker", "web"})
+EXPECTED_SERVICES = frozenset(
+    {"postgres", "minio", "redis", "migrate", "api", "worker", "web", "annotation"}
+)
 
 #: The services whose images this repository builds, and which are therefore
 #: the ones it can hold to the non-root, least-privilege baseline. The
@@ -39,7 +41,7 @@ EXPECTED_SERVICES = frozenset({"postgres", "minio", "redis", "migrate", "api", "
 #: ownership on first start; the Redis image drops to `redis`. All three are
 #: upstream images, and none is something this file can honestly claim to have
 #: hardened.
-BUILT_SERVICES = frozenset({"migrate", "api", "worker", "web"})
+BUILT_SERVICES = frozenset({"migrate", "api", "worker", "web", "annotation"})
 
 
 def compose() -> dict[str, Any]:

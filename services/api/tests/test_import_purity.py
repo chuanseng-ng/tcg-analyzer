@@ -138,7 +138,7 @@ def test_deriving_duplicate_groups_pulls_in_neither_opencv_nor_the_analysis_stag
     assert cv == [], (
         f"importing tcg_api.datasets.fingerprints pulled in {cv}. The hash, the "
         "distance and the grouping are Pillow and arithmetic; producing an artifact "
-        "is tcg_api.datasets.deduplication's, which is the module that may."
+        "is tcg_api.datasets.normalization's, which is a module that may."
     )
     assert stages == [], stages
 
@@ -156,8 +156,8 @@ def test_ingesting_a_training_image_pulls_in_neither_opencv_nor_the_analysis_sta
     """#154's own claim, which nothing asserted until #155 gave it a sibling.
 
     Ingestion validates with Pillow and stores the bytes; the artifact is
-    produced on demand by the deduplication pass, which is why OpenCV is not on
-    the ingest path.
+    produced out of band by the normalization pass, which is why OpenCV is not
+    on the ingest path.
     """
     cv = _modules_matching("cv2", after_importing="tcg_api.datasets.ingestion")
 
@@ -178,7 +178,7 @@ def test_splitting_a_corpus_pulls_in_neither_opencv_nor_the_analysis_stages() ->
     assert cv == [], (
         f"importing tcg_api.datasets.splitting pulled in {cv}. The splitter consumes "
         "tcg_api.datasets.fingerprints, which is Pillow and arithmetic; producing an "
-        "artifact is tcg_api.datasets.deduplication's, and the splitter must not reach it."
+        "artifact is tcg_api.datasets.normalization's, and the splitter must not reach it."
     )
     assert stages == [], stages
 
@@ -198,6 +198,41 @@ def test_versioning_a_dataset_pulls_in_neither_opencv_nor_the_analysis_stages() 
     assert cv == [], (
         f"importing tcg_api.datasets.versioning pulled in {cv}. Publishing a version "
         "reads rows and writes rows; it never produces a normalized artifact, which is "
-        "tcg_api.datasets.deduplication's work and the only reason OpenCV is installed."
+        "tcg_api.datasets.normalization's work and the only reason OpenCV is installed."
+    )
+    assert stages == [], stages
+
+
+def test_the_normalization_pass_is_the_module_that_binds_to_opencv() -> None:
+    """Guard the guard for #159's pass, on the deduplication test's terms.
+
+    `tcg_api.datasets.normalization` owns the one detect-then-straighten path, so
+    it is a module that *may* reach OpenCV — and deleting the seam would
+    otherwise 'fix' every assertion above by making the stack unreachable
+    everywhere.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.normalization")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.normalization")
+
+    assert "cv2" in cv
+    assert {"tcg_ml_card_detection", "tcg_ml_normalization"} <= set(stages), stages
+
+
+def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#159's read layer serves stored columns and a stored object, and nothing else.
+
+    The artifact reaches an annotator because a pass produced it out of band, not
+    because a request straightened a photograph while somebody waited. That is not
+    a performance preference: `tcg_api.main` may not reach the CV stack at all, so
+    normalizing on demand is unavailable rather than merely slow — which is the
+    whole reason `training_images.normalized_uri` is a column.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.annotation")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.annotation")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.annotation pulled in {cv}. The annotation reads "
+        "resolve rows and fetch a stored object; producing an artifact is "
+        "tcg_api.datasets.normalization's, and the request path must not reach it."
     )
     assert stages == [], stages

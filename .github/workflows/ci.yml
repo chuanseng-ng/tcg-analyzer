@@ -102,6 +102,51 @@ jobs:
       - name: Build
         run: pnpm --filter @tcg/web build
 
+  # A job of its own rather than a matrix over the two applications. The header
+  # above says jobs are split so a failure names the thing that broke, and
+  # "annotation red, web green" is a different conversation from the reverse.
+  annotation:
+    name: Annotation — lint, format, types, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # The API type check builds the FastAPI app to read its OpenAPI schema,
+      # so this job needs the Python toolchain too (ADR 0001).
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync --all-packages --frozen
+
+      - name: Lint
+        run: pnpm --filter @tcg/annotation lint
+
+      - name: Format
+        run: pnpm --filter @tcg/annotation format:check
+
+      - name: API types are current
+        run: pnpm --filter @tcg/annotation gen:api-types:check
+
+      - name: Types
+        run: pnpm --filter @tcg/annotation typecheck
+
+      - name: Tests
+        run: pnpm --filter @tcg/annotation test
+
+      - name: Build
+        run: pnpm --filter @tcg/annotation build
+
   migrations:
     name: Migrations — fresh database
     runs-on: ubuntu-latest
@@ -195,7 +240,7 @@ jobs:
       # that broke rather than stop at whichever came first.
       fail-fast: false
       matrix:
-        image: [api, worker, web]
+        image: [api, worker, web, annotation]
     steps:
       - uses: actions/checkout@v7
 
@@ -647,6 +692,13 @@ jobs:
 
       - name: The web application serves
         run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3000
+
+      # The annotation tool comes up on its own port. It is checked here rather
+      # than left to the `annotation` job because what this proves is different:
+      # that the two applications coexist in one stack without contending for a
+      # port, which is the whole reason it has one of its own.
+      - name: The annotation tool serves
+        run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3001
 
       - name: Logs
         if: failure()

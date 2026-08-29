@@ -8,7 +8,7 @@ Project documentation.
 | [`analysis-pipeline.md`](analysis-pipeline.md) | What the image-quality gate, the card detector and normalization each do |
 | [`api.md`](api.md) | The HTTP endpoints, what each one refuses, and why it refuses it that way |
 | [`database.md`](database.md) | Migrations, the schema registry, the seeds, the catalog import, the test markers |
-| [`development.md`](development.md) | Host-based workflows — the web application, object storage, background jobs |
+| [`development.md`](development.md) | Host-based workflows — the web application, the annotation tool, object storage, background jobs |
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
 | [`training-image-provenance-research.md`](training-image-provenance-research.md) | The rubric training-image sources are judged against, and what each one's licence actually permits |

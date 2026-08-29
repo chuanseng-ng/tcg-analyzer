@@ -24,6 +24,7 @@ from tcg_api.logging import configure_logging
 from tcg_api.rate_limit import get_redis
 from tcg_api.routers import (
     analyses,
+    annotation,
     cards,
     catalog,
     economics,
@@ -125,6 +126,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(market.router, responses=ERROR_RESPONSES)
     app.include_router(analyses.router, responses=ERROR_RESPONSES)
     app.include_router(economics.router, responses=ERROR_RESPONSES)
+    # Last, and the only one that is not spec §64's. `/internal/annotation` is
+    # the annotation tool's surface: in this application because §7 forbids an
+    # unnecessary microservice and ADR 0009 declined a second FastAPI app, and in
+    # this schema because ADR 0001 makes it the only way `apps/annotation` can
+    # learn a shape. What keeps it internal is the prefix an ingress matches.
+    app.include_router(annotation.router, responses=ERROR_RESPONSES)
 
     structlog.get_logger(__name__).info(
         "api.startup",

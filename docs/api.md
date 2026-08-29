@@ -125,6 +125,51 @@ through rather than refusing them. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](../README.md#configuration).
 
+`/internal/annotation` is **not part of spec §64**. §64's endpoints are the
+consumer product; this is the internal surface `apps/annotation` reads — a work
+list of training images nobody has annotated, one image with the other views of
+the same physical copy, and the bytes themselves. It lives in this application
+because spec §7 says not to create unnecessary microservices in V1, and a second
+FastAPI application would duplicate the session, error-envelope and migration
+wiring in order to enforce a boundary the deployment already enforces
+([ADR 0009](adr/0009-the-dataset-store-as-a-database-domain.md)). It appears in
+this OpenAPI schema because that is the only sanctioned way a TypeScript
+application learns an API shape
+([ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md)). **Neither of those
+is what keeps it internal**: the `/internal` prefix is what an ingress rule
+matches, and the tool is not routable from the public origin.
+
+An image is *awaiting annotation* when it carries neither a defect marker nor a
+centering measurement. Both tables are checked rather than one, because spec
+§30's eleven features are split across two of them — an image somebody has
+measured but not marked has been worked on, and putting it back in the queue
+would invite a second, contradictory reading of the same card. The total falls
+as annotations land, so a page boundary moves under a client that is annotating
+while it pages; that is stated in the schema rather than hidden.
+
+The bytes come back from `…/bytes`, which reads them through ADR 0002's
+`ObjectStorage` port and streams them, with `Cache-Control: private, no-store`.
+**The service streams rather than minting a signed URL, which is a deliberate
+departure from what the issue asked for.** Two reasons: a presigned URL names the
+host the *service* reaches the store on, which inside the local Compose network
+is `minio:9000` and resolves for nobody with a browser; and a signed URL is a
+bearer credential nobody can revoke, which is a poor thing to hand out for a
+training photograph when ADR 0008 makes withdrawal a right the corpus has to
+honour. Streaming from a route already behind its own ingress is less to get
+wrong. Nothing outside `packages/shared` has ever called `signed_download_url`,
+and this did not change that.
+
+`?representation=normalized` is the standardized artifact an annotation's
+coordinates are fractions of; `?representation=original` is the photograph. Asking
+for an artifact that was never stored is a **404 rather than a substitution**: the
+detail endpoint has already said which representation exists, and quietly serving
+the photograph instead would hand a client a frame whose coordinates mean nothing.
+An unknown image is a bare 404 outside the §66 envelope, on
+`GET /analyses/{id}`'s reasoning — none of the eight codes means "not found", and
+the taxonomy stays closed at eight. A row naming bytes the store does not hold is
+a 500 `internal_error` with `details.reason` of `stored_object_missing`, not a
+503: two stores disagreeing will not come right on a retry.
+
 The image is built from the repository root, because `services/api` is a member
 of the uv workspace and cannot be resolved without it:
 

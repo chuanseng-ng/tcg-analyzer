@@ -11,11 +11,13 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 
 That is M0's acceptance criterion: a fresh clone reaches a running application
 with no setup step. It starts PostgreSQL and MinIO, runs the migrations, then
-starts the API and the web app in dependency order.
+starts the API, the web app and the internal annotation tool in dependency
+order.
 
 | Service | Address | What it is |
 | --- | --- | --- |
 | `web` | <http://localhost:3000> | Next.js application |
+| `annotation` | <http://localhost:3001> | Internal annotation tool — **not a public surface** |
 | `api` | <http://localhost:8000> | FastAPI service — `/health`, `/readiness`, `/docs` |
 | `postgres` | `localhost:5432` | PostgreSQL 17 |
 | `minio` | <http://localhost:9000> | S3 API — console on <http://localhost:9001> |
@@ -102,6 +104,7 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres 
 | `TCG_API_STORAGE_BUCKET` | `tcg-local` | Bucket MinIO creates on startup |
 | `API_PORT` | `8000` | Published API port |
 | `WEB_PORT` | `3000` | Published web port |
+| `ANNOTATION_PORT` | `3001` | Published port for the internal annotation tool |
 | `TCG_API_LOG_FORMAT` | `console` | `console` locally, `json` in a deployment |
 | `TCG_API_LOG_LEVEL` | `INFO` | Root log level |
 
@@ -112,8 +115,11 @@ Only the **published** ports are configurable, and only they matter to a
 developer. Inside the Compose network the services always reach each other on
 the container port under the service name — `postgres:5432`, `minio:9000` — so
 moving a published port cannot break service-to-service traffic. The API's CORS
-origin is derived from `WEB_PORT` and the web app's API base URL from
-`API_PORT`, so moving either keeps the pair consistent.
+origins are derived from **both** `WEB_PORT` and `ANNOTATION_PORT`, and each
+application's API base URL from `API_PORT`, so moving any of them keeps the set
+consistent. Both browser applications are in that list deliberately: leaving one
+out fails as a fetch that never arrives, which an application can only report as
+"the service is not answering".
 
 **The defaults are not secrets.** They are deliberately obvious local-only
 values so that a fresh clone runs without a setup step and so nobody mistakes

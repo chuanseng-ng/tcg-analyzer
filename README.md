@@ -133,12 +133,13 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 ```
 
 That is the entire setup from a fresh clone. It starts PostgreSQL, MinIO and
-Redis, runs the migrations, then starts the API, the analysis worker and the web
-application in dependency order.
+Redis, runs the migrations, then starts the API, the analysis worker, the web
+application and the internal annotation tool in dependency order.
 
 | | |
 | --- | --- |
 | Web application | <http://localhost:3000> |
+| Annotation tool | <http://localhost:3001> — internal, never a public surface |
 | API | <http://localhost:8000> — `/health`, `/readiness`, `/docs` |
 | MinIO console | <http://localhost:9001> |
 

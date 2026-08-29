@@ -136,11 +136,17 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
     """``json`` for machine-readable deployment logs, ``console`` for humans."""
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
     """Browser origins permitted to call this API.
 
-    The default is the Next.js development server: ``apps/web`` runs on :3000
-    and must reach this service on :8000.
+    The defaults are the two Next.js development servers: ``apps/web`` on :3000
+    and ``apps/annotation`` on :3001, both of which must reach this service on
+    :8000.
+
+    A deployment lists neither. `apps/annotation` reads `/internal/annotation`,
+    which ADR 0009 keeps off the public origin — so the deployed tool is served
+    from wherever that ingress lives, and this default is a local convenience
+    rather than a statement about where the two applications belong.
     """
 
     database_url: AsyncDatabaseUrl | None = Field(
