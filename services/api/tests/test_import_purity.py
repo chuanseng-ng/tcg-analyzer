@@ -217,3 +217,22 @@ def test_the_normalization_pass_is_the_module_that_binds_to_opencv() -> None:
     assert "cv2" in cv
     assert {"tcg_ml_card_detection", "tcg_ml_normalization"} <= set(stages), stages
 
+
+def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#159's read layer serves stored columns and a stored object, and nothing else.
+
+    The artifact reaches an annotator because a pass produced it out of band, not
+    because a request straightened a photograph while somebody waited. That is not
+    a performance preference: `tcg_api.main` may not reach the CV stack at all, so
+    normalizing on demand is unavailable rather than merely slow — which is the
+    whole reason `training_images.normalized_uri` is a column.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.annotation")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.annotation")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.annotation pulled in {cv}. The annotation reads "
+        "resolve rows and fetch a stored object; producing an artifact is "
+        "tcg_api.datasets.normalization's, and the request path must not reach it."
+    )
+    assert stages == [], stages
