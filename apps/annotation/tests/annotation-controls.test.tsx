@@ -183,6 +183,29 @@ describe("placing a marker", () => {
     expect(screen.queryByRole("option", { name: "crease" })).toBeNull();
   });
 
+  it("stamps a surface marker with the frame that was on screen", async () => {
+    // #175: the marker carries its representation, and it is the viewer's — the
+    // form never asks, because the annotator is marking what they are looking at.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Surface" }));
+    drag(captureLayer(), view, { x: 0.4, y: 0.5 }, { x: 0.45, y: 0.55 });
+    fireEvent.change(screen.getByLabelText("What is there"), { target: { value: "scuff" } });
+    fireEvent.click(screen.getByRole("radio", { name: "minor" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add surface/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save 1/ }));
+
+    await waitFor(() => {
+      expect(saveAnnotationsMock).toHaveBeenCalled();
+    });
+    const marker = saveAnnotationsMock.mock.calls[0]?.[1].markers?.[0];
+    expect(marker?.kind).toBe("surface");
+    expect(marker && "representation" in marker ? marker.representation : null).toBe("normalized");
+  });
+
   it("offers a surface no `clean`, because a clean surface is no rows at all", async () => {
     render(<ImageViewer imageId={IMAGE_ID} />);
     await ready();
@@ -436,7 +459,36 @@ describe("an image with no artifact", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
     fireEvent.click(screen.getByRole("button", { name: /Add corner/ }));
 
-    expect(screen.getByText(/no artifact, so coordinates cannot be stored/)).toBeInTheDocument();
+    expect(screen.getByText(/no artifact, so nothing staged against one/)).toBeInTheDocument();
+  });
+
+  it("takes surface work against the photograph without a warning (#175)", async () => {
+    // The same image, but the staged work claims nothing about an artifact: a
+    // surface mark on the original photograph is exactly what ADR 0010 says the
+    // photograph is for, and the mirror of the gate lets it through.
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: false }));
+
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Surface" }));
+    drag(captureLayer(), view, { x: 0.4, y: 0.5 }, { x: 0.42, y: 0.52 });
+    fireEvent.change(screen.getByLabelText("What is there"), { target: { value: "scratch" } });
+    fireEvent.click(screen.getByRole("radio", { name: "minor" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add surface/ }));
+
+    expect(screen.queryByText(/no artifact, so nothing staged against one/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save 1/ }));
+    await waitFor(() => {
+      expect(saveAnnotationsMock).toHaveBeenCalled();
+    });
+
+    const marker = saveAnnotationsMock.mock.calls[0]?.[1].markers?.[0];
+    expect(marker?.kind).toBe("surface");
+    expect(marker && "representation" in marker ? marker.representation : null).toBe("original");
   });
 });
 
@@ -455,6 +507,7 @@ describe("what is already recorded", () => {
             severity: "minor",
             confidence: 0.8,
             bbox: null,
+            representation: "normalized",
             annotator_id: "annotator",
             created_at: "2026-08-29T10:00:00Z",
           },
@@ -466,6 +519,7 @@ describe("what is already recorded", () => {
             severity: "severe",
             confidence: 0.9,
             bbox: null,
+            representation: "normalized",
             annotator_id: "annotator",
             created_at: "2026-08-29T11:00:00Z",
           },

@@ -149,13 +149,19 @@ measurement against real photographs where it did not — in
 (The first column is arithmetic; the second is an estimate of physical defect
 sizes and is the part to argue with.)
 
-**Surface defects are settled, and negatively.** A hairline scratch is smaller
-than one artifact pixel, so no amount of looking at a screen changes the answer —
-§16's `scratch`, `print_line`, `print_dot` and `gloss_issue` cannot be marked
-reliably against this artifact. That is a finding about
-[`ml/normalization`](../../ml/normalization), not about this viewer. **The surface
-tool says so on screen**, next to the control, because that is where somebody is
-when the question arises — and _I cannot tell_ is right there beside it.
+**Surface defects are settled, and negatively — against the artifact.** A
+hairline scratch is smaller than one artifact pixel, so no amount of looking at
+a screen changes the answer: §16's `scratch`, `print_line`, `print_dot` and
+`gloss_issue` cannot be marked reliably against this artifact. That is a finding
+about [`ml/normalization`](../../ml/normalization), not about this viewer.
+**Since #175 the viewer offers the way out**: an artifact-bearing image can be
+toggled to the _original photograph_ (~3–5× the artifact's sampling rate), the
+surface tool marks against whichever frame is on screen, and the marker is
+stored naming its frame — `image_annotations.representation`. On the artifact
+view the surface tool still says so on screen, next to the control, and now
+points at the toggle — and _I cannot tell_ is right there beside it. Only the
+surface tool marks the original: corners, edges and centering are artifact
+claims, and their tools disarm on that view.
 
 **Corners were the empirical question, and real photographs settled it**
 (ADR 0010's evidence): worn-corner extent was judgeable at 12 px/mm, and
@@ -173,8 +179,10 @@ surface classes it would have existed to rescue are not rescued by any rate a
 real photograph supports (a hairline scratch is still under 2 px at the source's
 own ~34–36 px/mm). The one route back to a reliable fine-class surface signal
 is **#175** — annotating surface against the _original photograph_, with the
-representation named on the row — which is a schema and UI change of its own,
-not a threshold.
+representation named on the row — which landed as exactly that: a
+`representation` column closed to surface annotations, a representation toggle
+in this viewer, and an artifact gate that lets original-photograph surface work
+through. The threshold itself is untouched.
 
 ## Layout
 

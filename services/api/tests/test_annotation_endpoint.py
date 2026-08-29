@@ -178,6 +178,7 @@ def mark_a_defect(image_id: uuid.UUID) -> None:
             "label": "whitening",
             "severity": "minor",
             "confidence": 0.8,
+            "representation": "normalized",
             "annotator_id": "annotator-1",
         },
     )
@@ -498,6 +499,19 @@ def a_corner(**overrides: Any) -> dict[str, Any]:
     return marker
 
 
+def a_surface(**overrides: Any) -> dict[str, Any]:
+    marker: dict[str, Any] = {
+        "kind": "surface",
+        "label": "scratch",
+        "severity": "minor",
+        "confidence": 0.4,
+        "representation": "original",
+        "bbox": {"x": 0.31, "y": 0.42, "width": 0.02, "height": 0.01},
+    }
+    marker.update(overrides)
+    return marker
+
+
 # ---------------------------------------------------------------------------
 # The four types round-trip
 # ---------------------------------------------------------------------------
@@ -521,6 +535,9 @@ def test_a_corner_marker_is_stored_where_it_was_placed(
     # The coordinates come back as the fractions they went in as. This is the
     # assertion the whole viewer exists to make true.
     assert marker["bbox"] == {"x": 0.01, "y": 0.02, "width": 0.06, "height": 0.05}
+    # The request has no representation field for a corner; the service wrote
+    # the only frame a corner can be in (#175).
+    assert marker["representation"] == "normalized"
 
 
 def test_an_edge_marker_takes_an_edge_label_a_corner_cannot(
@@ -567,6 +584,7 @@ def test_a_surface_marker_names_no_region_and_is_placed_by_its_box(
                     "label": "scratch",
                     "severity": "minor",
                     "confidence": 0.4,
+                    "representation": "normalized",
                     "bbox": {"x": 0.3, "y": 0.4, "width": 0.1, "height": 0.02},
                 }
             ]
@@ -586,6 +604,7 @@ def test_a_surface_marker_names_no_region_and_is_placed_by_its_box(
                     "label": "scratch",
                     "severity": "minor",
                     "confidence": 0.4,
+                    "representation": "normalized",
                 }
             ]
         },
@@ -737,6 +756,78 @@ def test_a_centering_measurement_needs_an_artifact_too(
         json={"centering": {"horizontal": 0.5, "vertical": 0.5, "confidence": 0.9}},
     )
     assert refused.status_code == 409
+
+
+def test_a_surface_marker_against_the_original_needs_no_artifact(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """#175, end to end: the row the artifact could not honestly hold.
+
+    ADR 0010 measured §16's fine classes below the artifact's sampling limit
+    and named the original photograph the one route back — and the original
+    always exists, so the gate has nothing to refuse.
+    """
+    image_id = an_image(storage, artifact=False)
+
+    created = client.post(annotations_url(image_id), json={"markers": [a_surface()]})
+    assert created.status_code == 201
+
+    (marker,) = client.get(f"{WORK_LIST}/{image_id}").json()["annotations"]
+    assert marker["representation"] == "original"
+    assert marker["bbox"] == {"x": 0.31, "y": 0.42, "width": 0.02, "height": 0.01}
+
+
+def test_a_surface_marker_declaring_normalized_still_needs_the_artifact(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """Declaring 'normalized' is a claim about the artifact, box or no box.
+
+    With a box the fractions would index into nothing; without one the claim
+    still names a frame that does not exist, and the client can always declare
+    'original' there instead — so neither strands the image.
+    """
+    image_id = an_image(storage, artifact=False)
+
+    boxed = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_surface(representation="normalized")]},
+    )
+    assert boxed.status_code == 409
+
+    boxless = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_surface(representation="normalized", bbox=None)]},
+    )
+    assert boxless.status_code == 409
+
+
+def test_a_surface_marker_without_a_declaration_is_refused(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """Required with no default — a frame nobody named is not 'normalized'."""
+    image_id = an_image(storage)
+    marker = a_surface()
+    del marker["representation"]
+
+    refused = client.post(annotations_url(image_id), json={"markers": [marker]})
+    assert refused.status_code == 422
+
+
+def test_a_corner_naming_a_representation_is_refused_not_dropped(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """A corner is always in the artifact's frame, and `extra="forbid"` says so.
+
+    Accepting and discarding the field would leave a client believing it had
+    marked the original photograph.
+    """
+    image_id = an_image(storage)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(representation="original")]},
+    )
+    assert refused.status_code == 422
 
 
 def test_a_marker_with_no_box_is_still_recordable_without_an_artifact(

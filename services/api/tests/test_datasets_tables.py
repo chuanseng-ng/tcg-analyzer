@@ -56,6 +56,8 @@ MIGRATION = VERSIONS / "20260828_add_the_dataset_and_provenance_schema.py"
 FINGERPRINTS_MIGRATION = VERSIONS / "20260829_add_the_training_image_fingerprints.py"
 #: #158's annotations landed in a third revision, read by the same search.
 ANNOTATION_MIGRATION = VERSIONS / "20260829_add_the_annotation_schema.py"
+#: #175's representation discriminator landed in a fourth, likewise.
+REPRESENTATION_MIGRATION = VERSIONS / "20260829_name_the_representation_an_annotation_marks.py"
 
 #: Spec §29's list, verbatim apart from `source_url/reference`, which the
 #: specification spells with a slash and no column may.
@@ -94,7 +96,12 @@ COMPOSED_CHECKS = (
 def migration_source() -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (MIGRATION, FINGERPRINTS_MIGRATION, ANNOTATION_MIGRATION)
+        for path in (
+            MIGRATION,
+            FINGERPRINTS_MIGRATION,
+            ANNOTATION_MIGRATION,
+            REPRESENTATION_MIGRATION,
+        )
     )
 
 
@@ -642,13 +649,15 @@ def test_the_ratios_are_numbers_and_not_labels() -> None:
         assert isinstance(column.type, sa.Double)
 
 
-def test_coordinates_are_fractions_of_the_artifact_and_name_no_resolution() -> None:
-    """The acceptance criterion: coordinates are in the normalized artifact's space.
+def test_coordinates_are_fractions_of_their_representation_and_name_no_resolution() -> None:
+    """Coordinates are fractions of the representation the row names (#175).
 
     Fractions rather than pixels of it, which is what keeps `tables.py` free of
     `ml/normalization` — importing that for the two dimensions would put OpenCV
     in the API image, which `test_import_purity.py` forbids. So the numbers 756
-    and 1056 must appear nowhere in this table's DDL.
+    and 1056 must appear nowhere in this table's DDL. The unit-square rule is
+    the same in either frame, which is why #175 changed neither this
+    constraint's text nor its pre-#175 name.
     """
     box = one_check(image_annotations, "bounding_box_lies_inside_the_artifact")
 
@@ -668,6 +677,59 @@ def test_a_partial_bounding_box_is_not_storable() -> None:
     assert one_check(image_annotations, "bounding_box_is_whole_or_absent") == (
         "num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)"
     )
+
+
+def test_every_annotation_names_the_representation_it_was_made_against() -> None:
+    """#175's acceptance criterion: named on the row, never a convention.
+
+    NOT NULL on every row, not only the ones with a box — a marker with no
+    coordinates still names the frame the annotator judged the label against,
+    and a 'scratch' call made off the 12 px/mm artifact is a weaker claim than
+    one made off the original photograph (ADR 0010). No server default, for
+    `confidence`'s reason: a representation nobody named must be refused rather
+    than read as 'normalized'.
+    """
+    column = image_annotations.c.representation
+
+    assert not column.nullable
+    assert column.server_default is None
+    assert one_check(image_annotations, "representation_is_a_known_representation") == (
+        "representation IN ('normalized', 'original')"
+    )
+
+
+def test_only_a_surface_annotation_may_mark_the_original_photograph() -> None:
+    """ADR 0010: #175 changes the coordinate space of *surface* annotations only.
+
+    Corners and edges were measured adequate against the artifact and stay
+    fractions of it, and a centering ratio is read off where the card's borders
+    sit in the artifact — so the measurement table gets no representation
+    column at all rather than one constrained to a single value.
+    """
+    assert one_check(image_annotations, "only_a_surface_marks_the_original") == (
+        "kind = 'surface' OR representation = 'normalized'"
+    )
+    assert "representation" not in centering_measurements.c
+
+
+def test_the_backfill_is_the_add_column_default_and_the_default_does_not_survive() -> None:
+    """Existing rows become 'normalized' without an UPDATE the trigger would refuse.
+
+    Every pre-#175 annotation was made against the artifact — a box required
+    one to exist — so the migration adds the column with a 'normalized' default
+    (ADD COLUMN rewrites the table without firing the BEFORE UPDATE trigger)
+    and then drops the default, restoring `confidence`'s no-silent-choice rule
+    for every row written afterwards.
+    """
+    source = REPRESENTATION_MIGRATION.read_text(encoding="utf-8")
+
+    assert 'server_default="normalized"' in source
+    assert "server_default=None" in source
+    assert "op.bulk_insert" not in source
+    # No raw SQL: an `op.execute` here would be either an UPDATE against the
+    # immutability trigger or a second spelling of DDL Alembic already has an
+    # operation for.
+    assert "op.execute" not in source
 
 
 def test_spatial_data_is_captured_although_nothing_reads_it() -> None:

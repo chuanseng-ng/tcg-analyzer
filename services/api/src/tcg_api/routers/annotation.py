@@ -54,6 +54,7 @@ from tcg_api.config import get_settings
 from tcg_api.database import get_session_factory
 from tcg_api.datasets.annotation import (
     ARTIFACT_MEDIA_TYPE,
+    NORMALIZED,
     BoundingBox,
     CenteringReading,
     DatasetStoreUnavailable,
@@ -107,9 +108,11 @@ _IMAGES_UNREACHABLE: Final = "The image store could not be reached."
 _MISSING_OBJECT: Final = "The stored image could not be read."
 _NO_SUCH_IMAGE: Final = "No such training image."
 _NO_ARTIFACT: Final = (
-    "No standardized artifact has been stored for this image, so a bounding box or a "
-    "centering measurement would be a fraction of something that does not exist. "
-    "Record markers without coordinates, or normalize the image first."
+    "No standardized artifact has been stored for this image, so a centering "
+    "measurement, a corner or edge bounding box, or a surface annotation declaring "
+    "'normalized' would be a claim about something that does not exist. Record markers "
+    "without coordinates, declare surface work against the original photograph, or "
+    "normalize the image first."
 )
 
 #: The bytes are an internal tool's, and an artifact is small enough that a
@@ -219,11 +222,13 @@ class AnnotationImageResponse(BaseModel):
 
 
 class BoundingBoxModel(BaseModel):
-    """Spec §17's bounding box, as fractions of the normalized artifact.
+    """Spec §17's bounding box, as fractions of the representation its marker names.
 
     **Fractions, never pixels.** The artifact's resolution is `ml/normalization`'s
     and appears nowhere in this service — a fraction survives a change to it, and
-    a pixel would not.
+    a pixel would not. For a corner or edge the frame is always the artifact; a
+    surface marker declares its own (#175, ADR 0010), and the unit-square rule
+    below is the same in either.
 
     One object rather than four fields, because the schema's rule is
     `num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)`: a box is whole
@@ -238,9 +243,9 @@ class BoundingBoxModel(BaseModel):
     height: float = Field(gt=0, le=1, description="Height, and positive.", examples=[0.08])
 
     @model_validator(mode="after")
-    def _lies_inside_the_artifact(self) -> BoundingBoxModel:
+    def _lies_inside_the_frame(self) -> BoundingBoxModel:
         if self.x + self.width > 1 or self.y + self.height > 1:
-            raise ValueError("must lie inside the artifact: x + width and y + height are at most 1")
+            raise ValueError("must lie inside the frame: x + width and y + height are at most 1")
         return self
 
 
@@ -308,6 +313,24 @@ class _MarkerRequest(BaseModel):
     def region_value(self) -> str | None:
         """Where on the card, or None for a surface, whose position is its box."""
         return None
+
+    def representation_value(self) -> str:
+        """Which frame the coordinates are fractions of.
+
+        Always the artifact for a corner or an edge — ADR 0010 measured both
+        adequate against it, and #175 changes the coordinate space of surface
+        annotations only. A surface marker overrides this with its declaration.
+        """
+        return NORMALIZED
+
+    def requires_artifact(self) -> bool:
+        """Whether this marker is a claim about the standardized artifact.
+
+        A corner or edge marker makes one exactly when it carries a box — its
+        region already names its position. A surface marker overrides this: its
+        representation is the claim, box or not.
+        """
+        return self.bbox is not None
 
     @model_validator(mode="after")
     def _a_defect_carries_a_severity(self) -> _MarkerRequest:
@@ -389,9 +412,31 @@ class SurfaceMarkerRequest(_MarkerRequest):
         description="Spec §30's surface defect annotation.", examples=["surface"]
     )
     label: SurfaceLabel = Field(description="§16's twelve potential classes.", examples=["scratch"])
+    representation: Literal["normalized", "original"] = Field(
+        description=(
+            "Which frame the coordinates are fractions of — 'normalized' (the "
+            "standardized artifact) or 'original' (the photograph as ingested). "
+            "ADR 0010 measured that the artifact cannot resolve §16's fine defect "
+            "classes, so #175 lets a surface annotation — and only a surface — mark "
+            "the original photograph. **Required, with no default**, for the reason "
+            "`confidence` gives: a frame nobody named must be refused rather than "
+            "read as a choice. Corners and edges carry no such field; theirs is "
+            "always the artifact."
+        ),
+        examples=["original"],
+    )
 
     def label_value(self) -> str:
         return self.label.value
+
+    def representation_value(self) -> str:
+        return self.representation
+
+    def requires_artifact(self) -> bool:
+        """Declaring 'normalized' is a claim about the artifact even without a
+        box; declaring 'original' never needs one — the photograph always
+        exists."""
+        return self.representation == NORMALIZED
 
 
 #: The three, discriminated on `kind`. A tagged union rather than a base model
@@ -504,14 +549,18 @@ class AnnotationRequest(BaseModel):
             )
         return self
 
-    def carries_coordinates(self) -> bool:
-        """Whether anything here is a fraction of an artifact.
+    def requires_artifact(self) -> bool:
+        """Whether anything here is a claim about the standardized artifact.
 
         A centering ratio is read off where the card's borders sit in the artifact,
-        so it is as much a coordinate as a bounding box is. A marker with no box is
-        not: its region names its position.
+        so it is as much a coordinate as a bounding box is. A corner or edge marker
+        with no box is not: its region names its position. A surface marker is
+        whatever its representation declares — one naming 'original' never needs
+        the artifact, because the photograph always exists (#175).
         """
-        return self.centering is not None or any(marker.bbox is not None for marker in self.markers)
+        return self.centering is not None or any(
+            marker.requires_artifact() for marker in self.markers
+        )
 
 
 class StoredMarkerResponse(BaseModel):
@@ -529,6 +578,12 @@ class StoredMarkerResponse(BaseModel):
     severity: str | None = Field(default=None, description="How bad, null where nothing was rated.")
     confidence: float = Field(description="How sure the annotator was.")
     bbox: BoundingBoxModel | None = Field(default=None, description="§17's spatial data.")
+    representation: str = Field(
+        description=(
+            "Which frame the coordinates are fractions of — 'normalized' or "
+            "'original'. Always 'normalized' for a corner or an edge (#175)."
+        )
+    )
     annotator_id: str = Field(
         description="Who recorded it — supplied by the service, never by a client."
     )
@@ -607,6 +662,7 @@ def _stored_marker(marker: StoredMarker) -> StoredMarkerResponse:
             width=marker.bbox.width,
             height=marker.bbox.height,
         ),
+        representation=marker.representation,
         annotator_id=marker.annotator_id,
         created_at=marker.created_at,
     )
@@ -654,6 +710,7 @@ def _marker_of(
             width=marker.bbox.width,
             height=marker.bbox.height,
         ),
+        representation=marker.representation_value(),
     )
 
 
@@ -886,11 +943,14 @@ async def read_training_image_bytes(
         "annotator comes from `TCG_API_ANNOTATOR_ID` and the timestamp from the row's "
         "default. That is also what keeps `annotator_id`'s grammar — which spec §53 makes "
         "structural, by having no `@` in it — out of a client's reach.\n\n"
-        "**Coordinates need an artifact.** A bounding box and a centering ratio are both "
-        "fractions of the standardized artifact; against a photograph no card was located "
-        "in, they mean nothing. Sending either for an image whose `has_artifact` is false "
-        "is a 409. A marker with no box is still accepted there, because a corner's region "
-        "names its position.\n\n"
+        "**Claims about the artifact need the artifact.** A centering ratio, a corner or "
+        "edge bounding box, and a surface annotation declaring 'normalized' are all "
+        "claims about the standardized artifact; against a photograph no card was "
+        "located in, they mean nothing, and sending one for an image whose "
+        "`has_artifact` is false is a 409. A corner or edge marker with no box is still "
+        "accepted there — its region names its position — and so is any surface marker "
+        "declaring 'original': the photograph always exists, and ADR 0010 makes it the "
+        "one frame that resolves §16's fine defect classes (#175).\n\n"
         "Recording anything takes the image off `GET /internal/annotation/images`."
     ),
     responses={
@@ -902,9 +962,10 @@ async def read_training_image_bytes(
         },
         status.HTTP_409_CONFLICT: {
             "description": (
-                "The image has no stored artifact, and the annotation carries coordinates "
-                "that would be fractions of one. Also a bare body — §66 has no code for a "
-                "conflict, and a ninth is not invented for this."
+                "The image has no stored artifact, and the annotation makes a claim "
+                "about one — coordinates, or a surface declaration of 'normalized'. "
+                "Also a bare body — §66 has no code for a conflict, and a ninth is not "
+                "invented for this."
             )
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
@@ -937,9 +998,10 @@ async def record_image_annotations(
 
     # One read answers both gates. Refusing the whole request where there is no
     # artifact would strand such an image at the head of the work list for ever;
-    # refusing only the coordinates leaves `top_left: clean` recordable, which is
-    # a true thing to say about a photograph.
-    if not image.has_artifact and body.carries_coordinates():
+    # refusing only the artifact claims leaves `top_left: clean` recordable — a
+    # true thing to say about a photograph — and, since #175, every surface
+    # marker declared against the original photograph.
+    if not image.has_artifact and body.requires_artifact():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_NO_ARTIFACT)
 
     try:

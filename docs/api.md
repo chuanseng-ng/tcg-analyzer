@@ -179,15 +179,22 @@ The three marker kinds are three request shapes discriminated on `kind`, so
 §14's, §15's and §16's label lists reach the OpenAPI document — and therefore
 `apps/annotation` — as three separate vocabularies. An edge can be `rough_cut`
 and a corner cannot; a surface names no region at all, because §16 names no
-positions and a surface defect's position is its bounding box.
+positions and a surface defect's position is its bounding box. Only the surface
+shape carries `representation` — which frame its coordinates are fractions of,
+`normalized` or `original` — required with no default; a corner or edge naming
+one is refused, since theirs is always the artifact (#175, ADR 0010).
 
-**Coordinates need an artifact.** A bounding box and a centering ratio are both
-fractions of the standardized artifact, so against a photograph no card was
-located in they mean nothing: sending either for an image whose `has_artifact` is
-false is a **409**. A marker with no box is still accepted there, because a
-corner's region names its position — refusing the whole request would strand such
-an image at the head of the work list for ever. An annotation recording nothing at
-all is a 422, since it would take the image off the work list having said nothing.
+**Claims about the artifact need the artifact.** A centering ratio, a corner or
+edge bounding box, and a surface annotation declaring `normalized` are all
+claims about the standardized artifact, so against a photograph no card was
+located in they mean nothing: sending one for an image whose `has_artifact` is
+false is a **409**. A corner or edge marker with no box is still accepted there,
+because its region names its position — refusing the whole request would strand
+such an image at the head of the work list for ever — and so is any surface
+marker declaring `original`: the photograph always exists, and ADR 0010 makes it
+the one frame that resolves §16's fine defect classes (#175). An annotation
+recording nothing at all is a 422, since it would take the image off the work
+list having said nothing.
 
 `GET /internal/annotation/images/{id}` reports every annotation and measurement
 already recorded, oldest first and **not collapsed to a current reading**: a

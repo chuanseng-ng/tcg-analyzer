@@ -5,14 +5,15 @@ import { useMemo, useState } from "react";
 import {
   boxFrom,
   CANNOT_TELL_CONFIDENCE,
-  carriesCoordinates,
   centeringFrom,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
   CORNER_REGIONS,
   EDGE_LABELS,
   EDGE_REGIONS,
+  markerRepresentation,
   readable,
+  requiresArtifact,
   requiresSeverity,
   SEVERITIES,
   SURFACE_LABELS,
@@ -27,7 +28,7 @@ import {
   type MarkerRequest,
   type SurfaceLabel,
 } from "@/lib/annotations";
-import type { StoredMarker } from "@/lib/api";
+import type { Representation, StoredMarker } from "@/lib/api";
 import { fractionAt, transformOf, type Size, type View } from "@/lib/viewport";
 
 import styles from "./page.module.css";
@@ -70,13 +71,24 @@ export function Overlay({
   drafts,
   stored,
   pending,
+  shown,
 }: {
   view: View;
   image: Size;
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   pending: BoundingBox | null;
+  shown: Representation;
 }) {
+  /*
+   * Only the rects whose frame is on screen. The two frames relate by a
+   * projective warp, so a fraction of one means nothing on the other — a box is
+   * filtered out rather than ever projected across (#175). The filter reads the
+   * *displayed-representation state*, not what has finished loading, so a
+   * wrong-frame rect never renders during the swap.
+   */
+  const storedShown = stored.filter((marker) => marker.representation === shown);
+  const draftsShown = drafts.filter((draft) => markerRepresentation(draft.marker) === shown);
   return (
     <svg
       className={styles.overlay}
@@ -87,7 +99,7 @@ export function Overlay({
       style={{ transform: transformOf(view) }}
       aria-hidden="true"
     >
-      {stored.map((marker) =>
+      {storedShown.map((marker) =>
         marker.bbox ? (
           <rect
             key={marker.id}
@@ -102,7 +114,7 @@ export function Overlay({
           </rect>
         ) : null,
       )}
-      {drafts.map((draft) =>
+      {draftsShown.map((draft) =>
         draft.marker.bbox ? (
           <rect
             key={draft.id}
@@ -224,7 +236,12 @@ function labelsFor(tool: Tool): readonly string[] {
   return SURFACE_LABELS;
 }
 
-function markerFrom(tool: Tool, form: MarkerFormState, bbox: BoundingBox | null): MarkerRequest {
+function markerFrom(
+  tool: Tool,
+  form: MarkerFormState,
+  bbox: BoundingBox | null,
+  representation: Representation,
+): MarkerRequest {
   const shared = {
     severity: form.severity,
     confidence: form.confidence ?? 0,
@@ -242,7 +259,10 @@ function markerFrom(tool: Tool, form: MarkerFormState, bbox: BoundingBox | null)
   if (tool === "edge") {
     return { kind: "edge", region: form.edgeRegion, label: form.label as EdgeLabel, ...shared };
   }
-  return { kind: "surface", label: form.label as SurfaceLabel, ...shared };
+  // Only the surface names a frame: the marker is stamped with whichever
+  // representation was on screen when it was added (#175), and the service
+  // writes 'normalized' for the other two kinds itself.
+  return { kind: "surface", label: form.label as SurfaceLabel, representation, ...shared };
 }
 
 /**
@@ -257,11 +277,13 @@ function markerFrom(tool: Tool, form: MarkerFormState, bbox: BoundingBox | null)
 export function MarkerControls({
   tool,
   pending,
+  representation,
   onClearPending,
   onAdd,
 }: {
   tool: Exclude<Tool, "pan" | "centering">;
   pending: BoundingBox | null;
+  representation: Representation;
   onClearPending: () => void;
   onAdd: (marker: MarkerRequest) => void;
 }) {
@@ -286,7 +308,7 @@ export function MarkerControls({
       onSubmit={(event) => {
         event.preventDefault();
         if (!complete) return;
-        onAdd(markerFrom(tool, form, pending));
+        onAdd(markerFrom(tool, form, pending, representation));
         reset();
       }}
     >
@@ -644,10 +666,11 @@ export function SaveBar({
   onSave: () => void;
 }) {
   const count = drafts.length + (centering === null ? 0 : 1);
-  // The service refuses coordinates for an image no card was located in. Asking
+  // The service refuses claims about an artifact that does not exist. Asking
   // the same question here means the annotator finds out while they can still
-  // change it, rather than from a 409 after twenty minutes.
-  const refusable = !hasArtifact && carriesCoordinates(drafts, centering);
+  // change it, rather than from a 409 after twenty minutes. Surface work
+  // declared against the original photograph passes — the photograph exists.
+  const refusable = !hasArtifact && requiresArtifact(drafts, centering);
 
   return (
     <div className={styles.saveBar}>
@@ -661,8 +684,9 @@ export function SaveBar({
       </button>
       {refusable ? (
         <p className={styles.warning} role="alert">
-          This image has no artifact, so coordinates cannot be stored against it. Remove the boxes
-          and the centering measurement, or normalize the image first.
+          This image has no artifact, so nothing staged against one can be stored. Remove the corner
+          and edge boxes and the centering measurement — surface marks against the original
+          photograph are fine — or normalize the image first.
         </p>
       ) : null}
       {count > 0 ? <p className={styles.hint}>Nothing is written until you save.</p> : null}

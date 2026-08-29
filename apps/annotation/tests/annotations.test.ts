@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   boxFrom,
-  carriesCoordinates,
   centeringFrom,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
   EDGE_LABELS,
   hasWork,
+  markerRepresentation,
+  requiresArtifact,
   requiresSeverity,
   requestBodyFrom,
   SURFACE_LABELS,
@@ -176,15 +177,47 @@ describe("what one save sends", () => {
     );
   });
 
-  it("knows whether anything staged needs an artifact to be a fraction of", () => {
+  const surface = (
+    representation: "normalized" | "original",
+    bbox: MarkerDraft["marker"]["bbox"],
+  ): MarkerDraft => ({
+    id: "draft-2",
+    marker: {
+      kind: "surface",
+      label: "scratch",
+      severity: "minor",
+      confidence: 0.6,
+      representation,
+      bbox,
+    },
+  });
+
+  const box = { x: 0.1, y: 0.1, width: 0.1, height: 0.1 };
+
+  it("knows whether anything staged is a claim about the artifact", () => {
     // The service answers 409 for exactly this, so the screen asks the same
     // question while the annotator can still change it.
-    expect(carriesCoordinates([draft(null)], null)).toBe(false);
-    expect(carriesCoordinates([draft({ x: 0.1, y: 0.1, width: 0.1, height: 0.1 })], null)).toBe(
-      true,
-    );
+    expect(requiresArtifact([draft(null)], null)).toBe(false);
+    expect(requiresArtifact([draft(box)], null)).toBe(true);
     expect(
-      carriesCoordinates([], { horizontal: 0.5, vertical: null, confidence: 0.9, notes: null }),
+      requiresArtifact([], { horizontal: 0.5, vertical: null, confidence: 0.9, notes: null }),
     ).toBe(true);
+  });
+
+  it("lets surface work declared against the original photograph pass the gate", () => {
+    // #175: the photograph always exists, so a surface box against it needs no
+    // artifact — and a surface declaring "normalized" makes the claim even
+    // without a box, exactly as the service reads it.
+    expect(requiresArtifact([surface("original", box)], null)).toBe(false);
+    expect(requiresArtifact([surface("normalized", box)], null)).toBe(true);
+    expect(requiresArtifact([surface("normalized", null)], null)).toBe(true);
+  });
+
+  it("names the frame each staged marker belongs to", () => {
+    // The overlay filters rects by this: the two frames relate by a projective
+    // warp, so a fraction of one is never drawn over the other.
+    expect(markerRepresentation(draft(box).marker)).toBe("normalized");
+    expect(markerRepresentation(surface("original", box).marker)).toBe("original");
+    expect(markerRepresentation(surface("normalized", box).marker)).toBe("normalized");
   });
 });

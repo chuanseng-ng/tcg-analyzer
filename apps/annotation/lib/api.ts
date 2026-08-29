@@ -234,6 +234,7 @@ function isStoredMarker(payload: unknown): payload is StoredMarker {
     typeof payload.id === "string" &&
     typeof payload.kind === "string" &&
     typeof payload.label === "string" &&
+    typeof payload.representation === "string" &&
     typeof payload.confidence === "number" &&
     typeof payload.annotator_id === "string" &&
     typeof payload.created_at === "string"

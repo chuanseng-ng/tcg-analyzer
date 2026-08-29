@@ -656,6 +656,7 @@ LEGAL_ANNOTATION: dict[str, Any] = {
     "label": "whitening",
     "severity": "minor",
     "confidence": 0.8,
+    "representation": "normalized",
     "annotator_id": "annotator-1",
 }
 
@@ -773,6 +774,48 @@ def test_an_edge_region_on_a_corner_is_refused() -> None:
     """`top` is an edge and `top_left` is a corner; the two sets do not overlap."""
     with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
         insert_annotation(region="top")
+
+
+def test_a_surface_annotation_may_name_the_original_photograph() -> None:
+    """#175, and ADR 0010's one route back to a fine-class signal.
+
+    A `scratch` with a box in the original photograph's frame is exactly the row
+    the artifact could not honestly hold, and it round-trips.
+    """
+    insert_annotation(
+        kind="surface",
+        region=None,
+        label="scratch",
+        severity="minor",
+        representation="original",
+        bbox_x=0.4,
+        bbox_y=0.5,
+        bbox_width=0.01,
+        bbox_height=0.02,
+    )
+
+    (row,) = fetch(sa.select(image_annotations))
+
+    assert row.representation == "original"
+
+
+def test_a_corner_annotation_naming_the_original_is_refused() -> None:
+    """ADR 0010: #175 changes the coordinate space of *surface* annotations only."""
+    with pytest.raises(IntegrityError, match="only_a_surface_marks_the_original"):
+        insert_annotation(representation="original")
+
+
+def test_a_representation_outside_the_two_frames_is_refused() -> None:
+    # On a surface row, so the membership CHECK is the one that fires —
+    # 'photograph' on a corner would trip the only-a-surface rule first.
+    with pytest.raises(IntegrityError, match="representation_is_a_known_representation"):
+        insert_annotation(kind="surface", region=None, label="scratch", representation="photograph")
+
+
+def test_a_representation_nobody_named_is_refused() -> None:
+    """No server default, so silence is a refusal rather than 'normalized'."""
+    with pytest.raises(IntegrityError, match="representation"):
+        insert_annotation(representation=None)
 
 
 def test_a_confidence_outside_the_unit_interval_is_refused() -> None:

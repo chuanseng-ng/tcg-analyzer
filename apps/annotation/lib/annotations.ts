@@ -13,6 +13,7 @@
  */
 
 import type { components } from "./api-types";
+import type { Representation } from "./api";
 import type { Fraction } from "./viewport";
 
 export type CornerRegion = components["schemas"]["CornerRegion"];
@@ -227,17 +228,37 @@ export function hasWork(markers: readonly MarkerDraft[], centering: CenteringReq
 }
 
 /**
- * Whether anything staged is a fraction of the artifact.
+ * Which frame a staged marker's coordinates are fractions of.
  *
- * The service refuses coordinates for an image no card was located in, so the
- * tool asks the same question before offering to save one — the annotator finds
- * out while they can still change it rather than from a 409.
+ * A corner or edge is always in the artifact's frame — ADR 0010 measured both
+ * adequate against it, and #175 changes the coordinate space of surface
+ * annotations only, which is why only the surface request carries the field.
  */
-export function carriesCoordinates(
+export function markerRepresentation(marker: MarkerRequest): Representation {
+  return marker.kind === "surface" ? marker.representation : "normalized";
+}
+
+/**
+ * Whether anything staged is a claim about the standardized artifact.
+ *
+ * The mirror of the service's gate, exactly: a centering ratio, a corner or
+ * edge box, and a surface marker declaring `normalized` (box or not) all need
+ * the artifact; a surface marker declaring `original` never does, because the
+ * photograph always exists (#175). Asked here so the annotator finds out while
+ * they can still change it rather than from a 409.
+ */
+export function requiresArtifact(
   markers: readonly MarkerDraft[],
   centering: CenteringRequest | null,
 ): boolean {
-  return centering !== null || markers.some((draft) => draft.marker.bbox != null);
+  return (
+    centering !== null ||
+    markers.some((draft) =>
+      draft.marker.kind === "surface"
+        ? draft.marker.representation === "normalized"
+        : draft.marker.bbox != null,
+    )
+  );
 }
 
 /** Prose for a vocabulary member. The slugs are the service's; the words are ours. */

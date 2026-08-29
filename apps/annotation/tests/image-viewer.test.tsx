@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImageViewer } from "@/app/images/[imageId]/ImageViewer";
@@ -123,23 +123,141 @@ describe("which representation is on screen", () => {
     );
   });
 
-  it("labels a photograph as one, and says coordinates cannot be taken against it", async () => {
+  it("labels a photograph as one, and says only surface marks are taken against it", async () => {
     // The whole reason the server answers `has_artifact` rather than letting the
     // client guess: an annotator must never mistake a raw photograph for the
-    // space the next issue records coordinates in.
+    // space artifact coordinates live in — and since #175 the photograph is a
+    // frame of its own, for surface work only.
     readTrainingImageMock.mockResolvedValue(image({ has_artifact: false }));
 
     render(<ImageViewer imageId={summary().id} />);
 
     expect(
       await screen.findByText(
-        /Original photograph — no card was located, so coordinates cannot be taken against it\./,
+        /Original photograph — no card was located, so only surface marks are taken against this frame\./,
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("img")).toHaveAttribute(
       "src",
       expect.stringContaining("representation=original"),
     );
+  });
+
+  it("offers the original photograph only where an artifact exists to come back to", async () => {
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: true }));
+    render(<ImageViewer imageId={summary().id} />);
+    expect(
+      await screen.findByRole("button", { name: "View the original photograph" }),
+    ).toBeInTheDocument();
+
+    cleanup();
+
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: false }));
+    render(<ImageViewer imageId={summary().id} />);
+    await screen.findByRole("img");
+    expect(screen.queryByRole("button", { name: /View the original photograph/ })).toBeNull();
+  });
+
+  it("toggles to the original photograph and back, and the frame follows", async () => {
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: true }));
+    render(<ImageViewer imageId={summary().id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "View the original photograph" }));
+
+    expect(
+      screen.getByText(
+        /Original photograph — only surface defects are marked against this frame\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("representation=original"),
+    );
+    expect(screen.getByAltText("front of the card — original photograph")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "View the normalized artifact" }));
+
+    expect(
+      screen.getByText(/Normalized artifact — coordinates are fractions of this frame\./),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("representation=normalized"),
+    );
+  });
+
+  it("arms only pan and surface against the original of an artifact-bearing image", async () => {
+    // A corner or edge box taken against the photograph would be stored as a
+    // fraction of the artifact, and a centering ratio derived there would be
+    // wrong — so the tools that make artifact claims disarm, and come back with
+    // the artifact.
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: true }));
+    render(<ImageViewer imageId={summary().id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Corner" }));
+    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "View the original photograph" }));
+
+    // The armed tool fell back to pan, and the artifact-only tools refuse.
+    expect(screen.getByRole("button", { name: "Pan" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Corner" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edge" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Centering" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Surface" })).toBeEnabled();
+  });
+
+  it("keeps staged drafts across the toggle — it is the same image", async () => {
+    readTrainingImageMock.mockResolvedValue(image({ has_artifact: true }));
+    render(<ImageViewer imageId={summary().id} />);
+    await screen.findByRole("img");
+
+    fireEvent.click(screen.getByRole("button", { name: "Corner" }));
+    fireEvent.change(screen.getByLabelText("What is there"), { target: { value: "clean" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add corner/ }));
+    expect(screen.getByRole("button", { name: /^Save 1/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "View the original photograph" }));
+
+    expect(screen.getByRole("button", { name: /^Save 1/ })).toBeInTheDocument();
+  });
+
+  it("shows a stored box only over the frame it is a fraction of", async () => {
+    // The two frames relate by a projective warp, so a fraction of one means
+    // nothing on the other: the overlay filters, and never projects.
+    readTrainingImageMock.mockResolvedValue(
+      image({
+        has_artifact: true,
+        annotations: [
+          {
+            id: "s1",
+            kind: "surface",
+            region: null,
+            label: "scratch",
+            severity: "minor",
+            confidence: 0.9,
+            bbox: { x: 0.4, y: 0.5, width: 0.02, height: 0.01 },
+            representation: "original",
+            annotator_id: "annotator",
+            created_at: "2026-08-29T10:00:00Z",
+          },
+        ],
+      }),
+    );
+    render(<ImageViewer imageId={summary().id} />);
+    const element = await screen.findByRole("img");
+    Object.defineProperty(element, "naturalWidth", { value: 756, configurable: true });
+    Object.defineProperty(element, "naturalHeight", { value: 1056, configurable: true });
+    fireEvent.load(element);
+
+    // On the artifact, the original-photograph box is filtered out…
+    expect(screen.queryByText("surface — scratch (saved)")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "View the original photograph" }));
+
+    // …and over the photograph it is drawn.
+    expect(screen.getByText("surface — scratch (saved)")).toBeInTheDocument();
   });
 
   it("names the representation in the alt text too", async () => {
@@ -200,6 +318,25 @@ describe("the keyboard", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("back");
     });
+  });
+
+  it("toggles the representation with `o`, and the artifact-only keys refuse there", async () => {
+    const { frame } = await loaded();
+
+    fireEvent.keyDown(frame, { key: "o" });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Original photograph — only surface defects are marked/),
+      ).toBeInTheDocument();
+    });
+
+    // `c` arms nothing here — the corner tool is an artifact claim.
+    fireEvent.keyDown(frame, { key: "c" });
+    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute("aria-pressed", "false");
+
+    // `s` still arms the surface tool: the photograph is its frame now.
+    fireEvent.keyDown(frame, { key: "s" });
+    expect(screen.getByRole("button", { name: "Surface" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("pans with the arrows rather than navigating", async () => {
