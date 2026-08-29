@@ -187,7 +187,20 @@ function isImageSummary(
     typeof payload.side === "string" &&
     typeof payload.source === "string" &&
     typeof payload.created_at === "string" &&
-    typeof payload.has_artifact === "boolean"
+    typeof payload.has_artifact === "boolean" &&
+    isCardFrame(payload.card_frame)
+  );
+}
+
+/** Null exactly when there is no artifact; otherwise four fractions (#194). */
+function isCardFrame(payload: unknown): boolean {
+  if (payload === null || payload === undefined) return true;
+  return (
+    isRecord(payload) &&
+    typeof payload.x === "number" &&
+    typeof payload.y === "number" &&
+    typeof payload.width === "number" &&
+    typeof payload.height === "number"
   );
 }
 

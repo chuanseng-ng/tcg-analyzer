@@ -490,6 +490,8 @@ export interface components {
              * @description Every marker recorded against this image, oldest first. **Not collapsed to a current reading**: both annotation tables are append-only, so a correction is a newer row, and a surface has as many defects as it has. The work list excludes an annotated image, so this endpoint is the only way one is ever seen again.
              */
             annotations: components["schemas"]["StoredMarkerResponse"][];
+            /** @description Where the card sits inside the artifact — null exactly when `has_artifact` is false. The client must measure centering against this rectangle and never assume the artifact's edges are the card's (#194). */
+            card_frame?: components["schemas"]["CardFrameModel"] | null;
             /**
              * Card Id
              * @description Which catalog card it depicts.
@@ -554,6 +556,8 @@ export interface components {
          * @description One training image, as the work list and an image's siblings report it.
          */
         AnnotationImageSummary: {
+            /** @description Where the card sits inside the artifact — null exactly when `has_artifact` is false. On the summary and not only the detail, because the side toggle shows a sibling without navigating and one Save writes the image on screen: a centering reading taken there is measured against this rectangle, never against the artifact's edges (#194). */
+            card_frame?: components["schemas"]["CardFrameModel"] | null;
             /**
              * Card Id
              * @description Which catalog card it depicts, or null where nobody has identified it.
@@ -748,6 +752,39 @@ export interface components {
              * @example manual
              */
             provider: string;
+        };
+        /**
+         * CardFrameModel
+         * @description Where the card sits inside the artifact, as fractions of the artifact.
+         *
+         *     #194 surrounds the card with a margin of the photograph it was cut from, so
+         *     the card's edges are an inner rectangle. The frame is derived from the
+         *     artifact's own stored normalization record, so it is correct for whatever
+         *     version produced that artifact — a pre-margin artifact honestly reports the
+         *     whole unit square. Centering is measured against **this** rectangle, never
+         *     against the artifact's edges.
+         */
+        CardFrameModel: {
+            /**
+             * Height
+             * @description The card's height, as a fraction of the artifact's height.
+             */
+            height: number;
+            /**
+             * Width
+             * @description The card's width, as a fraction of the artifact's width.
+             */
+            width: number;
+            /**
+             * X
+             * @description The card's left edge, as a fraction of the artifact's width.
+             */
+            x: number;
+            /**
+             * Y
+             * @description The card's top edge, as a fraction of the artifact's height.
+             */
+            y: number;
         };
         /**
          * CardMarketResponse

@@ -115,7 +115,10 @@ direction can be relaxed on its own: `chipping` with no severity is as refused a
 
 ### Coordinates are fractions of the representation the row names
 
-`ml/normalization` (#38) warps every image to one 756×1056 artifact. An
+`ml/normalization` (#38) warps every image to one standardized artifact — the
+card at 12 px/mm inside a fixed background margin since #194, the bare card
+before it; the card's own rectangle is derived per artifact from its stored
+`normalization_details` and served as `card_frame`, never assumed. An
 annotation stored against **those** coordinates survives a retake and compares
 across cards; one stored against raw-photograph pixels becomes unusable the
 moment the framing changes. That was the whole rule until ADR 0010 measured its

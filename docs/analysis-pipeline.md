@@ -62,9 +62,12 @@ Three things about it are deliberate and easy to undo by accident:
 
 `ml/normalization` warps the detected quadrilateral into the standardized
 artifact every later stage reads — spec §18, and M2's acceptance criterion. It
-is a **756 x 1056 PNG**: 12 pixels per millimetre of a 63 x 88 mm card, so the
-output is exactly a real card's proportions with no rounding and a centering
-ratio measured on it means what it says. The transform that produced it is
+is an **804 x 1104 PNG**: the card at 12 pixels per millimetre of a
+63 x 88 mm card — an inner 756 x 1056 rectangle, exactly a real card's
+proportions with no rounding — inside a 2 mm margin of the photograph around
+it (#194), so an edge can be judged against the background it was shot on. A
+centering ratio is measured against the card's inner rectangle, whose place
+the annotation service reports beside each image. The transform that produced it is
 persisted alongside, because spec §51's post-V1 defect visualisation draws boxes
 on the *original* photograph and that mapping is not recoverable afterwards.
 

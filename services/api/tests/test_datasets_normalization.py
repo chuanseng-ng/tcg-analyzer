@@ -97,7 +97,8 @@ def test_a_photograph_of_a_card_yields_an_artifact() -> None:
     straightened = artifact(png(photograph()))
 
     assert straightened is not None
-    assert (straightened.width, straightened.height) == (756, 1056)
+    # The card at 12 px/mm inside #194's 2 mm margin: 756+48 x 1056+48.
+    assert (straightened.width, straightened.height) == (804, 1104)
     assert straightened.data.startswith(b"\x89PNG")
 
 
@@ -267,8 +268,8 @@ def test_the_pass_stores_an_artifact_and_records_how_it_was_made(
 
     row = stored_row(image_id)
     assert row.normalized_uri.startswith(f"{ARTIFACT_NAMESPACE}/")
-    assert row.normalization_details["width"] == 756
-    assert row.normalization_details["height"] == 1056
+    assert row.normalization_details["width"] == 804
+    assert row.normalization_details["height"] == 1104
 
     from tcg_ml_normalization import NORMALIZATION_VERSION
 

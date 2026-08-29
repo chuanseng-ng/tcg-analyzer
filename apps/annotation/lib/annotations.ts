@@ -167,14 +167,35 @@ export interface MeasuredAxes {
 }
 
 /**
+ * Where the card sits inside its artifact, as fractions of the artifact.
+ *
+ * The service derives this from the artifact's own stored normalization record
+ * (#194 put a margin of photograph around the card), so it is right for
+ * whatever version produced the artifact. `WHOLE_ARTIFACT` is the pre-margin
+ * frame — an artifact whose card really does reach the edges.
+ */
+export interface CardFrame {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export const WHOLE_ARTIFACT: CardFrame = { x: 0, y: 0, width: 1, height: 1 };
+
+/**
  * Spec §21's two ratios, from where the annotator put the inner frame.
  *
- * **The artifact's edges are the card's edges** — `ml/normalization` warps the
- * detected quadrilateral onto the whole target with no inset, precisely so that
- * corner and edge analysis sees the real edge — so the left border is the box's
- * `x`, the right border is `1 - (x + width)`, and their sum is `1 - width`:
+ * **The borders are measured against the card's own rectangle**, which since
+ * #194 is an inner frame the service reports beside the image — the artifact
+ * holds a margin of photograph around the card, and a border measured from the
+ * artifact's edge would count that margin as border. So the left border is
+ * `box.x - card.x`, the right is `card.x + card.width - (box.x + box.width)`:
  *
- *     horizontal = left / (left + right) = x / (1 - width)
+ *     horizontal = left / (left + right)
+ *
+ * A box edge that strays into the margin clamps its border to zero — the card
+ * has no border outside itself.
  *
  * `0.5` is perfect centering, which is the direction
  * `centering_measurements.horizontal` is documented in. The annotator marks
@@ -191,17 +212,20 @@ export interface MeasuredAxes {
 export function centeringFrom(
   box: BoundingBox,
   axes: MeasuredAxes,
+  card: CardFrame = WHOLE_ARTIFACT,
 ): { horizontal: number | null; vertical: number | null } | null {
   if (!axes.horizontal && !axes.vertical) return null;
 
-  const horizontalBorders = 1 - box.width;
-  const verticalBorders = 1 - box.height;
-  if (axes.horizontal && horizontalBorders <= 0) return null;
-  if (axes.vertical && verticalBorders <= 0) return null;
+  const left = Math.max(0, box.x - card.x);
+  const right = Math.max(0, card.x + card.width - (box.x + box.width));
+  const top = Math.max(0, box.y - card.y);
+  const bottom = Math.max(0, card.y + card.height - (box.y + box.height));
+  if (axes.horizontal && left + right <= 0) return null;
+  if (axes.vertical && top + bottom <= 0) return null;
 
   return {
-    horizontal: axes.horizontal ? box.x / horizontalBorders : null,
-    vertical: axes.vertical ? box.y / verticalBorders : null,
+    horizontal: axes.horizontal ? left / (left + right) : null,
+    vertical: axes.vertical ? top / (top + bottom) : null,
   };
 }
 

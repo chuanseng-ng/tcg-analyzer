@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import {
   boxFrom,
   CANNOT_TELL_CONFIDENCE,
+  type CardFrame,
   centeringFrom,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
@@ -482,8 +483,9 @@ function ConfidenceChoice({
  *
  * The annotator drags a box round the inner frame and the two ratios follow from
  * where its edges sit — spec §21 asks for a measurement, and somebody doing
- * division under time pressure is not one. The artifact's edges *are* the card's,
- * so the borders are what is left outside the box.
+ * division under time pressure is not one. The borders are what lies between the
+ * box and the card's own edge — the service reports where that edge sits inside
+ * the artifact, because #194 put a margin of photograph around it.
  *
  * Each axis can be switched off, and that is not a convenience either: §21 names
  * full-art and borderless layouts outright, and a card with no border on an axis
@@ -492,12 +494,14 @@ function ConfidenceChoice({
 export function CenteringControls({
   pending,
   existing,
+  cardFrame,
   onClearPending,
   onSet,
   onClear,
 }: {
   pending: BoundingBox | null;
   existing: CenteringRequest | null;
+  cardFrame: CardFrame;
   onClearPending: () => void;
   onSet: (reading: CenteringRequest) => void;
   onClear: () => void;
@@ -511,8 +515,12 @@ export function CenteringControls({
     () =>
       pending === null
         ? null
-        : centeringFrom(pending, { horizontal: measuresHorizontal, vertical: measuresVertical }),
-    [pending, measuresHorizontal, measuresVertical],
+        : centeringFrom(
+            pending,
+            { horizontal: measuresHorizontal, vertical: measuresVertical },
+            cardFrame,
+          ),
+    [pending, measuresHorizontal, measuresVertical, cardFrame],
   );
 
   const complete = ratios !== null && confidence !== null;
@@ -531,7 +539,7 @@ export function CenteringControls({
     >
       <p className={styles.placement}>
         Drag a box round the inner frame — the printed border of the artwork. The borders are what
-        is left outside it.
+        lies between it and the card&apos;s edge; the margin beyond the card does not count.
       </p>
 
       <fieldset className={styles.fieldset}>

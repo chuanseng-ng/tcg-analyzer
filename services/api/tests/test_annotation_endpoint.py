@@ -149,7 +149,18 @@ def an_image(
             "side": side,
             "original_uri": original,
             "normalized_uri": normalized,
-            "normalization_details": {"width": 756, "height": 1056} if artifact else None,
+            "normalization_details": (
+                {
+                    "width": 804,
+                    "height": 1104,
+                    "thresholds": {
+                        "normalization_margin_mm": 2.0,
+                        "normalization_pixels_per_mm": 12.0,
+                    },
+                }
+                if artifact
+                else None
+            ),
             "sha256": f"{image_id.int:064x}"[:64],
             "mime_type": "image/jpeg",
             "width": 1200,
@@ -329,6 +340,51 @@ def test_an_image_with_no_artifact_says_so_on_the_detail_too(
     assert body["has_artifact"] is False
     assert body["width"] == 1200  # the photograph's, not the artifact's
     assert body["height"] == 1600
+
+
+def test_the_detail_reports_where_the_card_sits_inside_the_artifact(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """#194's margin makes the card an inner rectangle, and the client must not
+    guess it: the frame is derived from the artifact's own stored record, so it
+    is right for whatever version produced that artifact."""
+    image_id = an_image(storage)
+
+    body = client.get(f"/internal/annotation/images/{image_id}").json()
+
+    frame = body["card_frame"]
+    assert frame["x"] == pytest.approx(24 / 804)
+    assert frame["y"] == pytest.approx(24 / 1104)
+    assert frame["width"] == pytest.approx(756 / 804)
+    assert frame["height"] == pytest.approx(1056 / 1104)
+
+
+def test_a_marginless_artifact_reports_the_whole_square_as_the_card(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """An artifact stored before #194 has no margin keys in its record, and its
+    card really does reach the artifact's edges — the frame says so rather than
+    the record being migrated."""
+    image_id = an_image(storage)
+    execute(
+        sa.update(training_images)
+        .where(training_images.c.id == image_id)
+        .values(normalization_details={"width": 756, "height": 1056}),
+    )
+
+    body = client.get(f"/internal/annotation/images/{image_id}").json()
+
+    assert body["card_frame"] == {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}
+
+
+def test_an_image_with_no_artifact_has_no_card_frame(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage, artifact=False)
+
+    body = client.get(f"/internal/annotation/images/{image_id}").json()
+
+    assert body["card_frame"] is None
 
 
 def test_an_unknown_image_is_a_404(client: TestClient) -> None:

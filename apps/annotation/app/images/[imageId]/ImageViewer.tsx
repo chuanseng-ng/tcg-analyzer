@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hasWork,
   requestBodyFrom,
+  WHOLE_ARTIFACT,
   type BoundingBox,
   type CenteringRequest,
   type MarkerDraft,
@@ -375,6 +376,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
           <CenteringControls
             pending={pending}
             existing={centering}
+            cardFrame={current.card_frame ?? WHOLE_ARTIFACT}
             onClearPending={() => {
               setPending(null);
             }}

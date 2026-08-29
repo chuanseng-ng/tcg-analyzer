@@ -56,6 +56,7 @@ from tcg_api.datasets.annotation import (
     ARTIFACT_MEDIA_TYPE,
     NORMALIZED,
     BoundingBox,
+    CardFrame,
     CenteringReading,
     DatasetStoreUnavailable,
     DefectMarker,
@@ -123,6 +124,23 @@ _NO_ARTIFACT: Final = (
 _CACHE_CONTROL: Final = "private, no-store"
 
 
+class CardFrameModel(BaseModel):
+    """Where the card sits inside the artifact, as fractions of the artifact.
+
+    #194 surrounds the card with a margin of the photograph it was cut from, so
+    the card's edges are an inner rectangle. The frame is derived from the
+    artifact's own stored normalization record, so it is correct for whatever
+    version produced that artifact — a pre-margin artifact honestly reports the
+    whole unit square. Centering is measured against **this** rectangle, never
+    against the artifact's edges.
+    """
+
+    x: float = Field(description="The card's left edge, as a fraction of the artifact's width.")
+    y: float = Field(description="The card's top edge, as a fraction of the artifact's height.")
+    width: float = Field(description="The card's width, as a fraction of the artifact's width.")
+    height: float = Field(description="The card's height, as a fraction of the artifact's height.")
+
+
 class AnnotationImageSummary(BaseModel):
     """One training image, as the work list and an image's siblings report it."""
 
@@ -159,6 +177,16 @@ class AnnotationImageSummary(BaseModel):
             "is not comparable with one taken against an artifact. The storage key itself "
             "is deliberately not reported: it is server-generated and internal (spec §55)."
         )
+    )
+    card_frame: CardFrameModel | None = Field(
+        default=None,
+        description=(
+            "Where the card sits inside the artifact — null exactly when "
+            "`has_artifact` is false. On the summary and not only the detail, because "
+            "the side toggle shows a sibling without navigating and one Save writes the "
+            "image on screen: a centering reading taken there is measured against this "
+            "rectangle, never against the artifact's edges (#194)."
+        ),
     )
 
 
@@ -198,6 +226,14 @@ class AnnotationImageResponse(BaseModel):
             "cannot be taken against it. The same field every summary carries, so a "
             "detail is a summary with more on it rather than a second shape."
         )
+    )
+    card_frame: CardFrameModel | None = Field(
+        default=None,
+        description=(
+            "Where the card sits inside the artifact — null exactly when "
+            "`has_artifact` is false. The client must measure centering against this "
+            "rectangle and never assume the artifact's edges are the card's (#194)."
+        ),
     )
     siblings: list[AnnotationImageSummary] = Field(
         description=(
@@ -626,6 +662,7 @@ def _summary(image: TrainingImageSummary) -> AnnotationImageSummary:
         source=image.source,
         created_at=image.created_at,
         has_artifact=image.has_artifact,
+        card_frame=_card_frame(image.card_frame),
     )
 
 
@@ -640,10 +677,17 @@ def _detail(image: TrainingImageDetail, stored: ImageAnnotations) -> AnnotationI
         width=image.width,
         height=image.height,
         has_artifact=image.has_artifact,
+        card_frame=_card_frame(image.card_frame),
         siblings=[_summary(sibling) for sibling in image.siblings],
         annotations=[_stored_marker(marker) for marker in stored.markers],
         centering=[_stored_measurement(measurement) for measurement in stored.centering],
     )
+
+
+def _card_frame(frame: CardFrame | None) -> CardFrameModel | None:
+    if frame is None:
+        return None
+    return CardFrameModel(x=frame.x, y=frame.y, width=frame.width, height=frame.height)
 
 
 def _stored_marker(marker: StoredMarker) -> StoredMarkerResponse:

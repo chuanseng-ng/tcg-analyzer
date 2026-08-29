@@ -174,7 +174,7 @@ them the way `images` does.
 
 Spec §30's annotation tool shows an image and §21's centering is measured on it,
 and the annotation schema fixed what those measurements are *of*: fractions of
-the standardized 756x1056 artifact, never pixels of a photograph. An annotator
+the standardized artifact (the card at 12 px/mm inside #194's background margin), never pixels of a photograph. An annotator
 marking a corner at 12% across a *photograph* has said nothing comparable about
 the card, because the next photograph of it is framed differently. So the
 artifact is an object with a key of its own, and this is what produces one:
@@ -225,7 +225,7 @@ uv run tcg-detect-duplicate-training-images
 
 It fingerprints every training image that has none, then reports the groups the
 splitter must not break apart. **It runs from the worker image**, not the API
-one: a fingerprint is taken over the standardized 756x1056 artifact, so producing
+one: a fingerprint is taken over the standardized artifact, so producing
 one needs card detection and normalization and therefore OpenCV, which only
 `worker.Dockerfile` installs. Hashing the artifact rather than the photograph is
 what takes framing and perspective out of the comparison for free.
@@ -321,7 +321,7 @@ box and a measurement carries none of those — one table with a `kind` would le
 half of every row NULL by construction.
 
 **Coordinates are fractions of the representation the row names, never
-pixels.** An annotation stored against the normalized 756x1056 artifact survives
+pixels.** An annotation stored against the normalized artifact survives
 a retake and compares across cards, and that is every annotation's frame except
 one: ADR 0010 measured that the artifact cannot resolve §16's fine defect
 classes, so #175 lets a *surface* annotation declare its coordinates fractions

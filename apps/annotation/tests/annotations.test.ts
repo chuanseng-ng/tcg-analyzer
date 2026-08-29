@@ -92,6 +92,47 @@ describe("centering, derived rather than typed", () => {
     ).toEqual({ horizontal: null, vertical: 0.5 });
   });
 
+  it("measures the borders against the card's frame, not the artifact's edges", () => {
+    // #194: the artifact holds a margin of photograph around the card, so the
+    // card's own rectangle arrives from the service. A box centred in the CARD
+    // is 0.5/0.5 even though it is not centred in the artifact.
+    const frame = { x: 24 / 804, y: 24 / 1104, width: 756 / 804, height: 1056 / 1104 };
+    const box = {
+      x: frame.x + frame.width * 0.25,
+      y: frame.y + frame.height * 0.25,
+      width: frame.width * 0.5,
+      height: frame.height * 0.5,
+    };
+
+    const ratios = centeringFrom(box, both, frame);
+
+    expect(ratios?.horizontal).toBeCloseTo(0.5, 10);
+    expect(ratios?.vertical).toBeCloseTo(0.5, 10);
+  });
+
+  it("reads an off-centre frame off the card's edge, not the margin's", () => {
+    // Card frame insets 0.1 each side; inner box leaves 0.1 of border on the
+    // left and 0.3 on the right *of the card* — 0.25 of the pair.
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    const ratios = centeringFrom({ x: 0.2, y: 0.2, width: 0.4, height: 0.4 }, both, frame);
+
+    expect(ratios?.horizontal).toBeCloseTo((0.2 - 0.1) / (0.2 - 0.1 + 0.9 - 0.6), 10);
+    expect(ratios?.vertical).toBeCloseTo(0.25, 10);
+  });
+
+  it("clamps a box that strays into the margin rather than going negative", () => {
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    // The box's left edge is inside the margin: the left border is 0, not -0.05.
+    const ratios = centeringFrom({ x: 0.05, y: 0.2, width: 0.5, height: 0.4 }, both, frame);
+
+    expect(ratios?.horizontal).toBe(0);
+  });
+
+  it("refuses a box that fills the card's frame rather than dividing by zero", () => {
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    expect(centeringFrom({ x: 0.1, y: 0.3, width: 0.8, height: 0.4 }, both, frame)).toBeNull();
+  });
+
   it("refuses a reading of neither axis, which the schema refuses too", () => {
     expect(
       centeringFrom(

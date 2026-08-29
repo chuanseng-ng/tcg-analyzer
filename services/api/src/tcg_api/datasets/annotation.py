@@ -21,7 +21,7 @@ that has none is answered honestly rather than warped on the spot.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
@@ -106,6 +106,51 @@ class TrainingImageSummary:
     source: str
     created_at: datetime
     has_artifact: bool
+    card_frame: CardFrame | None
+
+
+@dataclass(frozen=True, slots=True)
+class CardFrame:
+    """Where the card sits inside its artifact, as fractions of the artifact.
+
+    #194 put a margin of real photograph around the card, so the card's edges
+    are an inner rectangle rather than the artifact's own. Derived from the
+    artifact's **stored** `normalization_details` — never from the package's
+    current thresholds — so the frame is right for whatever version produced
+    that artifact: a record with no margin keys is a pre-#194 artifact whose
+    card really does reach the edges, and its frame is the whole unit square.
+    """
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+def card_frame_of(details: Mapping[str, object] | None) -> CardFrame | None:
+    """The card's inner rectangle, from one artifact's stored record."""
+    if details is None:
+        return None
+    width = details.get("width")
+    height = details.get("height")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    thresholds = details.get("thresholds")
+    margin_mm = 0.0
+    pixels_per_mm = 0.0
+    if isinstance(thresholds, Mapping):
+        raw_margin = thresholds.get("normalization_margin_mm")
+        raw_ppm = thresholds.get("normalization_pixels_per_mm")
+        if isinstance(raw_margin, (int, float)) and isinstance(raw_ppm, (int, float)):
+            margin_mm = float(raw_margin)
+            pixels_per_mm = float(raw_ppm)
+    margin = margin_mm * pixels_per_mm
+    return CardFrame(
+        x=margin / float(width),
+        y=margin / float(height),
+        width=(float(width) - 2 * margin) / float(width),
+        height=(float(height) - 2 * margin) / float(height),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +178,7 @@ class TrainingImageDetail:
     width: int
     height: int
     has_artifact: bool
+    card_frame: CardFrame | None
     siblings: tuple[TrainingImageSummary, ...]
 
 
@@ -174,6 +220,7 @@ _SUMMARY_COLUMNS: Final = (
     training_images.c.source,
     training_images.c.created_at,
     training_images.c.normalized_uri,
+    training_images.c.normalization_details,
 )
 
 
@@ -188,6 +235,10 @@ def _summary(row: sa.Row[tuple[object, ...]]) -> TrainingImageSummary:
         # The key itself never leaves the service: it is server-generated and
         # internal (spec §55), and a badge only needs to know there is one.
         has_artifact=row.normalized_uri is not None,
+        # On the summary and not only the detail, because the side toggle shows
+        # a sibling without navigating and one Save writes the image on screen -
+        # a centering reading taken there needs that image's own frame (#194).
+        card_frame=card_frame_of(row.normalization_details),
     )
 
 
@@ -283,6 +334,7 @@ async def read_image(db: AsyncSession, image_id: UUID) -> TrainingImageDetail | 
         width=row.width,
         height=row.height,
         has_artifact=row.normalized_uri is not None,
+        card_frame=card_frame_of(row.normalization_details),
         siblings=siblings,
     )
 
