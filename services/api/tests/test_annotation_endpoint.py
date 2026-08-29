@@ -433,3 +433,37 @@ def test_a_row_naming_bytes_the_store_does_not_hold_is_a_500(
 
     assert response.status_code == 500
     assert response.json()["details"]["reason"] == "stored_object_missing"
+
+
+def test_the_missing_object_is_logged_with_the_image_it_belongs_to(
+    client: TestClient, storage: InMemoryObjectStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The identifier has to actually reach the log line, not merely be passed to it.
+
+    A stdlib `extra={...}` is silently dropped here: `configure_logging`'s
+    `ProcessorFormatter` chain carries no `ExtraAdder`, so the record's attributes
+    never reach the rendered event. The line still appeared, still said
+    `stored_object_missing`, and named no image — which is worse than not logging
+    at all, because it looks like a diagnostic. CodeQL found the call; this is what
+    keeps the fix.
+    """
+    from tcg_api.config import Settings
+    from tcg_api.logging import configure_logging
+
+    configure_logging(Settings(log_format="json"))
+    image_id = an_image(storage)
+
+    class Empty:
+        async def get(self, key: StorageKey) -> bytes:
+            raise ObjectNotFound(str(key))
+
+    client.app.dependency_overrides[object_storage] = Empty
+    client.get(f"{WORK_LIST}/{image_id}/bytes")
+
+    written = capsys.readouterr()
+    line = next(
+        entry
+        for entry in (written.out + written.err).splitlines()
+        if "annotation.stored_object_missing" in entry
+    )
+    assert str(image_id) in line

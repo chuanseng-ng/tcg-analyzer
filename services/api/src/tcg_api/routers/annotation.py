@@ -27,12 +27,12 @@ further from that reasoning still.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated, Final, Literal
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,7 +59,12 @@ __all__ = [
     "router",
 ]
 
-logger = logging.getLogger(__name__)
+#: structlog rather than the stdlib logger the other read-only routers use,
+#: because this one logs a *value*. `ProcessorFormatter`'s chain carries no
+#: `ExtraAdder`, so a stdlib `extra` mapping is silently dropped and the line
+#: arrives with no identifier on it — which is the whole point of the one below.
+#: `routers/analyses.py` and `routers/economics.py` log values the same way.
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/internal/annotation", tags=["internal: annotation"])
 
@@ -381,7 +386,7 @@ async def read_training_image_bytes(
         # The row names bytes the store does not hold. That will not come right
         # on a retry, so it is emphatically not a 503: it is the two stores
         # disagreeing, which is what `internal_error` means.
-        logger.error("annotation.stored_object_missing", extra={"image_id": str(image_id)})
+        logger.error("annotation.stored_object_missing", image_id=str(image_id))
         raise ApiError(
             ErrorCode.INTERNAL_ERROR,
             _MISSING_OBJECT,
