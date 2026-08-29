@@ -320,10 +320,15 @@ They are two tables because a marker carries a label, a severity and a bounding
 box and a measurement carries none of those — one table with a `kind` would leave
 half of every row NULL by construction.
 
-**Coordinates are fractions of the normalized 756x1056 artifact, never pixels of
-the photograph.** An annotation stored against the artifact survives a retake and
-compares across cards. Fractions rather than pixels of it, so `tables.py` never
-imports `ml/normalization` — which would put OpenCV in the API image.
+**Coordinates are fractions of the representation the row names, never
+pixels.** An annotation stored against the normalized 756x1056 artifact survives
+a retake and compares across cards, and that is every annotation's frame except
+one: ADR 0010 measured that the artifact cannot resolve §16's fine defect
+classes, so #175 lets a *surface* annotation declare its coordinates fractions
+of the original photograph — `representation` on the row, closed to the two
+frames by one CHECK and to surface annotations by another. Fractions rather
+than pixels of either frame, so `tables.py` never imports `ml/normalization` —
+which would put OpenCV in the API image.
 
 **Uncertainty is required on both tables.** `confidence` is NOT NULL with no
 default, and every one of §14, §15 and §16's vocabularies carries `unknown`. An

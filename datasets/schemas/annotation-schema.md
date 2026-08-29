@@ -53,8 +53,9 @@ acts of annotation rather than one fact stored twice.
 | `label` | §14's eight, §15's eight or §16's twelve, according to the kind. |
 | `severity` | `minor`, `moderate` or `severe`; `NULL` exactly when the label asserts no defect. |
 | `confidence` | `[0, 1]`, NOT NULL. |
-| `bbox_x`, `bbox_y`, `bbox_width`, `bbox_height` | §17's bounding box, as fractions of the normalized artifact. All four or none. |
+| `bbox_x`, `bbox_y`, `bbox_width`, `bbox_height` | §17's bounding box, as fractions of the representation the row names. All four or none. |
 | `polygon` | §17's polygon — a JSONB array of `[x, y]` pairs in the same space. |
+| `representation` | Which frame the coordinates are fractions of — `normalized` or `original`. NOT NULL; only a surface annotation may name `original` (#175). |
 | `metadata` | §17's metadata. Never the label, the severity or the confidence. |
 | `annotator_id` | Opaque. |
 | `created_at` | §30's annotation timestamp. |
@@ -112,21 +113,38 @@ An equality between two booleans rather than two implications, so neither
 direction can be relaxed on its own: `chipping` with no severity is as refused as
 `clean` with one.
 
-### Coordinates are in the normalized artifact's space
+### Coordinates are fractions of the representation the row names
 
 `ml/normalization` (#38) warps every image to one 756×1056 artifact. An
 annotation stored against **those** coordinates survives a retake and compares
 across cards; one stored against raw-photograph pixels becomes unusable the
-moment the framing changes.
+moment the framing changes. That was the whole rule until ADR 0010 measured its
+limit: at 12 px/mm, §16's fine defect classes (`scratch`, `print_line`,
+`print_dot`, `gloss_issue`) are below the artifact's sampling limit, and the
+original photograph — the only representation whose sampling rate rises with
+the camera — is the one route back.
 
-For a training image that artifact is a **stored object**, not something
+So #175 admitted the one argued exception, **as a column rather than a
+convention**: `representation` names the frame every annotation's coordinates
+are fractions of. Two CHECKs close it — the value is one of the two frames this
+schema stores, and `only_a_surface_marks_the_original` holds ADR 0010's scope:
+corners, edges and every centering measurement stay fractions of the artifact.
+It is NOT NULL on every row (a boxless marker still names the frame the label
+was judged against, and a `scratch` call made off the artifact is a weaker
+claim than one made off the original) with no server default, for
+`confidence`'s reason. **The two frames relate by a projective warp, so a
+fraction of one is never projected onto the other** — a reader filters by the
+declared frame, never converts.
+
+For a training image the artifact is a **stored object**, not something
 recomputed per reader: `tcg-normalize-training-images` produces it and
 `training_images.normalized_uri` names it (#159). An image that has none is one
-the detector found no card in, and the annotation tool shows the photograph while
-saying so — because a coordinate cannot be taken against it.
+the detector found no card in, and the annotation tool shows the photograph
+while saying so — only a surface annotation declaring `original` can carry
+coordinates there.
 
-They are stored as **fractions in `[0, 1]` of that artifact** rather than as
-integer pixels of it. Two reasons, and the second is the decisive one:
+Coordinates are stored as **fractions in `[0, 1]` of their frame** rather than
+as integer pixels of it. Two reasons, and the second is the decisive one:
 
 - the artifact's resolution could change without rewriting every row;
 - `tables.py` never has to import `ml/normalization` for the two dimensions,
@@ -141,7 +159,9 @@ move every coordinate on it without touching a row here. #159's pass selects
 A resolution change is a deliberate act with a re-annotation behind it.
 
 The numbers 756 and 1056 therefore appear nowhere in this schema, and a test
-asserts their absence.
+asserts their absence. `ck_image_annotations_bounding_box_lies_inside_the_artifact`
+kept its pre-#175 name — the unit-square rule it states is the same in either
+frame, and renaming a CHECK is a drop-and-re-add for a name alone.
 
 ```sql
 CONSTRAINT ck_image_annotations_bounding_box_is_whole_or_absent CHECK (
