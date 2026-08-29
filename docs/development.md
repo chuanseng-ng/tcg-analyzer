@@ -24,6 +24,38 @@ validated by `lib/env.ts`. Next reads env files from the app directory, so for
 `pnpm dev` copy `apps/web/.env.example` to `apps/web/.env.local`; the root
 `.env` is what the Compose stack passes to the container.
 
+## The annotation tool
+
+```bash
+pnpm install
+pnpm --filter @tcg/annotation dev     # http://localhost:3001
+pnpm --filter @tcg/annotation test
+pnpm --filter @tcg/annotation build
+```
+
+Spec §30's internal tool. Same stack as the web application, same lint config
+and test runner — one toolchain, deliberately. It reads a running `services/api`
+at `NEXT_PUBLIC_API_BASE_URL`, and Next reads env files from the app directory,
+so copy `apps/annotation/.env.example` to `apps/annotation/.env.local` for a
+bare `pnpm dev`.
+
+There is nothing to look at until a corpus exists. Ingest a card and produce the
+artifact the tool shows:
+
+```bash
+uv run tcg-ingest-training-images --front front.jpg --back back.jpg --source first_party --acquisition-method photographed_before_submission --license "owned outright" --commercial-use-allowed --derivative-use-allowed --acquired-at 2026-08-01T10:00:00+08:00
+uv run tcg-normalize-training-images
+```
+
+**It is not a public surface.** The tool reads `/internal/annotation`, and
+[ADR 0009](adr/0009-the-dataset-store-as-a-database-domain.md) makes its
+isolation a deployment question: the `/internal` prefix is what an ingress rule
+matches, and the tool is served from an origin the public one does not route to.
+Running it on :3001 beside the web application locally is a convenience, not a
+statement about where it belongs — and there is no authentication, because V1
+excludes accounts and an internal tool on a private network is the shape this
+repository already assumes.
+
 ## Object storage
 
 Uploaded card images live in S3-compatible object storage — MinIO locally, any

@@ -80,7 +80,6 @@ Representation = str
 
 NORMALIZED: Final[Representation] = "normalized"
 ORIGINAL: Final[Representation] = "original"
-REPRESENTATIONS: Final = (NORMALIZED, ORIGINAL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,10 +104,11 @@ class TrainingImageDetail:
             answer rather than a gap: ADR 0008's approved class 4 identifies no
             copy, and treating NULL as a group would make every consented upload
             a sibling of every other one.
-        representation: `normalized` when an artifact was stored, `original`
-            otherwise. The server answers this so the tool never has to guess
-            which space it is showing — and #160 takes coordinates only against
-            `normalized`.
+        has_artifact: Whether a standardized artifact was stored. The same
+            field every summary carries, deliberately: a detail *is* a summary
+            with more on it, and a second field naming the same fact — a
+            `representation` beside it — is how the two come to disagree. The
+            client's rule is one line and lives in one place.
     """
 
     id: UUID
@@ -119,7 +119,7 @@ class TrainingImageDetail:
     created_at: datetime
     width: int
     height: int
-    representation: Representation
+    has_artifact: bool
     siblings: tuple[TrainingImageSummary, ...]
 
 
@@ -269,7 +269,7 @@ async def read_image(db: AsyncSession, image_id: UUID) -> TrainingImageDetail | 
         created_at=row.created_at,
         width=row.width,
         height=row.height,
-        representation=NORMALIZED if row.normalized_uri is not None else ORIGINAL,
+        has_artifact=row.normalized_uri is not None,
         siblings=siblings,
     )
 

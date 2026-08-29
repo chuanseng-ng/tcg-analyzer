@@ -152,13 +152,13 @@ class AnnotationImageResponse(BaseModel):
     created_at: datetime = Field(description="When the image was ingested.")
     width: int = Field(description="The stored **photograph's** width in pixels.")
     height: int = Field(description="The stored **photograph's** height in pixels.")
-    representation: Literal["normalized", "original"] = Field(
+    has_artifact: bool = Field(
         description=(
-            "Which representation `…/bytes` can serve. `normalized` is the standardized "
-            "artifact an annotation's coordinates are fractions of; `original` means no "
-            "artifact was stored, so all there is to show is the photograph — and a tool "
-            "showing it must label it, because coordinates cannot be taken against it. "
-            "The server answers this so a client never has to guess which space it is in."
+            "Whether a standardized artifact was stored, and therefore which "
+            "representation `…/bytes` can serve. False means all there is to show is "
+            "the photograph — and a tool showing it must label it, because coordinates "
+            "cannot be taken against it. The same field every summary carries, so a "
+            "detail is a summary with more on it rather than a second shape."
         )
     )
     siblings: list[AnnotationImageSummary] = Field(
@@ -193,7 +193,7 @@ def _detail(image: TrainingImageDetail) -> AnnotationImageResponse:
         created_at=image.created_at,
         width=image.width,
         height=image.height,
-        representation="normalized" if image.representation == "normalized" else "original",
+        has_artifact=image.has_artifact,
         siblings=[_summary(sibling) for sibling in image.siblings],
     )
 

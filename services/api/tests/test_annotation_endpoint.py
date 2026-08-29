@@ -290,7 +290,7 @@ def test_an_image_reports_the_other_views_of_its_copy(
 
     body = client.get(f"{WORK_LIST}/{front}").json()
 
-    assert body["representation"] == "normalized"
+    assert body["has_artifact"] is True
     assert [sibling["id"] for sibling in body["siblings"]] == [str(back)]
     assert body["siblings"][0]["side"] == "back"
 
@@ -314,15 +314,15 @@ def test_an_image_naming_no_physical_copy_has_no_siblings(
     assert body["physical_copy_id"] is None
 
 
-def test_an_image_with_no_artifact_reports_the_original_representation(
+def test_an_image_with_no_artifact_says_so_on_the_detail_too(
     client: TestClient, storage: InMemoryObjectStorage
 ) -> None:
-    """The server answers which space it is in, so the tool never guesses."""
+    """A detail is a summary with more on it — one shape, one field, one answer."""
     image_id = an_image(storage, artifact=False)
 
     body = client.get(f"{WORK_LIST}/{image_id}").json()
 
-    assert body["representation"] == "original"
+    assert body["has_artifact"] is False
     assert body["width"] == 1200  # the photograph's, not the artifact's
     assert body["height"] == 1600
 

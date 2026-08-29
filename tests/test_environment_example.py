@@ -19,7 +19,10 @@ from tcg_api.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROOT_EXAMPLE = REPO_ROOT / ".env.example"
-WEB_EXAMPLE = REPO_ROOT / "apps" / "web" / ".env.example"
+#: Discovered rather than listed. The point of the check below is that a *new*
+#: application cannot introduce a variable the root example does not document,
+#: and a hardcoded list fails open for exactly the app nobody remembered to add.
+APP_EXAMPLES = tuple(sorted((REPO_ROOT / "apps").glob("*/.env.example")))
 
 ASSIGNMENT = re.compile(r"^\s*(?P<key>[A-Z][A-Z0-9_]*)\s*=(?P<value>.*)$")
 
@@ -70,8 +73,17 @@ def test_no_documented_api_variable_is_unread() -> None:
     )
 
 
-def test_the_web_variables_are_documented_too() -> None:
+@pytest.mark.parametrize("example", APP_EXAMPLES, ids=lambda path: path.parent.name)
+def test_the_app_variables_are_documented_too(example: Path) -> None:
     """One file starts the whole stack, so it covers both workspaces."""
-    missing = set(keys_of(WEB_EXAMPLE)) - set(keys_of(ROOT_EXAMPLE))
+    missing = set(keys_of(example)) - set(keys_of(ROOT_EXAMPLE))
+    name = example.relative_to(REPO_ROOT).as_posix()
 
-    assert not missing, f"apps/web/.env.example declares {sorted(missing)}, the root does not"
+    assert not missing, f"{name} declares {sorted(missing)}, the root does not"
+
+
+def test_every_app_carries_an_environment_example() -> None:
+    """Guard the guard: parametrizing over a glob that found nothing passes vacuously."""
+    apps = {path.name for path in (REPO_ROOT / "apps").iterdir() if path.is_dir()}
+
+    assert {example.parent.name for example in APP_EXAMPLES} == apps

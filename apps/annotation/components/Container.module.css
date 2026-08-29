@@ -1,0 +1,16 @@
+/*
+ * Horizontal layout primitive: a centred, gutter-padded column that never
+ * exceeds a maximum. Sized with `max-width` and relative units only — a fixed
+ * width here would overflow the 375px viewport the product is designed around.
+ */
+
+.container {
+  inline-size: 100%;
+  max-width: var(--layout-max);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.prose {
+  max-width: var(--measure);
+}

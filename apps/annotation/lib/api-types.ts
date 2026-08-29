@@ -1,7 +1,7 @@
 /**
  * Generated from the FastAPI OpenAPI schema. Do not edit by hand.
  *
- * Regenerate with: pnpm --filter @tcg/web gen:api-types
+ * Regenerate with: pnpm --filter @tcg/annotation gen:api-types
  * See docs/adr/0001-language-boundaries-in-the-monorepo.md.
  */
 

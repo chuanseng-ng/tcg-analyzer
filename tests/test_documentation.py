@@ -109,22 +109,31 @@ def _identify(case: tuple[str, list[str]]) -> str:
 # --------------------------------------------------------------------------
 # pnpm scripts
 # --------------------------------------------------------------------------
-PNPM_COMMANDS = _matching("pnpm", "--filter", "@tcg/web")
+# Matched on the filter rather than on one package name: there is more than one
+# application now, and a check pinned to `@tcg/web` would silently stop covering
+# every command documented for the other one.
+PNPM_COMMANDS = _matching("pnpm", "--filter")
 # Subcommands that take a script name are the point of this check; `exec`,
 # `install` and `add` take something else entirely.
 _NOT_A_SCRIPT = frozenset({"exec", "install", "add", "run", "dlx"})
+_WORKSPACE_PACKAGE = re.compile(r"^@tcg/(?P<app>[a-z0-9-]+)$")
 
 
 @pytest.mark.parametrize("case", PNPM_COMMANDS, ids=_identify)
 def test_documented_pnpm_script_exists(case: tuple[str, list[str]]) -> None:
     _, command = case
+    package = _WORKSPACE_PACKAGE.match(command[2])
+    if package is None:
+        pytest.skip(f"`pnpm --filter {command[2]}` does not name one workspace application")
+
     script = command[3]
     if script in _NOT_A_SCRIPT:
         pytest.skip(f"`pnpm {script}` does not name a package script")
 
-    manifest = json.loads(_read("apps/web/package.json"))
+    manifest_path = f"apps/{package['app']}/package.json"
+    manifest = json.loads(_read(manifest_path))
     assert script in manifest["scripts"], (
-        f"apps/web/package.json has no `{script}` script; documentation is stale"
+        f"{manifest_path} has no `{script}` script; documentation is stale"
     )
 
 
