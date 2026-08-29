@@ -93,6 +93,18 @@ class DetectionThresholds:
     #: mat or a mount. A penny sleeve sits near 1.05 and a top-loader near 1.4.
     sleeve_max_ratio: float = 1.50
 
+    #: A corner within this fraction of the frame's short edge of the frame
+    #: boundary counts as touching it — the same normalisation, and the same
+    #: number, as the gate's `border_margin_poor`, because they describe the
+    #: same situation from two sides.
+    frame_margin_fraction: float = 0.005
+    #: A quadrilateral that both touches the frame boundary and covers at least
+    #: this fraction of the frame is the picture's own boundary, not a card —
+    #: #176's shadow-merged close-ups produced exactly that shape and it was
+    #: returned at 76-82% confidence. A clipped card touches the boundary too,
+    #: which is why the fill condition is required as well.
+    frame_fill_fraction: float = 0.70
+
     def __post_init__(self) -> None:
         if self.work_long_edge <= 0:
             raise ValueError(f"work_long_edge must be positive, got {self.work_long_edge!r}")
@@ -104,6 +116,14 @@ class DetectionThresholds:
             raise ValueError(f"approx_epsilon must lie in (0, 1), got {self.approx_epsilon!r}")
         if self.sleeve_min_margin <= 0.0:
             raise ValueError(f"sleeve_min_margin must be positive, got {self.sleeve_min_margin!r}")
+        if not 0.0 < self.frame_margin_fraction < 1.0:
+            raise ValueError(
+                f"frame_margin_fraction must lie in (0, 1), got {self.frame_margin_fraction!r}"
+            )
+        if not 0.0 < self.frame_fill_fraction <= 1.0:
+            raise ValueError(
+                f"frame_fill_fraction must lie in (0, 1], got {self.frame_fill_fraction!r}"
+            )
 
         for name, low, high in (
             ("area fraction", self.min_area_fraction, self.max_area_fraction),

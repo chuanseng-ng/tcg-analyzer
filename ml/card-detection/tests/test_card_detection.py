@@ -127,6 +127,47 @@ def test_a_card_back_is_found() -> None:
     assert located(png(picture)).area_fraction == pytest.approx(0.288, abs=0.02)
 
 
+def test_a_close_up_card_whose_shadow_merges_with_it_is_found_where_it_is() -> None:
+    """#176's first failure: the card's own shadow, merged into one grey blob.
+
+    Photographed close up on a near-white surface, the card's soft shadow is
+    darker than the surface and the grayscale Otsu split lumps card and shadow
+    into one region whose fitted quadrilateral runs to the frame's own corner —
+    which the detector then reported confidently. The card must be found where
+    it is, not where its shadow ends.
+    """
+    picture = background(235)
+    left, top, width, height = 140, 90, 920, 1285  # 920/1285 is a card's 63:88
+    picture[top : top + height, left : left + width] = (150, 80, 40)  # saturated blue
+    # The shadow: grey bands off the right and bottom edges, running to a few
+    # pixels short of the frame corner, dark enough that a grayscale threshold
+    # cannot separate them from the card.
+    picture[top + 40 : 1597, left + width : 1197] = (130, 130, 130)
+    picture[top + height : 1597, left + 40 : 1197] = (130, 130, 130)
+    found = located(png(picture))
+
+    corners = found.corners
+    assert corners[0] == pytest.approx((left, top), abs=10)
+    assert corners[2] == pytest.approx((left + width, top + height), abs=10)
+
+
+def test_a_worn_front_with_no_luminance_contrast_is_found_by_its_colour() -> None:
+    """#176's second failure: a worn front the grayscale passes cannot see.
+
+    Wear takes the luminance contrast with it — the session's heavily worn
+    front was simply not found. Its synthetic twin is an isoluminant card: a
+    saturated face whose grayscale equals the surface tone, invisible to Canny
+    and to a grayscale Otsu split alike, and plainly there in colour.
+    """
+    picture = background(117)
+    left, top, width, height = CARD
+    picture[top : top + height, left : left + width] = (40, 140, 100)  # gray ~= 117
+    found = located(png(picture))
+
+    assert found.corners[0] == pytest.approx((left, top), abs=8)
+    assert found.area_fraction == pytest.approx(0.288, abs=0.02)
+
+
 def test_a_jpeg_is_read_as_readily_as_a_png() -> None:
     encoded = cv2.imencode(".jpg", photograph(), [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
 
@@ -203,6 +244,22 @@ def test_bytes_that_do_not_decode_are_answered_rather_than_raised() -> None:
     assert found.reason and "decode" in found.reason
 
 
+def test_a_frame_filling_blob_is_refused_rather_than_returned_confidently() -> None:
+    """#176's scope: never a confident frame-corner quadrilateral.
+
+    One dark region running to a few pixels of every frame edge is the
+    picture's own boundary wearing card-like proportions — the shape the
+    shadow-merged close-ups produced. With nothing else card-like in the frame
+    the honest answer is a refusal, not an 82%-confident mis-frame.
+    """
+    picture = background(235)
+    picture[4:1524, 4:1124] = (60, 60, 60)
+    found = detect(png(picture))
+
+    assert isinstance(found, InsufficientInformation)
+    assert found.reason and "frame" in found.reason
+
+
 def test_two_cards_are_counted_as_two() -> None:
     picture = background()
     place(picture, (60, 360, 500, 700), 210)
@@ -268,6 +325,20 @@ def test_the_confidence_is_a_fraction_and_a_clean_card_scores_well() -> None:
     assert not found.confidence.is_below(0.8)
 
 
+def test_a_card_against_the_frame_boundary_scores_below_a_clear_one() -> None:
+    """#176's scope: a corner on the frame boundary costs confidence.
+
+    A clipped card is still returned — the gate is what tells the user part of
+    it is missing — but a boundary it shares with the picture is a boundary the
+    detector cannot vouch for.
+    """
+    _left, _top, width, height = CARD
+    clipped = located(png(place(background(), (0, 0, width, height), 210)))
+    clear = located(png(photograph()))
+
+    assert clipped.confidence.value < clear.confidence.value
+
+
 def test_the_thresholds_are_a_parameter() -> None:
     """A caller that wants different numbers passes different numbers."""
     from tcg_ml_card_detection import DetectionThresholds
@@ -285,6 +356,8 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("approx_epsilon", 0.0, "approx_epsilon"),
         ("sleeve_min_margin", 0.0, "sleeve_min_margin"),
         ("max_aspect", 0.1, "aspect band"),
+        ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
+        ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
     ],
 )
 def test_a_threshold_that_does_not_make_sense_is_refused(
