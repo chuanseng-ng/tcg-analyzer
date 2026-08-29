@@ -684,9 +684,9 @@ export function SaveBar({
       </button>
       {refusable ? (
         <p className={styles.warning} role="alert">
-          This image has no artifact, so nothing staged against one can be stored. Remove the
-          corner and edge boxes and the centering measurement — surface marks against the
-          original photograph are fine — or normalize the image first.
+          This image has no artifact, so nothing staged against one can be stored. Remove the corner
+          and edge boxes and the centering measurement — surface marks against the original
+          photograph are fine — or normalize the image first.
         </p>
       ) : null}
       {count > 0 ? <p className={styles.hint}>Nothing is written until you save.</p> : null}

@@ -165,7 +165,9 @@ describe("which representation is on screen", () => {
     fireEvent.click(await screen.findByRole("button", { name: "View the original photograph" }));
 
     expect(
-      screen.getByText(/Original photograph — only surface defects are marked against this frame\./),
+      screen.getByText(
+        /Original photograph — only surface defects are marked against this frame\./,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByRole("img")).toHaveAttribute(
       "src",
@@ -193,10 +195,7 @@ describe("which representation is on screen", () => {
     render(<ImageViewer imageId={summary().id} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Corner" }));
-    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "View the original photograph" }));
 
@@ -333,17 +332,11 @@ describe("the keyboard", () => {
 
     // `c` arms nothing here — the corner tool is an artifact claim.
     fireEvent.keyDown(frame, { key: "c" });
-    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(screen.getByRole("button", { name: "Corner" })).toHaveAttribute("aria-pressed", "false");
 
     // `s` still arms the surface tool: the photograph is its frame now.
     fireEvent.keyDown(frame, { key: "s" });
-    expect(screen.getByRole("button", { name: "Surface" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "Surface" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("pans with the arrows rather than navigating", async () => {
