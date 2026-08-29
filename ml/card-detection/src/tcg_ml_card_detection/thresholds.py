@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.2.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.3.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
