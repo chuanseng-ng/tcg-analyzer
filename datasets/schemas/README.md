@@ -11,5 +11,8 @@ definition.
   `physical_copies`, `training_images`, `training_image_fingerprints`,
   `dataset_versions` and `dataset_members`, and how the per-copy identifier is
   derived for each of ADR 0008's four approved sources.
+- [The annotation schema](annotation-schema.md) — `image_annotations` and
+  `centering_measurements`, where each of spec §30's eleven features lives, and
+  why a defect marker and a centering measurement are two tables rather than one.
 
 **Schemas only — never images.**

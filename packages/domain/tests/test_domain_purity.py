@@ -62,9 +62,13 @@ def test_the_public_surface_is_explicit() -> None:
     exported = {name for name in vars(tcg_domain) if not name.startswith("_")}
     # Submodules are reachable as attributes once imported, and `annotations` is
     # the __future__ flag every module here imports. Neither is public surface,
-    # so neither is listed in __all__.
+    # so neither is listed in __all__. Note the two spellings a line apart:
+    # `annotation` is spec §30's vocabulary module, `annotations` is the flag,
+    # and the module is singular precisely so importing it cannot shadow one with
+    # the other.
     incidental = {
         "analysis",
+        "annotation",
         "annotations",
         "card",
         "card_geometry",

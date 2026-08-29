@@ -1,17 +1,17 @@
-"""Spec §29's provenance, §31's versions and §32's grouping keys, as SQLAlchemy Core.
+"""Spec §29's provenance, §30's annotations, §31's versions and §32's grouping keys.
 
-Five tables, and the constraint ADR 0008 exists to make unavoidable. Together
-they say which physical object a photograph is of, what rights came with it,
-which other photographs it is a near duplicate of, and which frozen dataset
-version it was included in. **Core, not ORM**, on the same terms as every other
-domain here.
+Seven tables, as SQLAlchemy Core, and the constraint ADR 0008 exists to make
+unavoidable. Together they say which physical object a photograph is of, what
+rights came with it, which other photographs it is a near duplicate of, what is
+wrong with the card in it, and which frozen dataset version it was included in.
+**Core, not ORM**, on the same terms as every other domain here.
 
 The tables attach to the service-wide `MetaData` in `tcg_api.tables`, which
 `database/migrations/env.py` compares a database against, and the domain is
 registered in `tcg_api.table_registry` — a domain the registry does not import
 is a domain `alembic revision --autogenerate` proposes dropping.
 
-Six things about this schema are load-bearing:
+Eight things about this schema are load-bearing:
 
 * **The gate is a `CHECK`, and it is written with `IS TRUE`.** ADR 0009's whole
   argument for a database is that ADR 0008's rule — *a null, an empty string and
@@ -33,16 +33,33 @@ Six things about this schema are load-bearing:
   `false` on all four approved sources, including the photographs this project
   took itself, because the artwork is not ours. The column exists to record that,
   not to be waived, so it carries no `CHECK` on its value.
-* **Immutability stops at the version.** §31 freezes a *dataset version*, so
-  `dataset_versions` and `dataset_members` refuse an `UPDATE`. `physical_copies`
-  and `training_images` deliberately do not: approved class 1 photographs a raw
-  card and learns its certification number weeks later, a card is identified
-  after ingestion, and ADR 0009 anticipates correcting provenance by script.
+* **Immutability stops at the version, and starts again at the annotation.**
+  §31 freezes a *dataset version*, so `dataset_versions` and `dataset_members`
+  refuse an `UPDATE`, and so do `image_annotations` and `centering_measurements`
+  — a corrected annotation is a new row, because a version that referenced the
+  old reading must keep meaning what it meant. `physical_copies` and
+  `training_images` deliberately do not: approved class 1 photographs a raw card
+  and learns its certification number weeks later, a card is identified after
+  ingestion, and ADR 0009 anticipates correcting provenance by script. Two
+  trigger functions, not one, and only because the two hints differ: see
+  :data:`_ANNOTATION_IMMUTABLE_FUNCTION`.
 * **`source` carries no membership `CHECK`.** `grading_rules.company` and
   `economic_configurations.optimization_mode` set the precedent: a fifth approved
   source should cost an ADR and no migration. The allow-list is enforced where it
   changes — in the ingestion path — and the *rights* are enforced here, where they
   never change.
+* **A marker and a measurement are two tables.** §30 asks for corner, edge and
+  surface defect annotation *and* centering measurements, and they share no field
+  but the annotator and the time: a marker carries a label, a severity and a
+  bounding box, a measurement carries two ratios and none of those. One table
+  with a `kind` would leave half of every row NULL by construction.
+* **An annotation's coordinates are fractions of the normalized artifact.** #38
+  warps every image to one 756x1056 artifact, so a coordinate in that space
+  survives a retake and compares across cards; a raw-photograph coordinate would
+  be meaningless the moment the framing changed. Fractions rather than pixels of
+  that artifact, which is also what keeps this module free of `ml/normalization`
+  — importing it for two integers would put OpenCV in the API image, and
+  `test_import_purity.py` forbids that.
 
 Spec §32's anti-leakage grouping is why `physical_copies` exists at all: two
 photographs of one card must never land on opposite sides of a split, and none
@@ -58,7 +75,15 @@ from __future__ import annotations
 from typing import Final
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 from tcg_domain import VERSION_PATTERN, DatasetSplit, ImageSide
+from tcg_domain.annotation import (
+    LABELS_BY_KIND,
+    NO_DEFECT_LABELS,
+    REGIONS_BY_KIND,
+    AnnotationKind,
+    DefectSeverity,
+)
 from tcg_grading_companies import GradingCompany
 
 # `training_images.card_id` points into the catalog, so the catalog is a hard
@@ -70,13 +95,15 @@ from tcg_grading_companies import GradingCompany
 # and to mypy, and cannot be a silent typo. The direction is safe — nothing in
 # the catalog reads this domain.
 from tcg_api.catalog.tables import cards
-from tcg_api.tables import PRINTED, metadata, one_of
+from tcg_api.tables import NO_METADATA, PRINTED, metadata, one_of
 
 __all__ = [
     "PROVENANCE_FIELDS",
     "TABLES",
+    "centering_measurements",
     "dataset_members",
     "dataset_versions",
+    "image_annotations",
     "physical_copies",
     "training_image_fingerprints",
     "training_images",
@@ -701,15 +728,363 @@ dataset_members = sa.Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# Spec §30's annotations — what is wrong with the card in the photograph
+# ---------------------------------------------------------------------------
+# The membership rule for `image_annotations`, composed from `tcg_domain.annotation`'s
+# two mappings so the vocabulary is stated once. One constraint rather than
+# three, because the three facts are not independent: `rough_cut` is an edge
+# label and not a corner one, and a surface defect's position is its bounding
+# box rather than a named region. Written as a disjunction over the kinds, it
+# also makes `kind` itself a closed list, so no separate CHECK is needed for it.
+#
+# Sorted, deliberately: `LABELS_BY_KIND`'s values are frozensets, and an
+# unsorted render would produce different SQL on different runs — which the
+# migration could never be compared against.
+def _kind_clause(kind: AnnotationKind) -> str:
+    regions = REGIONS_BY_KIND[kind]
+    placement = one_of("region", sorted(regions)) if regions else "region IS NULL"
+    labels = one_of("label", sorted(LABELS_BY_KIND[kind]))
+    return f"(kind = '{kind.value}' AND {placement} AND {labels})"
+
+
+#: `IS TRUE`, and for the same reason :data:`_PROVENANCE_GATE` is written that
+#: way — a `CHECK` whose expression evaluates to `NULL` **passes**. `region` is
+#: nullable, so `region IN ('top_left', …)` is `NULL` rather than false for a
+#: corner annotation that names no region, and the disjunction is then
+#: `NULL OR false OR false`, which is `NULL`. Without this suffix the constraint
+#: admits exactly the row it exists to refuse, and an integration test caught it
+#: doing so. The wrap is on the whole expression rather than on the one
+#: sub-clause that is nullable today, so a later nullable column joining the rule
+#: cannot reopen the hole.
+_KIND_REGION_AND_LABEL: Final = (
+    "(" + " OR ".join(_kind_clause(kind) for kind in AnnotationKind) + ") IS TRUE"
+)
+
+#: Spec §17 requires a severity beside every defect, and the two labels that
+#: assert *no* defect have nothing to rate. An equality between two booleans
+#: rather than two implications, so neither direction can be relaxed on its own —
+#: `physical_copies`' `certification_is_a_company_and_a_number` precedent.
+_SEVERITY_PAIRING: Final = f"({one_of('label', sorted(NO_DEFECT_LABELS))}) = (severity IS NULL)"
+
+#: An opaque identifier and nothing that could be a person. Spec §53's restraint
+#: made structural: the grammar has no "@" in it, so a name or an email address
+#: is not storable rather than merely discouraged.
+_ANNOTATOR_ID_PATTERN: Final = "^[a-z0-9][a-z0-9_-]*$"
+
+#: Coordinates are **fractions of the normalized artifact**, so a box has to fit
+#: inside the unit square and has to have area. Paired with `num_nulls` below
+#: rather than four separate null checks, and for the reason
+#: `economic_configurations` gives about `cardinality`: the obvious spelling is
+#: the one that is wrong on NULL.
+#: Both axes, each admitting the NULL that says the axis has no measurable
+#: border. A single constraint rather than one per axis, so `0.5` invented for a
+#: borderless card is refused under one name.
+_RATIOS_ARE_UNIT_INTERVALS: Final = (
+    "(horizontal IS NULL OR (horizontal >= 0 AND horizontal <= 1)) "
+    "AND (vertical IS NULL OR (vertical >= 0 AND vertical <= 1))"
+)
+
+_BOX_LIES_INSIDE_THE_ARTIFACT: Final = (
+    "bbox_x IS NULL OR ("
+    "bbox_x >= 0 AND bbox_width > 0 AND bbox_x + bbox_width <= 1 "
+    "AND bbox_y >= 0 AND bbox_height > 0 AND bbox_y + bbox_height <= 1)"
+)
+
+
+image_annotations = sa.Table(
+    "image_annotations",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "training_image_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            training_images.c.id,
+            ondelete="CASCADE",
+            name="fk_image_annotations_training_image_id_training_images",
+        ),
+        nullable=False,
+        comment=(
+            "The photograph this is an annotation of. **CASCADE, with "
+            "`training_image_fingerprints` and not with `dataset_members`**: an "
+            "annotation describing bytes nobody holds any more is unusable, and RESTRICT "
+            "would make it the reason a withdrawal ADR 0008 grants could not be honoured. "
+            "A frozen version's claim on an image is already held by `dataset_members`."
+        ),
+    ),
+    sa.Column(
+        "kind",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "Which of spec §30's three marker features this is — corner, edge or surface "
+            "defect annotation. Not 'centering': §30's fourth is a measurement rather "
+            "than a marker and lives in `centering_measurements`, which shares none of "
+            "the columns below. No CHECK of its own, because "
+            "ck_image_annotations_kind_region_and_label_agree is a disjunction over the kinds "
+            "and closes this list as a side effect of closing the other two."
+        ),
+    ),
+    sa.Column(
+        "region",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "Where on the card — one of §14's four corners or one of §15's four edges. "
+            "**NULL exactly when `kind` is 'surface'**, because §16 names no positions: a "
+            "surface defect's position is its bounding box. The side is deliberately not "
+            "here; `training_images.side` already knows which face this is, and naming it "
+            "twice would let the two disagree."
+        ),
+    ),
+    sa.Column(
+        "label",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "What was found — §14's eight for a corner, §15's eight for an edge, §16's "
+            "twelve for a surface. The three lists differ on purpose and are not one "
+            "list: 'rough_cut' is a cutting defect an edge has and a corner has not, and "
+            "§16 carries no 'clean' at all, because a surface with nothing wrong is a "
+            "surface nobody annotated."
+        ),
+    ),
+    sa.Column(
+        "severity",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "§17's severity — minor, moderate or severe. An **ordinal rather than a "
+            "number in [0, 1]**: there is one annotator and no agreement study, so finer "
+            "granularity would record a precision nobody could reproduce. NULL exactly "
+            "when the label asserts no defect ('clean' found nothing to rate, 'unknown' "
+            "could not rate what it found), and required otherwise."
+        ),
+    ),
+    sa.Column(
+        "confidence",
+        sa.Double(),
+        nullable=False,
+        comment=(
+            "§30's uncertainty, in [0, 1] — how sure the annotator is of this call. "
+            "**NOT NULL and no server default**, which is what makes it one of §30's "
+            "eleven rather than a nullable afterthought: an annotator who cannot tell "
+            "whether a corner is soft records that, and a model trained on their "
+            "confident guess is worse than one trained on their admission. The other half "
+            "of the same rule is the 'unknown' label every vocabulary carries. "
+            "`market_observations.confidence`'s shape, for the reason it gives: a "
+            "mandatory field in an untyped bag quietly becomes optional."
+        ),
+    ),
+    sa.Column(
+        "bbox_x",
+        sa.Double(),
+        nullable=True,
+        comment=(
+            "§17's bounding box, as a **fraction of the normalized artifact** rather than "
+            "a pixel of the photograph. `ml/normalization` (#38) warps every image to one "
+            "756x1056 artifact, so a coordinate in that space survives a retake and "
+            "compares across cards, where a raw-photograph coordinate would be "
+            "meaningless the moment the framing changed. A fraction rather than a pixel "
+            "of that artifact, so its resolution could change without rewriting every row "
+            "— and so this module never has to import `ml/normalization`, which would put "
+            "OpenCV in the API image. All four columns or none."
+        ),
+    ),
+    sa.Column("bbox_y", sa.Double(), nullable=True, comment="As `bbox_x`, downward."),
+    sa.Column("bbox_width", sa.Double(), nullable=True, comment="As `bbox_x`, and positive."),
+    sa.Column("bbox_height", sa.Double(), nullable=True, comment="As `bbox_y`, and positive."),
+    sa.Column(
+        "polygon",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "§17's polygon — an array of [x, y] pairs in the same fractional artifact "
+            "space as the box above, for a defect a rectangle describes badly. JSONB "
+            "rather than a table of points, because nothing joins it and no query asks "
+            "about one vertex. §17 says to capture spatial data from the beginning even "
+            "though defect visualization is post-V1, and this is that: storable now, read "
+            "by nothing yet."
+        ),
+    ),
+    sa.Column(
+        "metadata",
+        postgresql.JSONB(),
+        server_default=NO_METADATA,
+        nullable=False,
+        comment=(
+            "§17's metadata — whatever the tool recorded that has no column of its own. "
+            "Never the label, the severity or the confidence, each of which has a column "
+            "and a constraint."
+        ),
+    ),
+    sa.Column(
+        "annotator_id",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "§30's annotator ID — **an opaque identifier, never a name and never an "
+            "email**. Spec §53's restraint applies to the people who label the corpus as "
+            "much as to the people who use the product, and "
+            "ck_image_annotations_annotator_id_is_opaque is that rule rather than a convention."
+        ),
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        comment=(
+            "**§30's annotation timestamp, and there is deliberately no second column for "
+            "it.** `training_images` carries both `acquired_at` and `created_at` because "
+            "a photograph is taken long before it is ingested; an annotation *happens* "
+            "when the tool writes the row, so an `annotated_at` beside this one would be "
+            "one fact stored twice and free to disagree with itself."
+        ),
+    ),
+    sa.CheckConstraint(_KIND_REGION_AND_LABEL, name="kind_region_and_label_agree"),
+    sa.CheckConstraint(_SEVERITY_PAIRING, name="a_defect_carries_a_severity"),
+    sa.CheckConstraint(
+        f"severity IS NULL OR {one_of('severity', DefectSeverity)}",
+        name="severity_is_a_known_severity",
+    ),
+    sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_is_a_unit_interval"),
+    sa.CheckConstraint(
+        "num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)",
+        name="bounding_box_is_whole_or_absent",
+    ),
+    sa.CheckConstraint(_BOX_LIES_INSIDE_THE_ARTIFACT, name="bounding_box_lies_inside_the_artifact"),
+    sa.CheckConstraint(
+        "polygon IS NULL OR jsonb_typeof(polygon) = 'array'", name="polygon_is_an_array"
+    ),
+    sa.CheckConstraint(f"annotator_id ~ '{_ANNOTATOR_ID_PATTERN}'", name="annotator_id_is_opaque"),
+    # The annotation tool's only query — every annotation for the image on
+    # screen — and the index the CASCADE check uses.
+    sa.Index("ix_image_annotations_training_image_id", "training_image_id"),
+    comment=(
+        "One marker on one photograph — spec §30's corner, edge and surface defect "
+        "annotation, carrying §17's spatial data and severity. **Append-only**: "
+        "trg_image_annotations_immutable refuses an UPDATE, so a corrected annotation is a new "
+        "row and a dataset version that referenced the old one keeps meaning what it "
+        "meant. Nothing is unique per image, for the same reason: a surface has as many "
+        "defects as it has, and the current view of a corner is the newest row for it. "
+        "Named `image_annotations` rather than `annotations` because every module here "
+        "carries `from __future__ import annotations`, and a table object called "
+        "`annotations` shadows that binding wherever it is imported — the name is also "
+        "the more accurate one, since this annotates an image."
+    ),
+)
+
+
+centering_measurements = sa.Table(
+    "centering_measurements",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "training_image_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            training_images.c.id,
+            ondelete="CASCADE",
+            name="fk_centering_measurements_training_image_id_training_images",
+        ),
+        nullable=False,
+        comment="The photograph measured. CASCADE, for the reason `image_annotations` gives.",
+    ),
+    sa.Column(
+        "horizontal",
+        sa.Double(),
+        nullable=True,
+        comment=(
+            "The left border as a fraction of the two side borders together — "
+            "left / (left + right). **0.5 is perfect centering**; below it the artwork "
+            "sits left, above it right. Stated in one direction here because a ratio that "
+            "means two things is worse than no ratio: '55/45' is ambiguous about which "
+            "number is which, and §13 asks for ratios rather than qualitative labels "
+            "without saying which way round. NULL where the axis cannot be measured — see "
+            "the table comment."
+        ),
+    ),
+    sa.Column(
+        "vertical",
+        sa.Double(),
+        nullable=True,
+        comment=(
+            "The top border as a fraction of the two end borders together — "
+            "top / (top + bottom). 0.5 is perfect, as above."
+        ),
+    ),
+    sa.Column(
+        "confidence",
+        sa.Double(),
+        nullable=False,
+        comment=(
+            "§30's uncertainty, in [0, 1] — required here exactly as on `image_annotations`, so "
+            "that every annotation type can express it. A border read off a worn or "
+            "glare-lit edge is a real measurement with a low confidence, and recording it "
+            "at 1.0 would be the fabricated certainty spec §2.7 forbids."
+        ),
+    ),
+    sa.Column(
+        "notes",
+        sa.Text(),
+        nullable=True,
+        comment=(
+            "Free text — in practice, which of §21's awkward layouts this card is and "
+            "what the annotator measured against. Not one of §30's eleven and not a "
+            "vocabulary: template awareness is M7's model, and this is the human's note "
+            "to it."
+        ),
+    ),
+    sa.Column(
+        "annotator_id",
+        PRINTED,
+        nullable=False,
+        comment="§30's annotator ID, under the same grammar `image_annotations` uses.",
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+        comment="§30's annotation timestamp, as on `image_annotations` and for the same reason.",
+    ),
+    # At least one axis, or the row records nothing. Not both required: see the
+    # table comment.
+    sa.CheckConstraint(
+        "horizontal IS NOT NULL OR vertical IS NOT NULL", name="a_measurement_measures_something"
+    ),
+    sa.CheckConstraint(_RATIOS_ARE_UNIT_INTERVALS, name="ratios_are_unit_intervals"),
+    sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_is_a_unit_interval"),
+    sa.CheckConstraint(f"annotator_id ~ '{_ANNOTATOR_ID_PATTERN}'", name="annotator_id_is_opaque"),
+    sa.Index("ix_centering_measurements_training_image_id", "training_image_id"),
+    comment=(
+        "Spec §30's centering measurements for one side of one card — §21's output, which "
+        "§13 requires be ratios rather than qualitative labels. **Its own table rather "
+        "than a fourth `image_annotations.kind`**: a measurement carries no label, no severity "
+        "and no bounding box, and a marker carries no ratio, so one table would leave half "
+        "of every row NULL by construction and would need two families of paired "
+        "constraints to say which half. **Each axis is nullable on its own**, because §21 "
+        "names full-art and borderless layouts outright: a card with no border on an axis "
+        "has no ratio there, and inventing 0.5 for it is the confidently-wrong output §2.7 "
+        "exists to forbid. Append-only, like `image_annotations`."
+    ),
+)
+
+
 #: Every table this module contributes to the shared `MetaData`, in creation
 #: order — `dataset_members` references two of the others, and
-#: `training_image_fingerprints` one.
+#: `training_image_fingerprints`, `image_annotations` and `centering_measurements` one
+#: each.
 TABLES: Final = (
     physical_copies,
     training_images,
     training_image_fingerprints,
     dataset_versions,
     dataset_members,
+    image_annotations,
+    centering_measurements,
 )
 
 
@@ -807,4 +1182,107 @@ sa.event.listen(
     dataset_versions,
     "before_drop",
     _DROP_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
+)
+
+
+# ---------------------------------------------------------------------------
+# An annotation is appended, never edited
+# ---------------------------------------------------------------------------
+# A **second** function rather than a fourth caller of the one above, and the
+# reason is the `HINT`. `dataset_records_are_immutable()` tells the reader to
+# publish a new dataset version, which is the right instruction for
+# `dataset_versions` and `dataset_members` and the wrong one for an annotator
+# who mistyped a severity. The `MESSAGE` is `TG_TABLE_NAME`-driven and would have
+# been fine; the hint is what an operator acts on at three in the morning, so it
+# is worth twelve lines rather than being made generic enough to fit both.
+#
+# The rule itself is the same one #27 and #50 apply: a corrected annotation is a
+# new row, because a dataset version that referenced the old one must keep
+# meaning what it meant. `UPDATE` only, as everywhere else in this domain —
+# spec §54's disposal and a withdrawn contributor both need rows removable, and
+# the `CASCADE` from `training_images` is one of the paths that removes them.
+_ANNOTATION_IMMUTABLE_FUNCTION: Final = _ddl(
+    """
+    CREATE OR REPLACE FUNCTION annotation_records_are_immutable()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        RAISE USING
+            ERRCODE = 'restrict_violation',
+            MESSAGE = TG_TABLE_NAME || ' is append-only: '
+                      || TG_OP || ' was refused',
+            HINT    = 'Record a correction as a new annotation rather than editing one.';
+    END;
+    $$;
+    """
+)
+
+_IMAGE_ANNOTATIONS_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_image_annotations_immutable
+    BEFORE UPDATE ON image_annotations
+    FOR EACH ROW EXECUTE FUNCTION annotation_records_are_immutable();
+    """
+)
+
+_CENTERING_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_centering_measurements_immutable
+    BEFORE UPDATE ON centering_measurements
+    FOR EACH ROW EXECUTE FUNCTION annotation_records_are_immutable();
+    """
+)
+
+_DROP_IMAGE_ANNOTATIONS_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_image_annotations_immutable ON image_annotations"
+)
+
+_DROP_CENTERING_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_centering_measurements_immutable ON centering_measurements"
+)
+
+_DROP_ANNOTATION_IMMUTABLE_FUNCTION: Final = _ddl(
+    "DROP FUNCTION IF EXISTS annotation_records_are_immutable()"
+)
+
+sa.event.listen(
+    image_annotations,
+    "after_create",
+    _ANNOTATION_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    image_annotations, "after_create", _IMAGE_ANNOTATIONS_TRIGGER.execute_if(dialect="postgresql")
+)
+# The function is created before *each* trigger, not once before both.
+# `dataset_members` can rely on `dataset_versions` having been created first,
+# because a foreign key orders them; these two tables reference only
+# `training_images` and so are ordered against each other alphabetically —
+# `centering_measurements` first. `CREATE OR REPLACE` is idempotent, which makes
+# the ordering stop mattering.
+sa.event.listen(
+    centering_measurements,
+    "after_create",
+    _ANNOTATION_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    centering_measurements, "after_create", _CENTERING_TRIGGER.execute_if(dialect="postgresql")
+)
+sa.event.listen(
+    centering_measurements, "before_drop", _DROP_CENTERING_TRIGGER.execute_if(dialect="postgresql")
+)
+sa.event.listen(
+    image_annotations,
+    "before_drop",
+    _DROP_IMAGE_ANNOTATIONS_TRIGGER.execute_if(dialect="postgresql"),
+)
+# Dropped last, and attached to `image_annotations` for the reason the pair above
+# gives: `DROP TABLE` takes each trigger with it but never the function the two
+# share. Note which function this is — dropping
+# `dataset_records_are_immutable()` here would silently unguard
+# `dataset_versions` and `dataset_members`.
+sa.event.listen(
+    image_annotations,
+    "before_drop",
+    _DROP_ANNOTATION_IMMUTABLE_FUNCTION.execute_if(dialect="postgresql"),
 )
