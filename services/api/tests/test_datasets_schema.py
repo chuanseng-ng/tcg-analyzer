@@ -809,9 +809,7 @@ def test_a_representation_outside_the_two_frames_is_refused() -> None:
     # On a surface row, so the membership CHECK is the one that fires —
     # 'photograph' on a corner would trip the only-a-surface rule first.
     with pytest.raises(IntegrityError, match="representation_is_a_known_representation"):
-        insert_annotation(
-            kind="surface", region=None, label="scratch", representation="photograph"
-        )
+        insert_annotation(kind="surface", region=None, label="scratch", representation="photograph")
 
 
 def test_a_representation_nobody_named_is_refused() -> None:

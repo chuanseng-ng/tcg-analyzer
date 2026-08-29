@@ -348,6 +348,7 @@ _MARKER_COLUMNS: Final = (
     image_annotations.c.bbox_y,
     image_annotations.c.bbox_width,
     image_annotations.c.bbox_height,
+    image_annotations.c.representation,
     image_annotations.c.annotator_id,
     image_annotations.c.created_at,
 )
@@ -365,14 +366,15 @@ _MEASUREMENT_COLUMNS: Final = (
 
 @dataclass(frozen=True, slots=True)
 class BoundingBox:
-    """Where a defect is, as fractions of the normalized artifact.
+    """Where a defect is, as fractions of the representation its marker names.
 
-    Never pixels, and never a fraction of the photograph: `ml/normalization`
-    warps every image to one artifact, so a coordinate in that space survives a
-    retake and compares across cards. Four values here and four columns in the
-    schema, but **one optional object** — `num_nulls(bbox_x, …) IN (0, 4)` is
-    what makes a partial box unrepresentable, and a single object is that rule
-    in Python.
+    Never pixels. For `normalized` that is the artifact `ml/normalization` warps
+    every image to, so the coordinate survives a retake and compares across
+    cards; for `original` it is the photograph itself — ADR 0010's one route to
+    §16's fine defect classes, open to surface markers only (#175). Four values
+    here and four columns in the schema, but **one optional object** —
+    `num_nulls(bbox_x, …) IN (0, 4)` is what makes a partial box
+    unrepresentable, and a single object is that rule in Python.
     """
 
     x: float
@@ -383,7 +385,12 @@ class BoundingBox:
 
 @dataclass(frozen=True, slots=True)
 class DefectMarker:
-    """One corner, edge or surface marker to record — spec §14, §15, §16, §17."""
+    """One corner, edge or surface marker to record — spec §14, §15, §16, §17.
+
+    `representation` is #175's discriminator and the router supplies it for
+    every kind — `NORMALIZED` for corners and edges, the client's declaration
+    for a surface. This module stays dumb about the rule; the CHECK holds it.
+    """
 
     kind: str
     region: str | None
@@ -391,6 +398,7 @@ class DefectMarker:
     severity: str | None
     confidence: float
     bbox: BoundingBox | None
+    representation: Representation
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +428,7 @@ class StoredMarker:
     severity: str | None
     confidence: float
     bbox: BoundingBox | None
+    representation: Representation
     annotator_id: str
     created_at: datetime
 
@@ -467,6 +476,7 @@ def _marker(row: sa.Row[tuple[object, ...]]) -> StoredMarker:
         severity=row.severity,
         confidence=row.confidence,
         bbox=_box(row),
+        representation=row.representation,
         annotator_id=row.annotator_id,
         created_at=row.created_at,
     )
@@ -572,6 +582,7 @@ async def record_annotations(
                         "bbox_y": None if marker.bbox is None else marker.bbox.y,
                         "bbox_width": None if marker.bbox is None else marker.bbox.width,
                         "bbox_height": None if marker.bbox is None else marker.bbox.height,
+                        "representation": marker.representation,
                         "annotator_id": annotator_id,
                     }
                     for marker in markers

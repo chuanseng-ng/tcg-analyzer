@@ -3,9 +3,9 @@
 #158 fixed that an annotation's coordinates are fractions of the normalized
 artifact, and #160's endpoint refuses coordinates where no artifact exists.
 ADR 0010 then measured that rule's limit: at 12 px/mm a hairline scratch is
-0.1–0.6 px, so §16's fine defect classes — scratch, print_line, print_dot,
+0.1-0.6 px, so §16's fine defect classes — scratch, print_line, print_dot,
 gloss_issue — are below the sampling limit of the artifact at any rate a
-source photograph supports. The original photograph (~34–36 px/mm as measured)
+source photograph supports. The original photograph (~34-36 px/mm as measured)
 is the only frame in which those classes are even arguable, and the ADR names
 #175 as the one route back: a *surface* annotation may declare its coordinates
 fractions of the original photograph, as an explicit representation on the row
@@ -191,9 +191,7 @@ def downgrade() -> None:
         comment=BBOX_X_COMMENT_BEFORE,
         existing_comment=BBOX_X_COMMENT,
     )
-    op.drop_constraint(
-        "only_a_surface_marks_the_original", "image_annotations", type_="check"
-    )
+    op.drop_constraint("only_a_surface_marks_the_original", "image_annotations", type_="check")
     op.drop_constraint(
         "representation_is_a_known_representation", "image_annotations", type_="check"
     )

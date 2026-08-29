@@ -96,7 +96,12 @@ COMPOSED_CHECKS = (
 def migration_source() -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
-        for path in (MIGRATION, FINGERPRINTS_MIGRATION, ANNOTATION_MIGRATION, REPRESENTATION_MIGRATION)
+        for path in (
+            MIGRATION,
+            FINGERPRINTS_MIGRATION,
+            ANNOTATION_MIGRATION,
+            REPRESENTATION_MIGRATION,
+        )
     )
 
 

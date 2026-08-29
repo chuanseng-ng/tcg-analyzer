@@ -91,6 +91,39 @@ def test_the_three_vocabularies_reach_the_openapi_schema_separately() -> None:
     assert "crease" not in edge_labels
 
 
+def test_only_the_surface_model_names_a_representation() -> None:
+    """#175 changes the coordinate space of *surface* annotations only.
+
+    The field is required with no default — a frame nobody named must be
+    refused rather than read as a choice, `confidence`'s rule — and it exists
+    on no other marker model: `extra="forbid"` turns a corner request naming
+    one into a 422 rather than a silently dropped field.
+    """
+    field = SurfaceMarkerRequest.model_fields["representation"]
+
+    assert field.is_required()
+    assert "representation" not in CornerMarkerRequest.model_fields
+    assert "representation" not in EdgeMarkerRequest.model_fields
+
+
+def test_the_representation_reaches_the_openapi_schema_where_it_belongs() -> None:
+    """The tool learns the field from the document, like every vocabulary.
+
+    Required on `SurfaceMarkerRequest`, absent from the other two request
+    models, and present on the stored-marker response so the viewer can filter
+    an overlay by the frame each box belongs to.
+    """
+    schemas = create_app().openapi()["components"]["schemas"]
+
+    surface = schemas["SurfaceMarkerRequest"]
+    assert "representation" in surface["properties"]
+    assert "representation" in surface["required"]
+    assert set(surface["properties"]["representation"]["enum"]) == {"normalized", "original"}
+    assert "representation" not in schemas["CornerMarkerRequest"]["properties"]
+    assert "representation" not in schemas["EdgeMarkerRequest"]["properties"]
+    assert "representation" in schemas["StoredMarkerResponse"]["properties"]
+
+
 def test_nothing_in_the_write_module_updates_or_deletes_a_row() -> None:
     """There is no edit path, and a source-level assertion keeps it that way.
 

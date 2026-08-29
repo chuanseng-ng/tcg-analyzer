@@ -1028,7 +1028,9 @@ image_annotations = sa.Table(
     sa.CheckConstraint(
         one_of("representation", REPRESENTATIONS), name="representation_is_a_known_representation"
     ),
-    sa.CheckConstraint(_ONLY_A_SURFACE_MARKS_THE_ORIGINAL, name="only_a_surface_marks_the_original"),
+    sa.CheckConstraint(
+        _ONLY_A_SURFACE_MARKS_THE_ORIGINAL, name="only_a_surface_marks_the_original"
+    ),
     sa.CheckConstraint(
         "polygon IS NULL OR jsonb_typeof(polygon) = 'array'", name="polygon_is_an_array"
     ),
