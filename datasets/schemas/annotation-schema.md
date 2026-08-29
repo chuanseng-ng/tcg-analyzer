@@ -119,6 +119,12 @@ annotation stored against **those** coordinates survives a retake and compares
 across cards; one stored against raw-photograph pixels becomes unusable the
 moment the framing changes.
 
+For a training image that artifact is a **stored object**, not something
+recomputed per reader: `tcg-normalize-training-images` produces it and
+`training_images.normalized_uri` names it (#159). An image that has none is one
+the detector found no card in, and the annotation tool shows the photograph while
+saying so — because a coordinate cannot be taken against it.
+
 They are stored as **fractions in `[0, 1]` of that artifact** rather than as
 integer pixels of it. Two reasons, and the second is the decisive one:
 
@@ -126,6 +132,13 @@ integer pixels of it. Two reasons, and the second is the decisive one:
 - `tables.py` never has to import `ml/normalization` for the two dimensions,
   which would put OpenCV in the internet-facing API image —
   `services/api/tests/test_import_purity.py` forbids exactly that.
+
+**That first reason is about the schema, and it is not a licence to re-warp.**
+A stored artifact is never replaced: an annotation is a fraction of *the artifact
+its annotator saw*, so re-normalizing an image somebody has already judged would
+move every coordinate on it without touching a row here. #159's pass selects
+`normalized_uri IS NULL` and nothing else, and has no `--force` for that reason.
+A resolution change is a deliberate act with a re-annotation behind it.
 
 The numbers 756 and 1056 therefore appear nowhere in this schema, and a test
 asserts their absence.

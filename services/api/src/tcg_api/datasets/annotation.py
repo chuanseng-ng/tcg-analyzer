@@ -15,7 +15,6 @@ that has none is answered honestly rather than warped on the spot.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final
@@ -45,8 +44,6 @@ __all__ = [
     "read_image",
     "read_work_list",
 ]
-
-logger = logging.getLogger(__name__)
 
 _UNREACHABLE: Final = "the training image corpus could not be read"
 
