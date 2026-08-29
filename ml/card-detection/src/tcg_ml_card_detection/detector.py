@@ -6,17 +6,29 @@ find. `ml/image-quality` is the model for the shape of this module and for the
 same reason: no database, no object storage, no HTTP, so everything worth
 asserting about it can be asserted by a test that needs no infrastructure.
 
-**Three extraction passes, ORed, and the second and third are the ones the issue
-asks for.** A plain Canny edge map finds a card front lying on a contrasting
-surface, and nothing else needs saying about that case. The issue names two
-harder ones: a dark card on a dark table, whose boundary gradient is almost
-nothing, and a card *back*, which is one flat field with none of a front's
-internal structure. A CLAHE-equalised Canny pass handles the first by amplifying
-local contrast before the edge detector sees it; an Otsu region pass handles the
-second by splitting the picture into two tonal populations instead of looking
-for a gradient at all, in both polarities since either the card or the surface
-may be the brighter one. Any pass may find the card, and their results are
-pooled and then grouped.
+**Four extraction passes, ORed, and only the first is the easy one.** A plain
+Canny edge map finds a card front lying on a contrasting surface, and nothing
+else needs saying about that case. #37 names two harder ones: a dark card on a
+dark table, whose boundary gradient is almost nothing, and a card *back*, which
+is one flat field with none of a front's internal structure. A CLAHE-equalised
+Canny pass handles the first by amplifying local contrast before the edge
+detector sees it; an Otsu region pass handles the second by splitting the
+picture into two tonal populations instead of looking for a gradient at all, in
+both polarities since either the card or the surface may be the brighter one.
+#176 names two more, both close-range: a card whose luminance contrast wear has
+taken, and a card merged with its own shadow. A saturation pass handles both —
+a card face is saturated where a white surface and the card's own grey shadow
+are not. Any pass may find the card, and their results are pooled and then
+grouped.
+
+**A frame-filling quadrilateral is refused, not returned.** #176's shadow-merged
+close-ups fitted a quadrilateral running to the frame's own corner and reported
+it at 76-82% confidence — the confidently wrong answer this project's
+invariants forbid, because the artifact warped from it mis-frames every
+downstream coordinate. A candidate that both touches the frame boundary and
+fills most of the frame is the picture's boundary wearing card-like
+proportions: it is dropped before grouping, and when nothing else was found the
+answer is `insufficient_information`.
 
 **Concentric quadrilaterals are one card, not two.** A sleeve, a top-loader, and
 the inner and outer walls of a Canny edge ribbon all produce a second
@@ -69,6 +81,13 @@ _Quad = tuple[Corner, Corner, Corner, Corner]
 #: Said when nothing card-like survived the filters.
 _NOTHING_FOUND: Final = "no card-like quadrilateral was found in the photograph"
 
+#: Said when everything card-like that was found hugged the frame — #176's
+#: shadow-merged blob, or a scan with no border.
+_FRAME_FILLING: Final = (
+    "only a frame-filling quadrilateral was found, which is the picture's own "
+    "boundary rather than a card"
+)
+
 #: Said when the bytes did not decode. The gate raises for this case; this
 #: package answers rather than racing it to the exception, so that the one place
 #: undecodable bytes become a job failure stays
@@ -80,6 +99,13 @@ _UNDECODABLE: Final = "the photograph could not be decoded"
 #: than making a decision.
 _ASPECT_TOLERANCE: Final = 0.25
 
+#: How much clearance a corner needs from the frame boundary, as a fraction of
+#: the frame's short edge, before it stops costing confidence. The gate's
+#: `border_margin_ideal`, and like :data:`_ASPECT_TOLERANCE` it shapes a
+#: confidence rather than making a decision — the decision is
+#: :attr:`DetectionThresholds.frame_margin_fraction`'s.
+_EDGE_TOLERANCE: Final = 0.02
+
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
@@ -90,6 +116,9 @@ class _Candidate:
     centre: Corner
     rectangularity: float
     aspect: float
+    #: Least corner-to-frame-edge gap as a fraction of the frame's short edge —
+    #: the working-copy twin of `CardGeometry.border_margin_fraction`.
+    boundary_margin: float
 
 
 def detect(
@@ -115,15 +144,23 @@ def detect(
         return InsufficientInformation(_UNDECODABLE)
 
     original_height, original_width = colour.shape[:2]
-    gray, scale = _working_gray(colour, long_edge=thresholds.work_long_edge)
+    gray, saturation, scale = _working_copies(colour, long_edge=thresholds.work_long_edge)
     height, width = gray.shape[:2]
 
-    candidates = _candidates(gray, thresholds=thresholds)
+    candidates = _candidates(gray, saturation, thresholds=thresholds)
     if not candidates:
         return InsufficientInformation(_NOTHING_FOUND)
 
+    grounded = [
+        candidate
+        for candidate in candidates
+        if not _hugs_frame(candidate, frame_area=float(height * width), thresholds=thresholds)
+    ]
+    if not grounded:
+        return InsufficientInformation(_FRAME_FILLING)
+
     groups = _group_by_centre(
-        candidates, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
+        grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
     card_group = max(groups, key=lambda group: max(member.area for member in group))
     card = max(card_group, key=lambda member: member.area)
@@ -145,34 +182,37 @@ def detect(
 # ---------------------------------------------------------------------------
 
 
-def _working_gray(colour: _Gray, *, long_edge: int) -> tuple[_Gray, float]:
-    """Grayscale, scaled so the long edge is at most `long_edge`, and the scale.
+def _working_copies(colour: _Gray, *, long_edge: int) -> tuple[_Gray, _Gray, float]:
+    """Grayscale and saturation, scaled to at most `long_edge`, and the scale.
 
     Downscaled because contour extraction on a 48-megapixel photograph is both
     slower and *worse*: sensor noise becomes contours, and the morphology kernel
     sizes below are pixel counts calibrated against this working size. Never
-    enlarged. The scale is returned so corners can be put back into the
-    original's coordinates, which is the only space anything downstream works
-    in.
+    enlarged. The colour image is resized once and both channels derive from
+    the same copy, so the maps agree pixel for pixel. The scale is returned so
+    corners can be put back into the original's coordinates, which is the only
+    space anything downstream works in.
     """
-    gray: _Gray = cv2.cvtColor(colour, cv2.COLOR_BGR2GRAY)
-    height, width = gray.shape[:2]
+    height, width = colour.shape[:2]
     scale = long_edge / max(height, width)
     if scale >= 1.0:
-        return gray, 1.0
-    resized: _Gray = cv2.resize(
-        gray,
-        (max(1, round(width * scale)), max(1, round(height * scale))),
-        interpolation=cv2.INTER_AREA,
-    )
-    return resized, scale
+        scale = 1.0
+    else:
+        colour = cv2.resize(
+            colour,
+            (max(1, round(width * scale)), max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    gray: _Gray = cv2.cvtColor(colour, cv2.COLOR_BGR2GRAY)
+    saturation: _Gray = cv2.cvtColor(colour, cv2.COLOR_BGR2HSV)[:, :, 1]
+    return gray, saturation, scale
 
 
-def _binary_maps(gray: _Gray) -> tuple[_Gray, ...]:
-    """The three extraction passes, as maps `findContours` can walk.
+def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
+    """The four extraction passes, as maps `findContours` can walk.
 
-    Four maps rather than three: the Otsu pass contributes both polarities. See
-    the module docstring for why there are three. The closing kernel joins
+    Five maps rather than four: the Otsu pass contributes both polarities. See
+    the module docstring for why there are four. The closing kernel joins
     an edge that a compression artifact or a soft focus left with a gap in it —
     without it a card is found as four unconnected lines and no quadrilateral at
     all.
@@ -199,10 +239,20 @@ def _binary_maps(gray: _Gray) -> tuple[_Gray, ...]:
         # "foreground" depends on which is brighter, and both cases happen.
         region,
         cv2.bitwise_not(region),
+        # The saturation pass, in the direct polarity only: a grey card on a
+        # saturated surface is speculative, and every case #176 names is a
+        # saturated card on a grey one.
+        cv2.morphologyEx(
+            cv2.threshold(saturation, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
+            cv2.MORPH_CLOSE,
+            kernel,
+        ),
     )
 
 
-def _candidates(gray: _Gray, *, thresholds: DetectionThresholds) -> list[_Candidate]:
+def _candidates(
+    gray: _Gray, saturation: _Gray, *, thresholds: DetectionThresholds
+) -> list[_Candidate]:
     """Every card-like quadrilateral any pass found, before grouping."""
     height, width = gray.shape[:2]
     frame_area = float(height * width)
@@ -210,7 +260,7 @@ def _candidates(gray: _Gray, *, thresholds: DetectionThresholds) -> list[_Candid
     largest = thresholds.max_area_fraction * frame_area
 
     found: list[_Candidate] = []
-    for binary in _binary_maps(gray):
+    for binary in _binary_maps(gray, saturation):
         # RETR_LIST rather than RETR_EXTERNAL: a sleeve is *inside* the outline
         # of nothing, but a card is inside a sleeve, and the enclosed one is the
         # one this package exists to find.
@@ -221,14 +271,21 @@ def _candidates(gray: _Gray, *, thresholds: DetectionThresholds) -> list[_Candid
             contour_area = float(cv2.contourArea(contour))
             if not smallest <= contour_area <= largest:
                 continue
-            candidate = _as_candidate(contour, contour_area, thresholds=thresholds)
+            candidate = _as_candidate(
+                contour, contour_area, width=width, height=height, thresholds=thresholds
+            )
             if candidate is not None and smallest <= candidate.area <= largest:
                 found.append(candidate)
     return found
 
 
 def _as_candidate(
-    contour: MatLike, contour_area: float, *, thresholds: DetectionThresholds
+    contour: MatLike,
+    contour_area: float,
+    *,
+    width: int,
+    height: int,
+    thresholds: DetectionThresholds,
 ) -> _Candidate | None:
     """One contour as a card-like quadrilateral, or `None` if it is not one."""
     perimeter = float(cv2.arcLength(contour, closed=True))
@@ -258,12 +315,14 @@ def _as_candidate(
     if not thresholds.min_aspect <= aspect <= thresholds.max_aspect:
         return None
 
+    gaps = [gap for x, y in quad for gap in (x, y, width - x, height - y)]
     return _Candidate(
         quad=quad,
         area=area,
         centre=_centre(quad),
         rectangularity=min(1.0, rectangularity),
         aspect=aspect,
+        boundary_margin=max(0.0, min(gaps)) / float(min(width, height)),
     )
 
 
@@ -323,6 +382,25 @@ def _centre(quad: _Quad) -> Corner:
     return (
         sum(corner[0] for corner in quad) / 4.0,
         sum(corner[1] for corner in quad) / 4.0,
+    )
+
+
+def _hugs_frame(
+    candidate: _Candidate, *, frame_area: float, thresholds: DetectionThresholds
+) -> bool:
+    """Whether this quadrilateral is the picture's own boundary, not a card.
+
+    Both conditions, deliberately: a clipped card touches the frame boundary
+    too, but a clipped card does not also fill most of the frame. #176's
+    shadow-merged blobs did both — and were returned at 76-82% confidence.
+
+    ponytail: a card that legitimately fills the frame to the very edge is
+    refused with everything else that hugs it; a learned detector that can tell
+    a card's boundary from the picture's is the upgrade.
+    """
+    return (
+        candidate.boundary_margin <= thresholds.frame_margin_fraction
+        and candidate.area >= thresholds.frame_fill_fraction * frame_area
     )
 
 
@@ -391,7 +469,12 @@ def _confidence(card: _Candidate) -> Confidence:
     calibration belongs.
     """
     closeness = 1.0 - min(1.0, abs(card.aspect - CARD_ASPECT) / _ASPECT_TOLERANCE)
-    return Confidence.of(min(1.0, max(0.0, 0.5 * card.rectangularity + 0.5 * closeness)))
+    # A boundary the quadrilateral shares with the picture is one the detector
+    # cannot vouch for (#176): no clearance halves the score, full clearance
+    # leaves it untouched.
+    clearance = min(1.0, card.boundary_margin / _EDGE_TOLERANCE)
+    base = 0.5 * card.rectangularity + 0.5 * closeness
+    return Confidence.of(min(1.0, max(0.0, base * (0.5 + 0.5 * clearance))))
 
 
 def _rescaled(quad: _Quad, *, scale: float, width: int, height: int) -> _Quad:
