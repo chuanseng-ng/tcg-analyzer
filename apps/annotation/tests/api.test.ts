@@ -144,6 +144,7 @@ const STORED_MARKER = {
   severity: "minor",
   confidence: 0.8,
   bbox: { x: 0.01, y: 0.02, width: 0.06, height: 0.05 },
+  representation: "normalized",
   annotator_id: "annotator",
   created_at: "2026-08-29T10:00:00Z",
 };

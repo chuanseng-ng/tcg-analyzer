@@ -343,7 +343,7 @@ export interface paths {
          *
          *     **The annotator and the timestamp are the service's.** §30 asks that both be recorded automatically rather than typed, so the request carries neither; the annotator comes from `TCG_API_ANNOTATOR_ID` and the timestamp from the row's default. That is also what keeps `annotator_id`'s grammar — which spec §53 makes structural, by having no `@` in it — out of a client's reach.
          *
-         *     **Coordinates need an artifact.** A bounding box and a centering ratio are both fractions of the standardized artifact; against a photograph no card was located in, they mean nothing. Sending either for an image whose `has_artifact` is false is a 409. A marker with no box is still accepted there, because a corner's region names its position.
+         *     **Claims about the artifact need the artifact.** A centering ratio, a corner or edge bounding box, and a surface annotation declaring 'normalized' are all claims about the standardized artifact; against a photograph no card was located in, they mean nothing, and sending one for an image whose `has_artifact` is false is a 409. A corner or edge marker with no box is still accepted there — its region names its position — and so is any surface marker declaring 'original': the photograph always exists, and ADR 0010 makes it the one frame that resolves §16's fine defect classes (#175).
          *
          *     Recording anything takes the image off `GET /internal/annotation/images`.
          */
@@ -669,11 +669,13 @@ export interface components {
         };
         /**
          * BoundingBoxModel
-         * @description Spec §17's bounding box, as fractions of the normalized artifact.
+         * @description Spec §17's bounding box, as fractions of the representation its marker names.
          *
          *     **Fractions, never pixels.** The artifact's resolution is `ml/normalization`'s
          *     and appears nowhere in this service — a fraction survives a change to it, and
-         *     a pixel would not.
+         *     a pixel would not. For a corner or edge the frame is always the artifact; a
+         *     surface marker declares its own (#175, ADR 0010), and the unit-square rule
+         *     below is the same in either.
          *
          *     One object rather than four fields, because the schema's rule is
          *     `num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)`: a box is whole
@@ -2261,6 +2263,11 @@ export interface components {
              */
             region?: string | null;
             /**
+             * Representation
+             * @description Which frame the coordinates are fractions of — 'normalized' or 'original'. Always 'normalized' for a corner or an edge (#175).
+             */
+            representation: string;
+            /**
              * Severity
              * @description How bad, null where nothing was rated.
              */
@@ -2347,6 +2354,13 @@ export interface components {
              * @example scratch
              */
             label: components["schemas"]["SurfaceLabel"];
+            /**
+             * Representation
+             * @description Which frame the coordinates are fractions of — 'normalized' (the standardized artifact) or 'original' (the photograph as ingested). ADR 0010 measured that the artifact cannot resolve §16's fine defect classes, so #175 lets a surface annotation — and only a surface — mark the original photograph. **Required, with no default**, for the reason `confidence` gives: a frame nobody named must be refused rather than read as a choice. Corners and edges carry no such field; theirs is always the artifact.
+             * @example original
+             * @enum {string}
+             */
+            representation: "normalized" | "original";
             /**
              * @description How bad it is — an **ordinal**, because there is one annotator and no agreement study, so finer granularity would record a precision nobody could reproduce. Null exactly when the label asserts no defect (`clean` found nothing to rate, `unknown` could not rate what it found), and required otherwise.
              * @example minor
@@ -3282,7 +3296,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The image has no stored artifact, and the annotation carries coordinates that would be fractions of one. Also a bare body — §66 has no code for a conflict, and a ninth is not invented for this. */
+            /** @description The image has no stored artifact, and the annotation makes a claim about one — coordinates, or a surface declaration of 'normalized'. Also a bare body — §66 has no code for a conflict, and a ninth is not invented for this. */
             409: {
                 headers: {
                     [name: string]: unknown;

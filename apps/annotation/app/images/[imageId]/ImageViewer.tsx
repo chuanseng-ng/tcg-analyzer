@@ -19,6 +19,7 @@ import {
   saveAnnotations,
   type AnnotationImageResponse,
   type AnnotationImageSummary,
+  type Representation,
   type StoredMarker,
 } from "@/lib/api";
 import {
@@ -109,6 +110,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
   const [showing, setShowing] = useState(imageId);
 
   const [tool, setTool] = useState<Tool>("pan");
+  const [shown, setShown] = useState<Representation>("normalized");
   const [pending, setPending] = useState<BoundingBox | null>(null);
   const [drafts, setDrafts] = useState<readonly MarkerDraft[]>([]);
   const [centering, setCentering] = useState<CenteringRequest | null>(null);
@@ -161,6 +163,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     setCentering(null);
     setPending(null);
     setTool("pan");
+    setShown("normalized");
     setSaveFailure(null);
   }, []);
 
@@ -205,6 +208,44 @@ export function ImageViewer({ imageId }: { imageId: string }) {
   // The stored markers are the detail's, and the detail is the route's image —
   // a sibling's are read when the annotator navigates to it.
   const stored: StoredMarker[] = current.id === image.id ? image.annotations : [];
+
+  // The frame on screen. An image with no artifact has only its photograph;
+  // one with an artifact starts there and can be toggled to the original —
+  // ADR 0010's one route to §16's fine defect classes (#175).
+  const displayed: Representation = current.has_artifact ? shown : "original";
+
+  /*
+   * On the original view of an artifact-bearing image only pan and the surface
+   * tool arm. This is not polish: a corner or edge box taken against the
+   * photograph would be stored as a fraction of the artifact, and
+   * `centeringFrom` assumes the artifact's edges are the card's edges — true
+   * only on the normalized frame. An image with *no* artifact keeps every tool
+   * armable, exactly as before #175: a boxless corner is still a true thing to
+   * say about a photograph, and the save bar warns about the rest.
+   */
+  const armable = (candidate: Tool): boolean =>
+    !current.has_artifact ||
+    displayed === "normalized" ||
+    candidate === "pan" ||
+    candidate === "surface";
+
+  // One path for the buttons and the keyboard, so neither can arm a tool the
+  // frame on screen cannot honestly serve.
+  const arm = (candidate: Tool) => {
+    if (!armable(candidate)) return;
+    setTool(candidate);
+    setPending(null);
+  };
+
+  const toggleRepresentation = () => {
+    if (!current.has_artifact) return;
+    const next: Representation = displayed === "normalized" ? "original" : "normalized";
+    setShown(next);
+    // A placed box's fractions belong to the frame it was drawn on; drafts are
+    // kept — same image — and the overlay shows each against its own frame.
+    setPending(null);
+    if (next === "original" && tool !== "pan" && tool !== "surface") setTool("pan");
+  };
 
   const show = (id: string) => {
     if (id === showing) return;
@@ -282,10 +323,12 @@ export function ImageViewer({ imageId }: { imageId: string }) {
       <Frame
         view={current}
         tool={tool}
+        representation={displayed}
         pending={pending}
         drafts={drafts}
         stored={stored}
-        onArm={setTool}
+        onArm={arm}
+        onToggleRepresentation={toggleRepresentation}
         onPreview={setPending}
         onPlace={setPending}
         onCycleView={() => {
@@ -302,8 +345,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
             className={tool === "pan" ? styles.toolOn : styles.tool}
             aria-pressed={tool === "pan"}
             onClick={() => {
-              setTool("pan");
-              setPending(null);
+              arm("pan");
             }}
           >
             Pan
@@ -314,9 +356,14 @@ export function ImageViewer({ imageId }: { imageId: string }) {
               type="button"
               className={tool === entry.tool ? styles.toolOn : styles.tool}
               aria-pressed={tool === entry.tool}
+              disabled={!armable(entry.tool)}
+              title={
+                armable(entry.tool)
+                  ? undefined
+                  : "Only surface defects are marked against the original photograph."
+              }
               onClick={() => {
-                setTool(entry.tool);
-                setPending(null);
+                arm(entry.tool);
               }}
             >
               {entry.label}
@@ -342,6 +389,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
           <MarkerControls
             tool={tool}
             pending={pending}
+            representation={displayed}
             onClearPending={() => {
               setPending(null);
             }}
@@ -351,11 +399,11 @@ export function ImageViewer({ imageId }: { imageId: string }) {
           />
         ) : null}
 
-        {tool === "surface" ? (
+        {tool === "surface" && displayed === "normalized" ? (
           <p className={styles.warning}>
             One artifact pixel is 83 microns, so a hairline scratch is smaller than a pixel and a
-            print line is one or two. Mark what you can genuinely see, and use{" "}
-            <em>I cannot tell</em> rather than guessing — the resolution question is issue #171.
+            print line is one or two (ADR 0010). Switch to the original photograph to mark fine
+            defects — press <kbd>o</kbd> — and use <em>I cannot tell</em> rather than guessing.
           </p>
         ) : null}
 
@@ -399,8 +447,9 @@ export function ImageViewer({ imageId }: { imageId: string }) {
                   {marker.kind.replace(/_/g, " ")}
                   {marker.region ? ` · ${marker.region.replace(/_/g, " ")}` : ""} ·{" "}
                   {marker.label.replace(/_/g, " ")}
-                  {marker.severity ? ` · ${marker.severity}` : ""} · {marker.annotator_id} ·{" "}
-                  {marker.created_at.slice(0, 10)}
+                  {marker.severity ? ` · ${marker.severity}` : ""}
+                  {marker.representation === "original" ? " · original photograph" : ""} ·{" "}
+                  {marker.annotator_id} · {marker.created_at.slice(0, 10)}
                 </span>
               </li>
             ))}
@@ -474,20 +523,24 @@ const FALLBACK_FRAME: Size = { width: 640, height: 800 };
 function Frame({
   view,
   tool,
+  representation,
   pending,
   drafts,
   stored,
   onArm,
+  onToggleRepresentation,
   onPreview,
   onPlace,
   onCycleView,
 }: {
   view: AnnotationImageSummary;
   tool: Tool;
+  representation: Representation;
   pending: BoundingBox | null;
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   onArm: (tool: Tool) => void;
+  onToggleRepresentation: () => void;
   onPreview: (box: BoundingBox | null) => void;
   onPlace: (box: BoundingBox) => void;
   onCycleView: () => void;
@@ -498,7 +551,6 @@ function Frame({
   const [transform, setTransform] = useState<View>({ scale: 1, x: 0, y: 0 });
   const dragging = useRef<{ x: number; y: number } | null>(null);
 
-  const representation = view.has_artifact ? "normalized" : "original";
   const source = useMemo(() => imageBytesUrl(view.id, representation), [view.id, representation]);
 
   // `getBoundingClientRect` in jsdom reports zeroes, so the fallback above is
@@ -590,6 +642,14 @@ function Frame({
         return;
       }
 
+      // `o` toggles between the artifact and the original photograph (#175).
+      // A no-op where the image has no artifact — there is nothing to toggle to.
+      if (event.key === "o" || event.key === "O") {
+        event.preventDefault();
+        onToggleRepresentation();
+        return;
+      }
+
       /*
        * Four letters and an escape, and no more. The label lists come to
        * twenty-eight members between them, and a mnemonic scheme for that many
@@ -616,15 +676,24 @@ function Frame({
       event.preventDefault();
       apply(move);
     },
-    [apply, frame, onArm, onCycleView, onPreview],
+    [apply, frame, onArm, onCycleView, onPreview, onToggleRepresentation],
   );
 
   return (
     <>
-      <p className={view.has_artifact ? styles.badgeArtifact : styles.badgeOriginal}>
-        {view.has_artifact
+      <p className={representation === "normalized" ? styles.badgeArtifact : styles.badgeOriginal}>
+        {representation === "normalized"
           ? "Normalized artifact — coordinates are fractions of this frame."
-          : "Original photograph — no card was located, so coordinates cannot be taken against it."}
+          : view.has_artifact
+            ? "Original photograph — only surface defects are marked against this frame."
+            : "Original photograph — no card was located, so only surface marks are taken against this frame."}
+        {view.has_artifact ? (
+          <button type="button" className={styles.secondary} onClick={onToggleRepresentation}>
+            {representation === "normalized"
+              ? "View the original photograph"
+              : "View the normalized artifact"}
+          </button>
+        ) : null}
       </p>
 
       <div
@@ -674,7 +743,7 @@ function Frame({
           className={showsRealPixels(transform) ? styles.imageExact : styles.image}
           src={source}
           alt={`${sideLabel(view.side)} of the card — ${
-            view.has_artifact ? "normalized artifact" : "original photograph"
+            representation === "normalized" ? "normalized artifact" : "original photograph"
           }`}
           draggable={false}
           style={{ transform: transformOf(transform) }}
@@ -693,6 +762,7 @@ function Frame({
             drafts={drafts}
             stored={stored}
             pending={pending}
+            shown={representation}
           />
         )}
 
@@ -753,8 +823,9 @@ function Frame({
       <p className={styles.keys} id="viewer-keys">
         <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> pan (hold <kbd>Shift</kbd> to go
         further) · <kbd>+</kbd> <kbd>−</kbd> zoom · <kbd>0</kbd> fit · <kbd>1</kbd> actual size ·{" "}
-        <kbd>f</kbd> other side · <kbd>c</kbd> corner · <kbd>e</kbd> edge · <kbd>s</kbd> surface ·{" "}
-        <kbd>m</kbd> centering · <kbd>Esc</kbd> back to panning
+        <kbd>f</kbd> other side · <kbd>o</kbd> original / artifact · <kbd>c</kbd> corner ·{" "}
+        <kbd>e</kbd> edge · <kbd>s</kbd> surface · <kbd>m</kbd> centering · <kbd>Esc</kbd> back to
+        panning
       </p>
     </>
   );
