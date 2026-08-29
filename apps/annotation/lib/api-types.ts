@@ -326,6 +326,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/annotation/images/{image_id}/annotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record one annotator's work on one training image
+         * @description **Not part of spec §64.** The internal annotation surface (ADR 0009) — in this application and in this schema because `apps/annotation` generates its types from it, and kept off the public origin by deployment topology rather than by being a second service. Write spec §30's corner, edge and surface markers and the centering measurement for one image, in **one transaction**.
+         *
+         *     **Append-only.** `trg_image_annotations_immutable` refuses an `UPDATE`, so there is no edit endpoint and there will not be one: a correction is a new annotation, and the current view of a corner is the newest row for it. Nothing is unique per image and per region, which is what makes that representable — and a surface has as many defects as it has.
+         *
+         *     **The annotator and the timestamp are the service's.** §30 asks that both be recorded automatically rather than typed, so the request carries neither; the annotator comes from `TCG_API_ANNOTATOR_ID` and the timestamp from the row's default. That is also what keeps `annotator_id`'s grammar — which spec §53 makes structural, by having no `@` in it — out of a client's reach.
+         *
+         *     **Coordinates need an artifact.** A bounding box and a centering ratio are both fractions of the standardized artifact; against a photograph no card was located in, they mean nothing. Sending either for an image whose `has_artifact` is false is a 409. A marker with no box is still accepted there, because a corner's region names its position.
+         *
+         *     Recording anything takes the image off `GET /internal/annotation/images`.
+         */
+        post: operations["record_image_annotations_internal_annotation_images__image_id__annotations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/annotation/images/{image_id}/bytes": {
         parameters: {
             query?: never;
@@ -458,10 +486,20 @@ export interface components {
          */
         AnnotationImageResponse: {
             /**
+             * Annotations
+             * @description Every marker recorded against this image, oldest first. **Not collapsed to a current reading**: both annotation tables are append-only, so a correction is a newer row, and a surface has as many defects as it has. The work list excludes an annotated image, so this endpoint is the only way one is ever seen again.
+             */
+            annotations: components["schemas"]["StoredMarkerResponse"][];
+            /**
              * Card Id
              * @description Which catalog card it depicts.
              */
             card_id?: string | null;
+            /**
+             * Centering
+             * @description Every centering measurement recorded against this image, oldest first.
+             */
+            centering: components["schemas"]["StoredMeasurementResponse"][];
             /**
              * Created At
              * Format: date-time
@@ -557,6 +595,53 @@ export interface components {
             source: string;
         };
         /**
+         * AnnotationRequest
+         * @description One annotator's work on one image, written in one transaction.
+         *
+         *     **One image per request, deliberately.** A marker belongs to the image whose
+         *     artifact its coordinates are fractions of, and `training_images.side` is what
+         *     says which face that is — accepting two images here would make it possible to
+         *     file the back's corners against the front.
+         *
+         *     Carries **no annotator and no timestamp**: spec §30 asks that both be recorded
+         *     automatically rather than typed, so the service supplies them. That is also
+         *     what puts `image_annotations.annotator_id`'s grammar out of a client's reach.
+         *
+         *     Carries no `polygon` and no `metadata` either. Both are storable and read by
+         *     nothing (#158); a polygon is in the same fractional space, so accepting one
+         *     would mean it joined the artifact gate below for a control nothing draws yet.
+         */
+        AnnotationRequest: {
+            /** @description The centering measurement for this image, if one was taken. */
+            centering?: components["schemas"]["CenteringReadingRequest"] | null;
+            /**
+             * Markers
+             * @description Corner, edge and surface markers to record.
+             */
+            markers?: (components["schemas"]["CornerMarkerRequest"] | components["schemas"]["EdgeMarkerRequest"] | components["schemas"]["SurfaceMarkerRequest"])[];
+        };
+        /**
+         * AnnotationResponse
+         * @description What one save wrote.
+         *
+         *     **Oldest first and not collapsed to a current reading.** Both tables are
+         *     append-only, so a correction is a newer row — but a surface has as many
+         *     defects as it has, so no one collapsing rule fits all three kinds. The rows
+         *     travel as they are.
+         */
+        AnnotationResponse: {
+            /**
+             * Centering
+             * @description The centering measurements that were stored.
+             */
+            centering: components["schemas"]["StoredMeasurementResponse"][];
+            /**
+             * Markers
+             * @description The markers that were stored.
+             */
+            markers: components["schemas"]["StoredMarkerResponse"][];
+        };
+        /**
          * AnnotationWorkListResponse
          * @description The images awaiting annotation, one page at a time.
          */
@@ -581,6 +666,44 @@ export interface components {
              * @description How many images await annotation in total. **This number falls as annotations land**, so a page boundary can move underneath a client that is annotating while it pages.
              */
             total: number;
+        };
+        /**
+         * BoundingBoxModel
+         * @description Spec §17's bounding box, as fractions of the normalized artifact.
+         *
+         *     **Fractions, never pixels.** The artifact's resolution is `ml/normalization`'s
+         *     and appears nowhere in this service — a fraction survives a change to it, and
+         *     a pixel would not.
+         *
+         *     One object rather than four fields, because the schema's rule is
+         *     `num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)`: a box is whole
+         *     or absent, and an optional object is that rule in a request body.
+         */
+        BoundingBoxModel: {
+            /**
+             * Height
+             * @description Height, and positive.
+             * @example 0.08
+             */
+            height: number;
+            /**
+             * Width
+             * @description Width, and positive.
+             * @example 0.08
+             */
+            width: number;
+            /**
+             * X
+             * @description Distance from the left edge.
+             * @example 0.02
+             */
+            x: number;
+            /**
+             * Y
+             * @description Distance from the top edge.
+             * @example 0.03
+             */
+            y: number;
         };
         /**
          * CardConfirmationRequest
@@ -906,6 +1029,44 @@ export interface components {
             version: string;
         };
         /**
+         * CenteringReadingRequest
+         * @description One centering measurement — spec §21, §13.
+         *
+         *     §13 requires ratios rather than qualitative labels, and the direction is
+         *     stated once so a number cannot mean two things: `horizontal` is the **left**
+         *     border as a fraction of the two side borders together, `vertical` the **top**
+         *     of the two ends. `0.5` is perfect centering.
+         *
+         *     The tool derives both from where the annotator put the inner frame, because
+         *     an annotator typing a ratio is an annotator doing arithmetic under time
+         *     pressure.
+         */
+        CenteringReadingRequest: {
+            /**
+             * Confidence
+             * @description §30's uncertainty, required here exactly as on a marker. A border read off a worn or glare-lit edge is a real measurement with a low confidence, and recording it at 1.0 would be a fabricated certainty.
+             * @example 0.9
+             */
+            confidence: number;
+            /**
+             * Horizontal
+             * @description left / (left + right). **Null where the axis has no measurable border** — §21 names full-art and borderless layouts outright, and inventing 0.5 for one of them is the confidently-wrong output spec §2.7 exists to forbid.
+             * @example 0.52
+             */
+            horizontal?: number | null;
+            /**
+             * Notes
+             * @description Free text — in practice, which of §21's awkward layouts this card is and what was measured against. Not one of §30's eleven and not a vocabulary: template awareness is M7's model, and this is the human's note to it.
+             */
+            notes?: string | null;
+            /**
+             * Vertical
+             * @description top / (top + bottom), on the same terms.
+             * @example 0.49
+             */
+            vertical?: number | null;
+        };
+        /**
          * CompanyComparisonResponse
          * @description Spec §49's compare table, in the order the chosen mode produced.
          */
@@ -985,6 +1146,54 @@ export interface components {
          */
         ConditionVerdict: "clear" | "detected" | "undetermined";
         /**
+         * CornerLabel
+         * @description Spec §14's potential corner labels, in the specification's order.
+         * @enum {string}
+         */
+        CornerLabel: "clean" | "whitening" | "rounding" | "chipping" | "dent" | "crease" | "layering" | "unknown";
+        /**
+         * CornerMarkerRequest
+         * @description One corner — spec §14. Four regions, not eight: the side is the image's.
+         */
+        CornerMarkerRequest: {
+            /** @description §17's spatial data, where the annotator drew it. Optional: a corner's region already names its position, so `top_left: clean` is a complete annotation. **Only meaningful against a stored artifact** — see the endpoint's 409. */
+            bbox?: components["schemas"]["BoundingBoxModel"] | null;
+            /**
+             * Confidence
+             * @description §30's uncertainty — how sure the annotator is of this call. **Required, with no default**: a default would read as certainty for every row nobody supplied one for, which is the fabricated confidence spec §2.7 forbids. The other half of the same rule is the `unknown` label every vocabulary carries.
+             * @example 0.8
+             */
+            confidence: number;
+            /**
+             * @description Spec §30's corner annotation. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            kind: "corner";
+            /**
+             * @description §14's eight potential labels. **Not §15's** — a corner cannot be `rough_cut` or `notching`, which are cutting defects of an edge.
+             * @example whitening
+             */
+            label: components["schemas"]["CornerLabel"];
+            /**
+             * @description Which corner. §14 lists eight, front- and back-prefixed; the prefix is `training_images.side`, because the image already knows which face it shows and naming it twice would let the two disagree.
+             * @example top_left
+             */
+            region: components["schemas"]["CornerRegion"];
+            /**
+             * @description How bad it is — an **ordinal**, because there is one annotator and no agreement study, so finer granularity would record a precision nobody could reproduce. Null exactly when the label asserts no defect (`clean` found nothing to rate, `unknown` could not rate what it found), and required otherwise.
+             * @example minor
+             */
+            severity?: components["schemas"]["DefectSeverity"] | null;
+        };
+        /**
+         * CornerRegion
+         * @description Which corner — spec §14, without the side prefix.
+         *
+         *     Reading order, which is also the order §14 lists them within a side.
+         * @enum {string}
+         */
+        CornerRegion: "top_left" | "top_right" | "bottom_left" | "bottom_right";
+        /**
          * CostConfigurationRequest
          * @description Spec §46's six line items. **Never a total** — #58 binds that there is none.
          *
@@ -1045,6 +1254,19 @@ export interface components {
             return_shipping: string;
             selling_fee: components["schemas"]["SellingFeeResponse"];
         };
+        /**
+         * DefectSeverity
+         * @description How bad a defect is — spec §17's `severity`, which §17 does not define.
+         *
+         *     An ordinal rather than a number in ``[0, 1]``, and that is a decision about
+         *     who is answering. There is one annotator and no inter-annotator agreement
+         *     study (§30's feature list has neither), so a continuous scale would record a
+         *     precision nobody could reproduce — and a model fitting that precision fits
+         *     noise. Three levels are reproducible; M8 may map them to numbers, which is a
+         *     modelling choice made where the model lives.
+         * @enum {string}
+         */
+        DefectSeverity: "minor" | "moderate" | "severe";
         /**
          * EconomicConfigurationRequest
          * @description What the user says the economics of their decision are — spec §45, §46, §43.
@@ -1107,6 +1329,62 @@ export interface components {
             optimization_mode: string;
             thresholds: components["schemas"]["RecommendationThresholdsResponse"];
         };
+        /**
+         * EdgeLabel
+         * @description Spec §15's potential edge labels, in the specification's order.
+         *
+         *     Deliberately **not** :class:`CornerLabel`: §15 adds `rough_cut` and
+         *     `notching`, which are cutting defects a corner does not have, and drops
+         *     `rounding` and `crease`, which are not edge failures. Collapsing the two into
+         *     one list would make a corner annotable as `rough_cut`.
+         * @enum {string}
+         */
+        EdgeLabel: "clean" | "whitening" | "chipping" | "rough_cut" | "notching" | "layering" | "dent" | "unknown";
+        /**
+         * EdgeMarkerRequest
+         * @description One edge — spec §15.
+         */
+        EdgeMarkerRequest: {
+            /** @description §17's spatial data, where the annotator drew it. Optional: a corner's region already names its position, so `top_left: clean` is a complete annotation. **Only meaningful against a stored artifact** — see the endpoint's 409. */
+            bbox?: components["schemas"]["BoundingBoxModel"] | null;
+            /**
+             * Confidence
+             * @description §30's uncertainty — how sure the annotator is of this call. **Required, with no default**: a default would read as certainty for every row nobody supplied one for, which is the fabricated confidence spec §2.7 forbids. The other half of the same rule is the `unknown` label every vocabulary carries.
+             * @example 0.8
+             */
+            confidence: number;
+            /**
+             * @description Spec §30's edge annotation. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            kind: "edge";
+            /**
+             * @description §15's eight potential labels. **Not §14's** — an edge does not round or crease, and it does have `rough_cut` and `notching`.
+             * @example rough_cut
+             */
+            label: components["schemas"]["EdgeLabel"];
+            /**
+             * @description Which edge, clockwise from the top.
+             * @example left
+             */
+            region: components["schemas"]["EdgeRegion"];
+            /**
+             * @description How bad it is — an **ordinal**, because there is one annotator and no agreement study, so finer granularity would record a precision nobody could reproduce. Null exactly when the label asserts no defect (`clean` found nothing to rate, `unknown` could not rate what it found), and required otherwise.
+             * @example minor
+             */
+            severity?: components["schemas"]["DefectSeverity"] | null;
+        };
+        /**
+         * EdgeRegion
+         * @description Which edge — spec §15, clockwise from the top.
+         *
+         *     §15 names no positions at all; it says only to represent front and back
+         *     separately. Four edges is this project's, and clockwise from the top is
+         *     :data:`~tcg_domain.card_geometry.CORNER_NAMES`' order, so a reader who knows
+         *     one knows the other.
+         * @enum {string}
+         */
+        EdgeRegion: "top" | "right" | "bottom" | "left";
         /**
          * ErrorCode
          * @description Spec §66, verbatim. The closed set of things that can go wrong.
@@ -1933,6 +2211,147 @@ export interface components {
              * @example 0.1000
              */
             rate: string;
+        };
+        /**
+         * StoredMarkerResponse
+         * @description One marker as it was stored.
+         *
+         *     Flat, where the request is a tagged union: the three kinds differ in what they
+         *     *may* say, and a stored row has already said it. `region` is null for a
+         *     surface, which is the same fact the union expresses by omitting the field.
+         */
+        StoredMarkerResponse: {
+            /**
+             * Annotator Id
+             * @description Who recorded it — supplied by the service, never by a client.
+             */
+            annotator_id: string;
+            /** @description §17's spatial data. */
+            bbox?: components["schemas"]["BoundingBoxModel"] | null;
+            /**
+             * Confidence
+             * @description How sure the annotator was.
+             */
+            confidence: number;
+            /**
+             * Created At
+             * Format: date-time
+             * @description §30's annotation timestamp.
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             * @description The annotation's identifier.
+             */
+            id: string;
+            /**
+             * Kind
+             * @description Corner, edge or surface.
+             */
+            kind: string;
+            /**
+             * Label
+             * @description What was found.
+             */
+            label: string;
+            /**
+             * Region
+             * @description Where on the card, null for a surface.
+             */
+            region?: string | null;
+            /**
+             * Severity
+             * @description How bad, null where nothing was rated.
+             */
+            severity?: string | null;
+        };
+        /**
+         * StoredMeasurementResponse
+         * @description One centering measurement as it was stored.
+         */
+        StoredMeasurementResponse: {
+            /**
+             * Annotator Id
+             * @description Who recorded it.
+             */
+            annotator_id: string;
+            /**
+             * Confidence
+             * @description How sure the annotator was.
+             */
+            confidence: number;
+            /**
+             * Created At
+             * Format: date-time
+             * @description §30's annotation timestamp.
+             */
+            created_at: string;
+            /**
+             * Horizontal
+             * @description left / (left + right).
+             */
+            horizontal?: number | null;
+            /**
+             * Id
+             * Format: uuid
+             * @description The measurement's identifier.
+             */
+            id: string;
+            /**
+             * Notes
+             * @description The annotator's note.
+             */
+            notes?: string | null;
+            /**
+             * Vertical
+             * @description top / (top + bottom).
+             */
+            vertical?: number | null;
+        };
+        /**
+         * SurfaceLabel
+         * @description Spec §16's potential surface classes, in the specification's order.
+         *
+         *     Twelve, and **no `clean`** — see the module docstring. Where a corner is
+         *     annotated once and may be found sound, a surface carries one annotation per
+         *     defect found and none at all when there are none.
+         * @enum {string}
+         */
+        SurfaceLabel: "scratch" | "print_line" | "dent" | "indentation" | "stain" | "scuff" | "print_dot" | "color_issue" | "registration_issue" | "gloss_issue" | "factory_defect" | "unknown";
+        /**
+         * SurfaceMarkerRequest
+         * @description One surface defect — spec §16.
+         *
+         *     **No region field at all**, because §16 names no positions: a surface defect's
+         *     position is its bounding box. And no `clean`, which is the specification's:
+         *     a surface with nothing wrong is a surface nobody annotated, where a corner
+         *     inspected and found sound is a row saying so.
+         */
+        SurfaceMarkerRequest: {
+            /** @description §17's spatial data, where the annotator drew it. Optional: a corner's region already names its position, so `top_left: clean` is a complete annotation. **Only meaningful against a stored artifact** — see the endpoint's 409. */
+            bbox?: components["schemas"]["BoundingBoxModel"] | null;
+            /**
+             * Confidence
+             * @description §30's uncertainty — how sure the annotator is of this call. **Required, with no default**: a default would read as certainty for every row nobody supplied one for, which is the fabricated confidence spec §2.7 forbids. The other half of the same rule is the `unknown` label every vocabulary carries.
+             * @example 0.8
+             */
+            confidence: number;
+            /**
+             * @description Spec §30's surface defect annotation. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            kind: "surface";
+            /**
+             * @description §16's twelve potential classes.
+             * @example scratch
+             */
+            label: components["schemas"]["SurfaceLabel"];
+            /**
+             * @description How bad it is — an **ordinal**, because there is one annotator and no agreement study, so finer granularity would record a precision nobody could reproduce. Null exactly when the label asserts no defect (`clean` found nothing to rate, `unknown` could not rate what it found), and required otherwise.
+             * @example minor
+             */
+            severity?: components["schemas"]["DefectSeverity"] | null;
         };
         /** UnrankedCompanyResponse */
         UnrankedCompanyResponse: {
@@ -2821,6 +3240,72 @@ export interface operations {
                 };
             };
             /** @description The corpus could not be read. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    record_image_annotations_internal_annotation_images__image_id__annotations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The training image being annotated. */
+                image_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnotationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationResponse"];
+                };
+            };
+            /** @description No such training image. A bare body, deliberately outside the spec §66 envelope: none of the eight codes means 'not found'. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The image has no stored artifact, and the annotation carries coordinates that would be fractions of one. Also a bare body — §66 has no code for a conflict, and a ninth is not invented for this. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The annotation is not one the schema would take: a label outside its kind's list, a region on a surface or missing from a corner, a defect with no severity or a `clean` with one, a box outside the unit square, a measurement of neither axis, or a request recording nothing at all. FastAPI's own validation body — §66 has no code for a malformed request. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The training image corpus could not be reached. */
             503: {
                 headers: {
                     [name: string]: unknown;

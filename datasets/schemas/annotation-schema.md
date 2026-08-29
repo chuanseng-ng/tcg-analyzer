@@ -237,6 +237,20 @@ company, and a test asserts their absence.
 **No review workflow and no inter-annotator agreement.** §30's eleven features
 include neither, and there is one annotator.
 
-**No HTTP route.** Nothing in this domain is on the public §64 API (ADR 0009);
-the annotation tool's isolation is deployment topology, and the tool is
-[`apps/annotation`](../../apps/annotation/).
+**Nothing on the public API.** These tables are read and written over
+`/internal/annotation`, which is deliberately not part of spec §64 (ADR 0009):
+`GET …/images` is the work list, `GET …/images/{id}` reports what has already
+been recorded, and `POST …/images/{id}/annotations` writes both tables in one
+transaction. The isolation is deployment topology — the `/internal` prefix is
+what an ingress rule matches — and the tool is
+[`apps/annotation`](../../apps/annotation/). See
+[`docs/api.md`](../../docs/api.md).
+
+**No edit path, and no `UPDATE` anywhere.** The trigger refuses one, so the
+write endpoint only appends and a correction is a new row. `POST` therefore
+takes no annotation identifier, and there is no `PATCH` and no `DELETE`.
+
+**The annotator is not a request field.** §30 asks that it be recorded
+automatically, so the service stamps `TCG_API_ANNOTATOR_ID` and refuses a
+request that names one — which is what puts the `annotator_id` grammar out of a
+client's reach entirely.

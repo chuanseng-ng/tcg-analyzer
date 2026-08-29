@@ -5,6 +5,7 @@ import {
   clamp,
   fitScale,
   fitted,
+  fractionAt,
   MAX_SCALE,
   pan,
   showsRealPixels,
@@ -187,5 +188,63 @@ describe("the rendering hint", () => {
 describe("the transform", () => {
   it("translates before it scales, which is what the arithmetic assumes", () => {
     expect(transformOf({ scale: 2, x: -30, y: -40 })).toBe("translate(-30px, -40px) scale(2)");
+  });
+});
+
+/*
+ * The inverse map — #160.
+ *
+ * This is the test the issue asks for by name: the one that fails loudly if the
+ * viewer's transform changes. Every stored coordinate is produced by
+ * `fractionAt`, so a change to `transformOf` that this did not catch would move
+ * every annotation in the corpus without touching a row.
+ */
+describe("screen to artifact", () => {
+  const at = (view: View, x: number, y: number) =>
+    fractionAt(view, ARTIFACT, { width: x, height: y });
+
+  it("inverts the forward map exactly, at every magnification", () => {
+    for (const scale of [fitScale(FRAME, ARTIFACT), 1, 2, MAX_SCALE]) {
+      const view: View = { scale, x: -37, y: -91 };
+
+      for (const point of [
+        { x: 0.25, y: 0.75 },
+        { x: 0.5, y: 0.5 },
+        { x: 0.9, y: 0.1 },
+      ]) {
+        // Forward: fraction -> artifact pixels -> frame pixels.
+        const frameX = point.x * ARTIFACT.width * view.scale + view.x;
+        const frameY = point.y * ARTIFACT.height * view.scale + view.y;
+
+        const back = at(view, frameX, frameY);
+
+        expect(back.x).toBeCloseTo(point.x, 10);
+        expect(back.y).toBeCloseTo(point.y, 10);
+      }
+    }
+  });
+
+  it("puts the artifact's own corners at 0 and 1", () => {
+    const view = fitted(FRAME, ARTIFACT);
+
+    expect(at(view, view.x, view.y)).toEqual({ x: 0, y: 0 });
+    expect(
+      at(view, view.x + ARTIFACT.width * view.scale, view.y + ARTIFACT.height * view.scale),
+    ).toEqual({ x: 1, y: 1 });
+  });
+
+  it("clamps a point outside the artifact into the unit square", () => {
+    const view = fitted(FRAME, ARTIFACT);
+
+    // Dragging off the top-left of the image, and off the bottom-right.
+    expect(at(view, view.x - 500, view.y - 500)).toEqual({ x: 0, y: 0 });
+    expect(at(view, view.x + 99_999, view.y + 99_999)).toEqual({ x: 1, y: 1 });
+  });
+
+  it("answers with the origin rather than a NaN when there is nothing to divide by", () => {
+    // `scale` is never zero through `clamp`, but a fraction is what a coordinate
+    // is *stored* as — `NaN` would reach the wire as `null`, which the schema
+    // reads as a deliberate absence rather than as an accident.
+    expect(at({ scale: 0, x: 0, y: 0 }, 10, 10)).toEqual({ x: 0, y: 0 });
   });
 });

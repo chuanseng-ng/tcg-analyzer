@@ -12,7 +12,7 @@
 
 import { ApiError } from "./api";
 
-export type AnnotationFailure = "missing" | "unreachable" | "unexpected";
+export type AnnotationFailure = "missing" | "refused" | "unreachable" | "unexpected";
 
 export function classifyAnnotationFailure(error: unknown): AnnotationFailure {
   if (!(error instanceof ApiError)) {
@@ -49,6 +49,8 @@ export function classifyAnnotationFailure(error: unknown): AnnotationFailure {
  */
 export const FAILURE_MESSAGE: Record<AnnotationFailure, string> = {
   missing: "That image is not in the corpus.",
+  refused:
+    "The corpus would not take that annotation. Check the severity, the confidence and whether the image has an artifact to place coordinates against.",
   unreachable: "The corpus is not answering right now.",
   unexpected: "Something went wrong reading the corpus.",
 };
@@ -56,4 +58,27 @@ export const FAILURE_MESSAGE: Record<AnnotationFailure, string> = {
 /** Whether offering a retry could plausibly help. */
 export function isWorthRetrying(failure: AnnotationFailure): boolean {
   return failure === "unreachable";
+}
+
+/**
+ * The same three outcomes, read for a *save* rather than a read.
+ *
+ * `classifyAnnotationFailure` maps a bare 422 to `missing`, and that is right
+ * where the only thing a 422 can be is a malformed identifier in the URL — the
+ * link does not lead to an image. **On a write it is wrong**: a 422 is this
+ * endpoint refusing the body, and a 409 is it refusing coordinates for an image
+ * with no artifact. Telling an annotator their image is not in the corpus when
+ * they have just forgotten a severity is the sort of message that makes somebody
+ * stop trusting a tool.
+ *
+ * Neither is worth a retry, which is why `refused` is a fourth outcome rather
+ * than being folded into `unexpected`: the annotator has to change something, and
+ * the copy says what.
+ */
+export function classifySaveFailure(error: unknown): AnnotationFailure {
+  if (error instanceof ApiError && (error.status === 409 || error.status === 422)) {
+    return "refused";
+  }
+
+  return classifyAnnotationFailure(error);
 }

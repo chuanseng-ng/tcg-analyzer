@@ -1,8 +1,11 @@
-"""The internal annotation surface — #159.
+"""The internal annotation surface — #159 and #160.
 
 Integration rather than stubbed, and deliberately: the thing under test *is* the
 predicate. "Awaiting annotation" is `NOT EXISTS` against two child tables, and a
-stub repository would assert the stub. `test_analyses_endpoint.py`'s pattern —
+stub repository would assert the stub. #160's writes are here for one more
+reason: **the rules they enforce are CHECK constraints**, and the pydantic
+validators only mirror them so an annotator gets a message rather than a 500 —
+asserting the mirror against a stub would prove nothing about the schema. `test_analyses_endpoint.py`'s pattern —
 a live PostgreSQL, `InMemoryObjectStorage` through the dependency override:
 
     docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres
@@ -467,3 +470,425 @@ def test_the_missing_object_is_logged_with_the_image_it_belongs_to(
         if "annotation.stored_object_missing" in entry
     )
     assert str(image_id) in line
+
+
+# ---------------------------------------------------------------------------
+# Recording an annotation — #160
+# ---------------------------------------------------------------------------
+#: The default of `TCG_API_ANNOTATOR_ID`. Spelled out rather than imported from
+#: `Settings`: the point of every assertion below is that the *service* supplied
+#: it, and reading it from the same object the service reads would assert nothing.
+ANNOTATOR = "annotator"
+
+
+def annotations_url(image_id: uuid.UUID) -> str:
+    return f"{WORK_LIST}/{image_id}/annotations"
+
+
+def a_corner(**overrides: Any) -> dict[str, Any]:
+    marker: dict[str, Any] = {
+        "kind": "corner",
+        "region": "top_left",
+        "label": "whitening",
+        "severity": "minor",
+        "confidence": 0.8,
+        "bbox": {"x": 0.01, "y": 0.02, "width": 0.06, "height": 0.05},
+    }
+    marker.update(overrides)
+    return marker
+
+
+# ---------------------------------------------------------------------------
+# The four types round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_a_corner_marker_is_stored_where_it_was_placed(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    created = client.post(annotations_url(image_id), json={"markers": [a_corner()]})
+    assert created.status_code == 201
+
+    read_back = client.get(f"{WORK_LIST}/{image_id}").json()["annotations"]
+    assert len(read_back) == 1
+    marker = read_back[0]
+    assert marker["kind"] == "corner"
+    assert marker["region"] == "top_left"
+    assert marker["label"] == "whitening"
+    assert marker["severity"] == "minor"
+    # The coordinates come back as the fractions they went in as. This is the
+    # assertion the whole viewer exists to make true.
+    assert marker["bbox"] == {"x": 0.01, "y": 0.02, "width": 0.06, "height": 0.05}
+
+
+def test_an_edge_marker_takes_an_edge_label_a_corner_cannot(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={
+            "markers": [
+                {
+                    "kind": "edge",
+                    "region": "left",
+                    "label": "rough_cut",
+                    "severity": "moderate",
+                    "confidence": 0.6,
+                }
+            ]
+        },
+    )
+    assert created.status_code == 201
+
+    # …and the same label on a corner is refused, which is why §14 and §15 are
+    # two lists rather than one.
+    refused = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(label="rough_cut", bbox=None)]},
+    )
+    assert refused.status_code == 422
+
+
+def test_a_surface_marker_names_no_region_and_is_placed_by_its_box(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={
+            "markers": [
+                {
+                    "kind": "surface",
+                    "label": "scratch",
+                    "severity": "minor",
+                    "confidence": 0.4,
+                    "bbox": {"x": 0.3, "y": 0.4, "width": 0.1, "height": 0.02},
+                }
+            ]
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["markers"][0]["region"] is None
+
+    # §16 names no positions, so a surface annotation that claims one is refused.
+    refused = client.post(
+        annotations_url(image_id),
+        json={
+            "markers": [
+                {
+                    "kind": "surface",
+                    "region": "top_left",
+                    "label": "scratch",
+                    "severity": "minor",
+                    "confidence": 0.4,
+                }
+            ]
+        },
+    )
+    assert refused.status_code == 422
+
+
+def test_a_centering_measurement_is_stored_as_two_ratios(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={
+            "centering": {
+                "horizontal": 0.55,
+                "vertical": 0.49,
+                "confidence": 0.9,
+                "notes": "conventional border",
+            }
+        },
+    )
+    assert created.status_code == 201
+
+    stored = client.get(f"{WORK_LIST}/{image_id}").json()["centering"]
+    assert len(stored) == 1
+    assert stored[0]["horizontal"] == 0.55
+    assert stored[0]["vertical"] == 0.49
+    assert stored[0]["notes"] == "conventional border"
+
+
+def test_an_axis_with_no_border_is_null_and_never_a_half(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """§21 names full-art and borderless layouts, and 0.5 is not the answer for one."""
+    image_id = an_image(storage)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={"centering": {"horizontal": 0.51, "vertical": None, "confidence": 0.7}},
+    )
+    assert created.status_code == 201
+    assert created.json()["centering"][0]["vertical"] is None
+
+    measuring_neither = client.post(
+        annotations_url(image_id),
+        json={"centering": {"horizontal": None, "vertical": None, "confidence": 0.7}},
+    )
+    assert measuring_neither.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty — §30's eleventh feature, on both tables
+# ---------------------------------------------------------------------------
+
+
+def test_an_annotation_can_be_saved_as_i_cannot_tell(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """`unknown` carries no severity, which is what makes admitting it one action."""
+    image_id = an_image(storage)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(label="unknown", severity=None, confidence=0.2)]},
+    )
+    assert created.status_code == 201
+
+    marker = created.json()["markers"][0]
+    assert marker["label"] == "unknown"
+    assert marker["severity"] is None
+    assert marker["confidence"] == 0.2
+
+
+def test_a_defect_marker_without_a_severity_cannot_be_saved(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(severity=None)]},
+    )
+    assert refused.status_code == 422
+
+
+def test_a_clean_corner_carrying_a_severity_is_refused_too(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """The rule is an equality between two facts, not one implication.
+
+    A sound corner has nothing to rate, so `clean` with a severity is as wrong as
+    `chipping` without one — `ck_image_annotations_a_defect_carries_a_severity`
+    is written that way and this is the half a lax mirror would let through.
+    """
+    image_id = an_image(storage)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(label="clean", severity="minor")]},
+    )
+    assert refused.status_code == 422
+
+    accepted = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(label="clean", severity=None)]},
+    )
+    assert accepted.status_code == 201
+
+
+def test_a_confidence_is_required_and_never_defaulted(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """The column is NOT NULL with no server default, on purpose.
+
+    A default would read as certainty for every row nobody supplied one for.
+    """
+    image_id = an_image(storage)
+    marker = a_corner()
+    del marker["confidence"]
+
+    refused = client.post(annotations_url(image_id), json={"markers": [marker]})
+    assert refused.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The artifact gate
+# ---------------------------------------------------------------------------
+
+
+def test_a_bounding_box_needs_an_artifact_to_be_a_fraction_of(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage, artifact=False)
+
+    refused = client.post(annotations_url(image_id), json={"markers": [a_corner()]})
+    assert refused.status_code == 409
+
+
+def test_a_centering_measurement_needs_an_artifact_too(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """A ratio is read off where the borders sit in the artifact, so it is a coordinate."""
+    image_id = an_image(storage, artifact=False)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={"centering": {"horizontal": 0.5, "vertical": 0.5, "confidence": 0.9}},
+    )
+    assert refused.status_code == 409
+
+
+def test_a_marker_with_no_box_is_still_recordable_without_an_artifact(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """A corner's region names its position, so this says something true.
+
+    Refusing the whole request would also strand such an image at the head of the
+    work list for ever, which is a worse answer than a partial one.
+    """
+    image_id = an_image(storage, artifact=False)
+
+    created = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner(bbox=None)]},
+    )
+    assert created.status_code == 201
+
+
+def test_a_box_outside_the_artifact_is_refused(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+
+    for bbox in (
+        {"x": 0.98, "y": 0.1, "width": 0.1, "height": 0.1},  # runs off the right
+        {"x": 0.1, "y": 0.1, "width": 0.0, "height": 0.1},  # no area
+        {"x": -0.1, "y": 0.1, "width": 0.1, "height": 0.1},  # before the left edge
+    ):
+        refused = client.post(annotations_url(image_id), json={"markers": [a_corner(bbox=bbox)]})
+        assert refused.status_code == 422, bbox
+
+
+# ---------------------------------------------------------------------------
+# What the service supplies, and what it refuses to be told
+# ---------------------------------------------------------------------------
+
+
+def test_the_annotator_and_the_timestamp_are_recorded_without_being_sent(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """§30 asks for both automatically. The request below contains neither."""
+    image_id = an_image(storage)
+
+    created = client.post(annotations_url(image_id), json={"markers": [a_corner()]})
+    assert created.status_code == 201
+
+    marker = created.json()["markers"][0]
+    assert marker["annotator_id"] == ANNOTATOR
+    assert marker["created_at"]
+
+
+def test_a_client_cannot_name_the_annotator(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """Refused, not ignored — which is what keeps `annotator_id`'s grammar out of reach.
+
+    Dropping the field silently would leave a client believing it had set the
+    annotator, and spec §53's restraint is exactly the kind of thing nobody should
+    be able to believe they have circumvented.
+    """
+    image_id = an_image(storage)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={"markers": [a_corner()], "annotator_id": "someone@example.com"},
+    )
+    assert refused.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The rest of the contract
+# ---------------------------------------------------------------------------
+
+
+def test_an_annotation_recording_nothing_is_refused(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """It would take the image off the work list having said nothing."""
+    image_id = an_image(storage)
+
+    refused = client.post(annotations_url(image_id), json={"markers": [], "centering": None})
+    assert refused.status_code == 422
+
+
+def test_a_saved_image_leaves_the_work_list(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    image_id = an_image(storage)
+    assert client.get(WORK_LIST).json()["total"] == 1
+
+    client.post(annotations_url(image_id), json={"markers": [a_corner()]})
+
+    assert client.get(WORK_LIST).json()["total"] == 0
+
+
+def test_a_refused_save_leaves_nothing_behind(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """A refused marker must not leave the measurement that travelled with it.
+
+    Refused here by the pydantic mirror, before a statement runs. The other half
+    — a marker PostgreSQL refuses after the measurement has been inserted — is
+    held by `record_annotations` not committing and the handler committing once,
+    which is why the two inserts are in one function rather than two calls.
+    """
+    image_id = an_image(storage)
+
+    refused = client.post(
+        annotations_url(image_id),
+        json={
+            "markers": [a_corner(label="rough_cut")],
+            "centering": {"horizontal": 0.5, "vertical": 0.5, "confidence": 0.9},
+        },
+    )
+    assert refused.status_code == 422
+
+    detail = client.get(f"{WORK_LIST}/{image_id}").json()
+    assert detail["annotations"] == []
+    assert detail["centering"] == []
+    assert client.get(WORK_LIST).json()["total"] == 1
+
+
+def test_a_correction_is_a_new_row_and_both_survive(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """Append-only: the newest row for a region is the current view of it."""
+    image_id = an_image(storage)
+
+    client.post(annotations_url(image_id), json={"markers": [a_corner(severity="minor")]})
+    client.post(annotations_url(image_id), json={"markers": [a_corner(severity="severe")]})
+
+    stored = client.get(f"{WORK_LIST}/{image_id}").json()["annotations"]
+    assert [marker["severity"] for marker in stored] == ["minor", "severe"]
+
+
+def test_saving_against_an_unknown_image_is_a_404(client: TestClient) -> None:
+    refused = client.post(annotations_url(uuid.uuid4()), json={"markers": [a_corner()]})
+    assert refused.status_code == 404
+
+
+def test_saving_against_a_malformed_identifier_is_a_422(client: TestClient) -> None:
+    refused = client.post(f"{WORK_LIST}/not-a-uuid/annotations", json={"markers": [a_corner()]})
+    assert refused.status_code == 422
+
+
+def test_an_unannotated_image_reports_two_empty_lists(
+    client: TestClient, storage: InMemoryObjectStorage
+) -> None:
+    """Not an omission and not an error — the same fact the work list reports."""
+    image_id = an_image(storage)
+
+    detail = client.get(f"{WORK_LIST}/{image_id}").json()
+    assert detail["annotations"] == []
+    assert detail["centering"] == []

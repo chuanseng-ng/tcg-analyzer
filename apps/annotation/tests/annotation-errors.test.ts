@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api";
 import {
   classifyAnnotationFailure,
+  classifySaveFailure,
   FAILURE_MESSAGE,
   isWorthRetrying,
 } from "@/lib/annotation-errors";
@@ -59,5 +60,28 @@ describe("what the annotator is offered", () => {
     for (const failure of ["missing", "unreachable", "unexpected"] as const) {
       expect(FAILURE_MESSAGE[failure]).toMatch(/\S/);
     }
+  });
+});
+
+describe("classifying a failure to save", () => {
+  it("calls a refusal a refusal, not a missing image", () => {
+    // `classifyAnnotationFailure` maps a bare 422 to `missing`, which is right
+    // for a read — a malformed identifier means the link leads nowhere — and
+    // badly wrong for a write, where a 422 is the body being refused. Telling an
+    // annotator who forgot a severity that their image is not in the corpus is
+    // how somebody stops trusting a tool.
+    expect(classifySaveFailure(new ApiError("refused", { status: 422 }))).toBe("refused");
+    expect(classifySaveFailure(new ApiError("no artifact", { status: 409 }))).toBe("refused");
+  });
+
+  it("is not worth retrying, because the annotator has to change something", () => {
+    expect(isWorthRetrying("refused")).toBe(false);
+  });
+
+  it("still reads a 404 and an outage the way the read path does", () => {
+    expect(classifySaveFailure(new ApiError("gone", { status: 404 }))).toBe("missing");
+    expect(classifySaveFailure(new ApiError("down", { code: "provider_error", status: 503 }))).toBe(
+      "unreachable",
+    );
   });
 });

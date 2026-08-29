@@ -149,3 +149,36 @@ export function transformOf(view: View): string {
 export function showsRealPixels(view: View): boolean {
   return view.scale > 1;
 }
+
+/** A point on the artifact, as fractions of its width and height. */
+export interface Fraction {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Where a point in the frame falls on the artifact.
+ *
+ * The inverse of the map at the top of this file: `image = (frame - offset) / scale`,
+ * then divided by the artifact's own size. It lives here rather than beside the
+ * annotation code because the forward map is here — a transform in one file and
+ * its inverse in another is how the two come to disagree.
+ *
+ * **This is the clamp that keeps a stored coordinate inside the unit square**,
+ * and it is not `clamp` above: that one keeps the image inside the frame and is
+ * about the `View`, this one keeps a fraction inside the artifact and is about a
+ * point. Clamping each corner and *then* taking the extent is what makes
+ * `bbox_x + bbox_width <= 1` true by construction, so the schema's constraint
+ * cannot fire on a drag that left the frame.
+ */
+export function fractionAt(view: View, image: Size, point: Size): Fraction {
+  return {
+    x: unitInterval((point.width - view.x) / view.scale / image.width),
+    y: unitInterval((point.height - view.y) / view.scale / image.height),
+  };
+}
+
+function unitInterval(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}

@@ -21,8 +21,9 @@ and ``/readiness`` reports the database unavailable. See
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 from urllib.parse import urlparse
 
 from pydantic import AfterValidator, Field, SecretStr
@@ -31,6 +32,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, NoSuchModuleError
 
 __all__ = [
+    "ANNOTATOR_ID_PATTERN",
     "DATABASE_URL_ENV_VAR",
     "REDIS_URL_ENV_VAR",
     "STORAGE_ACCESS_KEY_ID_ENV_VAR",
@@ -117,6 +119,36 @@ def _require_redis_url(value: str) -> str:
 
 
 RedisUrl = Annotated[str, AfterValidator(_require_redis_url)]
+
+
+#: The grammar `image_annotations.annotator_id` and
+#: `centering_measurements.annotator_id` are constrained to (#158). Spec §53's
+#: restraint made structural: there is no "@" and no space in it, so a name or an
+#: email address is not storable. Repeated here rather than imported from
+#: `tcg_api.datasets.tables`, which would pull the whole schema into settings for
+#: one string; `test_config.py` holds the two together by value.
+ANNOTATOR_ID_PATTERN: Final = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _require_opaque_annotator_id(value: str) -> str:
+    """Reject an annotator identifier the annotation tables would refuse.
+
+    The CHECK is the guarantee and this is the message — #154's rule. Refused
+    here, the operator is told at startup which variable is wrong; refused only
+    by PostgreSQL, they find out when an annotator loses an afternoon's work to
+    a 500.
+    """
+    if not ANNOTATOR_ID_PATTERN.match(value):
+        raise ValueError(
+            "must be an opaque identifier matching "
+            f"{ANNOTATOR_ID_PATTERN.pattern} — lower case, no spaces and no '@', "
+            "so that a name or an email address is not storable (spec §53). "
+            f"Got {value!r}"
+        )
+    return value
+
+
+AnnotatorId = Annotated[str, AfterValidator(_require_opaque_annotator_id)]
 
 
 class Settings(BaseSettings):
@@ -286,6 +318,26 @@ class Settings(BaseSettings):
     `gt=1` rather than `gt=0`: `price_confidence` refuses a `stale_after` that
     is not longer than its one-day fresh window, and refusing it here instead
     means that `ValueError` is unreachable from an HTTP request.
+    """
+
+    # ----------------------------------------------------------------
+    # The annotation tool — spec §30, #160.
+    # ----------------------------------------------------------------
+
+    annotator_id: AnnotatorId = "annotator"
+    """Who the internal annotation tool records as the author of a label.
+
+    **Spec §30 asks that the annotator be recorded automatically and never
+    typed**, so it is stamped by the service and the tool never sends one — which
+    also means the `annotator_id` CHECK on both annotation tables can never be
+    reached by client input.
+
+    Configuration rather than a constant because it is the one thing about the
+    tool a deployment legitimately differs on, and because a value hard-coded in
+    a module is a value nobody can see is being recorded. There is one annotator
+    today; `apps/annotation/README.md` makes a second party annotating a new ADR,
+    not a new environment variable, and this default is what a single-annotator
+    deployment leaves alone.
     """
 
     # ----------------------------------------------------------------

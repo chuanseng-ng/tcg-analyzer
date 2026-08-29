@@ -9,10 +9,22 @@ import { ApiError, type AnnotationImageResponse } from "@/lib/api";
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   readTrainingImage: vi.fn(),
+  saveAnnotations: vi.fn(),
+  listImagesAwaitingAnnotation: vi.fn(),
 }));
 
-const { readTrainingImage } = await import("@/lib/api");
+// The viewer navigates after a save, so it needs a router. `work-list.test.tsx`
+// mocks `next/navigation` the same way and for the same reason.
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
+
+const { readTrainingImage, saveAnnotations, listImagesAwaitingAnnotation } =
+  await import("@/lib/api");
 const readTrainingImageMock = vi.mocked(readTrainingImage);
+const saveAnnotationsMock = vi.mocked(saveAnnotations);
+const listMock = vi.mocked(listImagesAwaitingAnnotation);
 
 const COPY = "8f14e45f-ceea-467a-9a9d-c1046d0d5a5a";
 
@@ -35,12 +47,19 @@ function image(overrides: Partial<AnnotationImageResponse> = {}): AnnotationImag
     width: 1200,
     height: 1600,
     siblings: [],
+    annotations: [],
+    centering: [],
     ...overrides,
   } as AnnotationImageResponse;
 }
 
 beforeEach(() => {
   readTrainingImageMock.mockReset();
+  saveAnnotationsMock.mockReset();
+  listMock.mockReset();
+  push.mockReset();
+  saveAnnotationsMock.mockResolvedValue({ markers: [], centering: [] });
+  listMock.mockResolvedValue({ images: [], total: 0, limit: 1, offset: 0 });
 });
 
 describe("front and back", () => {
