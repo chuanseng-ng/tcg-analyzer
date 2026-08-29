@@ -164,6 +164,48 @@ digest is over the bytes that were kept. A camera export larger than
 `TCG_API_UPLOAD_MAX_BYTES` is refused; raise it for the run rather than
 expecting a second limit to exist.
 
+Ingestion stores the photograph and nothing else. `normalized_uri` and
+`normalization_details` stay NULL until `tcg-normalize-training-images` has run —
+`width` and `height` on this table are the **photograph's** and are NOT NULL,
+which is why the artifact's size lives in the details rather than overloading
+them the way `images` does.
+
+## Normalizing a training image
+
+Spec §30's annotation tool shows an image and §21's centering is measured on it,
+and the annotation schema fixed what those measurements are *of*: fractions of
+the standardized 756x1056 artifact, never pixels of a photograph. An annotator
+marking a corner at 12% across a *photograph* has said nothing comparable about
+the card, because the next photograph of it is framed differently. So the
+artifact is an object with a key of its own, and this is what produces one:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
+uv run tcg-normalize-training-images
+```
+
+**It runs from the worker image**, for the reason the deduplication pass does:
+straightening a card needs card detection and normalization and therefore
+OpenCV, which only `worker.Dockerfile` installs. That is also why this is a pass
+rather than something a request does on demand — `tcg_api.main` may not reach the
+CV stack at all, so normalizing while an annotator waits is unavailable rather
+than merely slow, and `training_images.normalized_uri` is a column for exactly
+that reason.
+
+**A stored artifact is never replaced.** The pass selects rows whose
+`normalized_uri` is NULL and nothing else, and there is deliberately no
+`--force`. An annotation is a fraction of *the artifact its annotator saw*, so
+re-warping an image somebody has judged would move every stored coordinate
+without touching a row in `image_annotations`. A normalizer version bump is a
+deliberate act with a re-annotation behind it — which is the one way this differs
+from the fingerprints, where a version bump invalidates every row on purpose.
+
+An image the detector finds no card in gets no artifact and is examined again on
+the next run. That is not a failure: the annotation tool shows the photograph
+and says which it is showing, because a coordinate cannot be taken against it.
+
 ## Detecting near-duplicate training images
 
 Spec §28 puts deduplication between image validation and annotation, and §32
@@ -293,8 +335,13 @@ version that referenced the old reading keeps meaning what it meant. The
 annotator is an opaque identifier under a grammar with no `@` in it, so spec
 §53's restraint is enforced rather than requested.
 
-There is no route and no CLI here yet — the annotation tool is `apps/annotation`,
-and this issue landed the schema it will write into.
+The tool that writes these rows is `apps/annotation`, and it reaches them over
+`/internal/annotation` — three reads today, and the writes when the annotation
+controls land. That surface is **not** part of spec §64: it lives in this
+application because §7 forbids an unnecessary microservice, and in the OpenAPI
+schema because that is the only way `apps/annotation` can learn a shape
+([ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md)). What keeps it
+internal is the `/internal` prefix, which is what an ingress rule matches.
 
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:

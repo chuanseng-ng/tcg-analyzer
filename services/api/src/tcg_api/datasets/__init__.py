@@ -15,8 +15,17 @@ ADR 0009's whole argument: an image nobody has the right to train on is not
 representable in this schema.
 
 **Nothing here is on the public §64 API.** The consumer product never reads a
-training image, and the annotation tool's isolation is a deployment question —
-a separate ingress, not a second FastAPI application.
+training image. Spec §30's annotation tool does, at `/internal/annotation` in
+this same application — in this schema because ADR 0001 makes the OpenAPI
+document the only way `apps/annotation` can learn a shape, and isolated by
+deployment topology rather than by a second FastAPI application: the
+`/internal` prefix is what an ingress matches.
+
+`normalization.py` is the one module here that binds to OpenCV, on
+`deduplication.py`'s terms. It stores the standardized artifact the annotation
+tool shows and §30's coordinates are fractions of — out of band, because a
+request path that could straighten a photograph would be a request path with the
+CV stack in it.
 """
 
 from __future__ import annotations

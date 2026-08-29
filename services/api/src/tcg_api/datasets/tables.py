@@ -337,6 +337,36 @@ training_images = sa.Table(
         nullable=False,
         comment="The stored image's height in pixels, as above.",
     ),
+    # -- The standardized artifact an annotator judges, and #160 measures against -
+    sa.Column(
+        "normalized_uri",
+        sa.Text(),
+        nullable=True,
+        comment=(
+            "A server-generated storage key for the perspective-corrected, cropped "
+            "artifact spec §30's annotation tool shows and §21's coordinates are "
+            "fractions of. NULL until `tcg-normalize-training-images` has run, and "
+            "still NULL afterwards where no card was located — there was nothing to "
+            "straighten. `images.normalized_uri`'s meaning, on the corpus."
+        ),
+    ),
+    sa.Column(
+        "normalization_details",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "How `normalized_uri` was produced: the projective transform from the "
+            "photograph, the quarter-turn applied, the artifact's size, the stage "
+            "version and the thresholds it ran with — `Normalized.as_record()`, the "
+            "shape `images.normalization_details` already carries. The artifact's size "
+            "lives here rather than in two columns beside `width` and `height`, "
+            "because those two are the *photograph's* and must keep meaning that. "
+            "It records what produced an artifact; it is deliberately **not** a "
+            "staleness check, because §30's coordinates are fractions of the "
+            "artifact an annotator actually saw and re-warping one under a bumped "
+            "version would move every stored fraction without touching a row."
+        ),
+    ),
     # -- Spec §29's nine provenance fields, on the image row --------------------
     sa.Column(
         "source",

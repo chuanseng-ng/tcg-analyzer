@@ -48,9 +48,8 @@ from typing import Final
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
-from tcg_domain.card_geometry import CardGeometry
-from tcg_ml_card_detection import CARD_DETECTION_VERSION, detect
-from tcg_ml_normalization import NORMALIZATION_VERSION, Normalized, normalize
+from tcg_ml_card_detection import CARD_DETECTION_VERSION
+from tcg_ml_normalization import NORMALIZATION_VERSION
 from tcg_shared.storage import StorageError, StorageKey
 from tcg_shared.storage.port import ObjectStorage
 
@@ -66,6 +65,7 @@ from tcg_api.datasets.fingerprints import (
     near_duplicate_pairs,
     read_fingerprints,
 )
+from tcg_api.datasets.normalization import artifact
 from tcg_api.datasets.tables import training_image_fingerprints, training_images
 from tcg_api.logging import configure_logging
 from tcg_api.storage import create_object_storage
@@ -118,16 +118,14 @@ def fingerprint_artifact(data: bytes) -> tuple[str, str] | None:
     """Locate the card in a photograph, straighten it, and hash the result.
 
     Returns ``None`` when no card could be located or the warp could not be
-    encoded — both of which `ml/card-detection` and `ml/normalization` answer
-    rather than raise, so this returns rather than raising too.
+    encoded, which is exactly what :func:`tcg_api.datasets.normalization.artifact`
+    answers with — the two guards live there so this module and #159's pass
+    cannot drift into two detect-then-straighten paths.
     """
-    geometry = detect(data)
-    if not isinstance(geometry, CardGeometry):
+    straightened = artifact(data)
+    if straightened is None:
         return None
-    artifact = normalize(data, geometry)
-    if not isinstance(artifact, Normalized):
-        return None
-    return difference_hash(artifact.data)
+    return difference_hash(straightened.data)
 
 
 async def fingerprint_pending(engine: AsyncEngine, storage: ObjectStorage) -> FingerprintRun:

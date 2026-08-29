@@ -79,7 +79,28 @@ remember to call.
 | `acquired_at` | `acquired_at` | When the photograph was taken, not when the row was written. |
 
 Beside them: `physical_copy_id`, `card_id`, `side`, `original_uri`, `sha256`,
-`mime_type`, `width`, `height` and `created_at`.
+`mime_type`, `width`, `height`, `normalized_uri`, `normalization_details` and
+`created_at`.
+
+### The artifact, and why it is a column
+
+`original_uri` names the photograph. `normalized_uri` names the standardized
+756x1056 artifact spec §30's annotation tool shows and §21's coordinates are
+fractions of, and `normalization_details` records how it was made — the
+projective transform, the quarter-turn, the artifact's size, the stage version
+and its thresholds, which is `images.normalization_details`' shape exactly.
+
+Both are nullable and both stay NULL until `tcg-normalize-training-images` has
+run, and afterwards too where no card was located: there was nothing to
+straighten, and the tool renders the photograph while saying so.
+
+**`width` and `height` on this table are the photograph's**, and are NOT NULL —
+unlike `images.width`, which holds the artifact's. The artifact's size therefore
+lives in the details rather than overloading a pair that already means something
+else here. And **a stored artifact is never replaced**: an annotation is a
+fraction of the artifact its annotator saw, so re-warping one under a bumped
+normalizer would move every stored coordinate without touching a row in
+`image_annotations`.
 
 ### The gate
 
