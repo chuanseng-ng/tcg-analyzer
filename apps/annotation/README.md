@@ -128,7 +128,8 @@ fingerprint would be recomputed. **Today that is zero rows** — nothing is
 ingested, nothing is annotated, no model exists. The cost of this change is at
 its absolute minimum right now and rises with every image added.
 
-**It is deliberately not changed here.** #159 is the shell and the viewer, and
+**It is deliberately not changed here — it is #171.** #159 is the shell and the
+viewer, and
 the issue asks for the finding rather than the fix; the fix belongs to
 `ml/normalization` with its own acceptance criteria — and the surface answer
 above may argue for something other than a bigger number, such as annotating
