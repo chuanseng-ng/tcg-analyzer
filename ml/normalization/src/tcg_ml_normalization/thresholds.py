@@ -33,7 +33,7 @@ __all__ = [
 #: What produced an artifact. Recorded on every image normalization ran
 #: against; never a pointer to "current", per the project's versioning
 #: invariant.
-NORMALIZATION_VERSION: Final = "normalization-opencv-v0.1.0"
+NORMALIZATION_VERSION: Final = "normalization-opencv-v0.2.0"
 
 #: A trading card, in millimetres. A physical fact rather than a threshold,
 #: which is why it is not tunable and why `ml/card-detection` deriving
