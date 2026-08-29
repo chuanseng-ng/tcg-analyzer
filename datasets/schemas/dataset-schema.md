@@ -297,7 +297,8 @@ something, and a version with no members resolves to nothing.
 
 ## What is not here
 
-Annotations are their own table, their own migration and their own issue.
+Annotations are their own tables and their own migration — see
+[the annotation schema](annotation-schema.md).
 `datasets/manifests/` holds what a version leaves behind, generated from these
 rows by the command above.
 

@@ -46,7 +46,7 @@ catalog in `tcg_api/catalog/tables.py`, the analysis spine in
 `tcg_api/analysis/tables.py`, the published grading standards in
 `tcg_api/grading/tables.py`, the market data in `tcg_api/market/tables.py`, the
 economic configuration in `tcg_api/economics/tables.py` and the dataset,
-provenance and membership records in `tcg_api/datasets/tables.py` —
+provenance, annotation and membership records in `tcg_api/datasets/tables.py` —
 and `tcg_api/table_registry.py` imports them all,
 which is what makes that `MetaData` complete. `env.py` reads it from the registry
 for exactly that reason. Declare a new table in one of those modules as well as in
@@ -267,6 +267,34 @@ dataset is ever published; a list of identifiers and hashes carries no artwork a
 is the most a version can leave behind. Each member carries enough for a training
 run to resolve its file without reading the database, which is what ADR 0009
 requires of `ml/*`.
+
+## Annotating a training image
+
+Spec §30's internal annotation application writes into two tables, and
+[`datasets/schemas/annotation-schema.md`](../datasets/schemas/annotation-schema.md)
+is where each of its eleven features lives. `image_annotations` holds §14's,
+§15's and §16's defect markers; `centering_measurements` holds §21's two ratios.
+They are two tables because a marker carries a label, a severity and a bounding
+box and a measurement carries none of those — one table with a `kind` would leave
+half of every row NULL by construction.
+
+**Coordinates are fractions of the normalized 756x1056 artifact, never pixels of
+the photograph.** An annotation stored against the artifact survives a retake and
+compares across cards. Fractions rather than pixels of it, so `tables.py` never
+imports `ml/normalization` — which would put OpenCV in the API image.
+
+**Uncertainty is required on both tables.** `confidence` is NOT NULL with no
+default, and every one of §14, §15 and §16's vocabularies carries `unknown`. An
+annotator who cannot tell records that; a model trained on their confident guess
+is worse than one trained on their admission.
+
+Both tables are append-only: a corrected annotation is a new row, so a dataset
+version that referenced the old reading keeps meaning what it meant. The
+annotator is an opaque identifier under a grammar with no `@` in it, so spec
+§53's restraint is enforced rather than requested.
+
+There is no route and no CLI here yet — the annotation tool is `apps/annotation`,
+and this issue landed the schema it will write into.
 
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:

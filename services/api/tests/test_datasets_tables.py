@@ -23,6 +23,7 @@ Three properties are worth more than the rest:
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 
@@ -34,14 +35,17 @@ from tcg_api.analysis.tables import images
 from tcg_api.datasets.tables import (
     PROVENANCE_FIELDS,
     TABLES,
+    centering_measurements,
     dataset_members,
     dataset_versions,
+    image_annotations,
     physical_copies,
     training_image_fingerprints,
     training_images,
 )
 from tcg_api.table_registry import DECLARED_TABLES
 from tcg_domain import DatasetSplit, ImageSide
+from tcg_domain.annotation import LABELS_BY_KIND, REGIONS_BY_KIND
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 VERSIONS = REPO_ROOT / "database" / "migrations" / "versions"
@@ -50,6 +54,8 @@ MIGRATION = VERSIONS / "20260828_add_the_dataset_and_provenance_schema.py"
 #: search below reads both files: a CHECK declared in `tables.py` is in *one* of
 #: them, and which one is not the drift this test is about.
 FINGERPRINTS_MIGRATION = VERSIONS / "20260829_add_the_training_image_fingerprints.py"
+#: #158's annotations landed in a third revision, read by the same search.
+ANNOTATION_MIGRATION = VERSIONS / "20260829_add_the_annotation_schema.py"
 
 #: Spec §29's list, verbatim apart from `source_url/reference`, which the
 #: specification spells with a slash and no column may.
@@ -76,13 +82,19 @@ COMPOSED_CHECKS = (
     "ck_training_images_sha256_is_lowercase_hex",
     "ck_dataset_versions_version_is_an_explicit_identifier",
     "ck_training_image_fingerprints_hashes_are_lowercase_hex",
+    "ck_image_annotations_kind_region_and_label_agree",
+    "ck_image_annotations_bounding_box_lies_inside_the_artifact",
+    "ck_image_annotations_annotator_id_is_opaque",
+    "ck_centering_measurements_ratios_are_unit_intervals",
+    "ck_centering_measurements_annotator_id_is_opaque",
 )
 
 
 @pytest.fixture(scope="module")
 def migration_source() -> str:
     return "\n".join(
-        path.read_text(encoding="utf-8") for path in (MIGRATION, FINGERPRINTS_MIGRATION)
+        path.read_text(encoding="utf-8")
+        for path in (MIGRATION, FINGERPRINTS_MIGRATION, ANNOTATION_MIGRATION)
     )
 
 
@@ -103,6 +115,12 @@ def fingerprints_migration() -> ModuleType:
     return _imported("fingerprints_migration", FINGERPRINTS_MIGRATION)
 
 
+@pytest.fixture(scope="module")
+def annotation_migration() -> ModuleType:
+    """#158's revision, likewise."""
+    return _imported("annotation_migration", ANNOTATION_MIGRATION)
+
+
 def _imported(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
@@ -120,13 +138,15 @@ def test_the_domain_is_registered() -> None:
     assert set(TABLES) <= set(DECLARED_TABLES)
 
 
-def test_the_five_tables_are_declared_on_the_shared_metadata() -> None:
+def test_the_seven_tables_are_declared_on_the_shared_metadata() -> None:
     assert {table.name for table in TABLES} == {
         "physical_copies",
         "training_images",
         "training_image_fingerprints",
         "dataset_versions",
         "dataset_members",
+        "image_annotations",
+        "centering_measurements",
     }
 
 
@@ -356,11 +376,19 @@ def test_the_migration_and_the_declaration_share_the_gate(migration: ModuleType)
     )
 
 
-def test_the_migration_creates_both_triggers_and_one_function(migration_source: str) -> None:
-    assert migration_source.count("CREATE OR REPLACE FUNCTION") == 1
-    assert "dataset_records_are_immutable" in migration_source
-    assert "trg_dataset_versions_immutable" in migration_source
-    assert "trg_dataset_members_immutable" in migration_source
+def test_the_migration_creates_both_triggers_and_one_function() -> None:
+    """#153's revision alone, deliberately not the concatenated source.
+
+    #158 adds a second immutability function in a revision of its own, and the
+    claim here is that *this* revision declares one — two would mean two
+    refusals with two messages for one rule.
+    """
+    source = MIGRATION.read_text(encoding="utf-8")
+
+    assert source.count("CREATE OR REPLACE FUNCTION") == 1
+    assert "dataset_records_are_immutable" in source
+    assert "trg_dataset_versions_immutable" in source
+    assert "trg_dataset_members_immutable" in source
 
 
 def test_the_migration_freezes_the_version_and_not_the_corpus(migration_source: str) -> None:
@@ -506,3 +534,283 @@ def test_the_fingerprint_migration_creates_no_trigger_and_drops_no_function() ->
 def test_the_fingerprints_table_carries_no_index() -> None:
     """The pass reads it whole, joins by primary key and compares every pair."""
     assert training_image_fingerprints.indexes == set()
+
+
+# ---------------------------------------------------------------------------
+# #158's annotations, and the two shapes §30 asks for
+# ---------------------------------------------------------------------------
+
+
+def test_a_measurement_and_a_marker_are_two_tables() -> None:
+    """§30 lists both, and they share no field but the annotator and the time.
+
+    A fourth `image_annotations.kind` would leave a label, a severity and a bounding
+    box NULL on every centering row and two ratios NULL on every other one. The
+    assertion is the absence of the columns each would have borrowed.
+    """
+    marker = set(image_annotations.c.keys())
+    measurement = set(centering_measurements.c.keys())
+
+    assert not marker & {"horizontal", "vertical"}
+    assert not measurement & {"kind", "region", "label", "severity"}
+    assert "centering" not in one_check(image_annotations, "kind_region_and_label_agree")
+
+
+def test_every_kind_carries_its_own_labels_and_its_own_regions() -> None:
+    """One constraint, composed from the domain's mappings — so a label added to
+    one of the specification's lists cannot become one the database refuses.
+
+    Written out here rather than derived from `LABELS_BY_KIND`, because a test
+    that reads its expectation from the code under test proves only that the
+    code equals itself.
+    """
+    rule = one_check(image_annotations, "kind_region_and_label_agree")
+
+    assert "kind = 'corner'" in rule
+    assert "'rough_cut'" in rule
+    # `rough_cut` is an edge label and not a corner one; the two lists are not
+    # one list, and this is what stops a corner being annotated with it.
+    corner_clause, _, rest = rule.partition("OR (kind = 'edge'")
+    assert "'rough_cut'" not in corner_clause
+    assert "'rounding'" not in rest.partition("OR (kind = 'surface'")[0]
+
+
+def test_the_vocabulary_rule_refuses_a_missing_region_rather_than_passing_on_null() -> None:
+    """The `IS TRUE` trap again, in a second constraint and for a second reason.
+
+    `region` is nullable, so `region IN ('top_left', ...)` is `NULL` — not false —
+    for a corner annotation that names no region, and the disjunction is then
+    `NULL OR false OR false`, which is `NULL`, and a `CHECK` **passes** on `NULL`.
+    An integration test caught this constraint admitting exactly the row it
+    exists to refuse; this asserts the spelling that fixed it, as
+    `test_the_gate_refuses_an_unknown_answer_rather_than_passing_on_null` does
+    for ADR 0008's gate.
+    """
+    assert one_check(image_annotations, "kind_region_and_label_agree").endswith(") IS TRUE")
+
+
+def test_a_surface_defect_is_placed_by_its_box_and_not_by_a_region() -> None:
+    """§16 names no positions, so `region` is NULL exactly for that kind."""
+    rule = one_check(image_annotations, "kind_region_and_label_agree")
+
+    assert "kind = 'surface' AND region IS NULL" in rule
+    assert image_annotations.c.region.nullable
+
+
+def test_a_defect_without_a_severity_is_not_storable() -> None:
+    """§17 requires a severity beside every defect.
+
+    An equality between two booleans rather than two implications, so neither
+    direction can be relaxed on its own: `clean` with a severity is as refused
+    as `chipping` without one.
+    """
+    assert one_check(image_annotations, "a_defect_carries_a_severity") == (
+        "(label IN ('clean', 'unknown')) = (severity IS NULL)"
+    )
+    assert image_annotations.c.severity.nullable
+
+
+def test_uncertainty_is_required_on_every_annotation_type() -> None:
+    """§30's eleventh field, and the acceptance criterion in as many words.
+
+    NOT NULL on both tables and no server default on either — a confidence that
+    reads 1.0 because nobody supplied one is the fabricated certainty §2.7
+    forbids, and it is exactly what a default would produce.
+    """
+    for table in (image_annotations, centering_measurements):
+        assert not table.c.confidence.nullable
+        assert table.c.confidence.server_default is None
+        assert one_check(table, "confidence_is_a_unit_interval")
+
+
+def test_an_axis_nobody_could_measure_is_null_rather_than_a_half() -> None:
+    """§21 names full-art and borderless layouts, which have no border to measure.
+
+    Each axis is nullable on its own, and a row measuring neither is refused —
+    that row would record nothing but an annotator and a time.
+    """
+    assert centering_measurements.c.horizontal.nullable
+    assert centering_measurements.c.vertical.nullable
+    assert one_check(centering_measurements, "a_measurement_measures_something") == (
+        "horizontal IS NOT NULL OR vertical IS NOT NULL"
+    )
+
+
+def test_the_ratios_are_numbers_and_not_labels() -> None:
+    """§13: "represented as ratios/percentages, not simply qualitative labels"."""
+    for column in (centering_measurements.c.horizontal, centering_measurements.c.vertical):
+        assert isinstance(column.type, sa.Double)
+
+
+def test_coordinates_are_fractions_of_the_artifact_and_name_no_resolution() -> None:
+    """The acceptance criterion: coordinates are in the normalized artifact's space.
+
+    Fractions rather than pixels of it, which is what keeps `tables.py` free of
+    `ml/normalization` — importing that for the two dimensions would put OpenCV
+    in the API image, which `test_import_purity.py` forbids. So the numbers 756
+    and 1056 must appear nowhere in this table's DDL.
+    """
+    box = one_check(image_annotations, "bounding_box_lies_inside_the_artifact")
+
+    assert "bbox_x + bbox_width <= 1" in box
+    assert "bbox_y + bbox_height <= 1" in box
+    assert "bbox_width > 0" in box
+    assert "756" not in ddl(image_annotations)
+    assert "1056" not in ddl(image_annotations)
+
+
+def test_a_partial_bounding_box_is_not_storable() -> None:
+    """Three of four coordinates is not a smaller box, it is a box nobody can draw.
+
+    `num_nulls` rather than four `IS NULL` comparisons, and the same trap
+    `economic_configurations` documents for `cardinality`.
+    """
+    assert one_check(image_annotations, "bounding_box_is_whole_or_absent") == (
+        "num_nulls(bbox_x, bbox_y, bbox_width, bbox_height) IN (0, 4)"
+    )
+
+
+def test_spatial_data_is_captured_although_nothing_reads_it() -> None:
+    """§17: capture spatial data from the beginning, even though visualization is post-V1."""
+    assert {"bbox_x", "bbox_y", "bbox_width", "bbox_height", "polygon"} <= set(
+        image_annotations.c.keys()
+    )
+    assert one_check(image_annotations, "polygon_is_an_array")
+
+
+def test_the_annotator_is_opaque_rather_than_a_person() -> None:
+    """Spec §53's restraint, made structural rather than documented.
+
+    An identifier under this grammar cannot contain '@' or a space, so a name or
+    an email address is not storable — which is a different claim from a comment
+    asking the next person not to store one.
+    """
+    grammar = "^[a-z0-9][a-z0-9_-]*$"
+    for table in (image_annotations, centering_measurements):
+        assert one_check(table, "annotator_id_is_opaque") == f"annotator_id ~ '{grammar}'"
+
+    assert re.fullmatch(grammar, "annotator-1")
+    assert not re.fullmatch(grammar, "someone@example.com")
+    assert not re.fullmatch(grammar, "Ada Lovelace")
+
+
+def test_the_annotation_timestamp_is_created_at_and_is_not_stored_twice() -> None:
+    """§30's eleventh feature has a home, and only one.
+
+    `training_images` needs both `acquired_at` and `created_at` because a
+    photograph is taken long before it is ingested. An annotation happens when
+    the row is written, so a second column would be one fact free to disagree
+    with itself.
+    """
+    for table in (image_annotations, centering_measurements):
+        assert "created_at" in table.c
+        assert table.c.created_at.server_default is not None
+        assert "annotated_at" not in table.c
+        assert "acquired_at" not in table.c
+
+
+def test_the_side_is_the_images_and_is_not_repeated_on_the_annotation() -> None:
+    """§14 lists eight corners; four of them are `training_images.side`.
+
+    Naming the side here as well would let an annotation claim a face its image
+    does not show, and §30's front/back is a viewer control rather than a field.
+    """
+    for table in (image_annotations, centering_measurements):
+        assert "side" not in table.c
+
+
+def test_an_annotation_never_blocks_the_removal_of_what_it_describes() -> None:
+    """CASCADE, with the fingerprint and not with the dataset member.
+
+    ADR 0008 grants retention after a withdrawal precisely because §31 needs it;
+    an annotation is not a version's claim, and RESTRICT here would make it one.
+    """
+    for table in (image_annotations, centering_measurements):
+        (key,) = table.c.training_image_id.foreign_keys
+        assert key.ondelete == "CASCADE"
+        assert key.column.table.name == "training_images"
+
+
+def test_nothing_here_reaches_the_analysis_or_the_catalog() -> None:
+    """A training image is the only thing an annotation is about."""
+    for table in (image_annotations, centering_measurements):
+        assert {key.column.table.name for key in table.foreign_keys} == {"training_images"}
+
+
+def test_an_annotation_carries_no_grade_and_no_condition_score() -> None:
+    """M7 defines the neutral condition representation and derives it *from* these.
+
+    #37's `predict_grade` parameter is typed `object` for exactly that reason, so
+    a grade or a condition score appearing here would be this issue answering
+    M7's question. The inverse assertion is the guard.
+    """
+    columns = set(image_annotations.c.keys()) | set(centering_measurements.c.keys())
+
+    assert not columns & {"grade", "condition", "condition_score", "grading_company"}
+
+
+def test_the_annotation_migration_creates_its_own_function_and_drops_only_that() -> None:
+    """Two functions now, and the wrong `DROP FUNCTION` would unguard two tables.
+
+    `dataset_records_are_immutable()` still guards `dataset_versions` and
+    `dataset_members`; a copied downgrade that dropped it here would leave both
+    editable with nothing failing.
+    """
+    source = ANNOTATION_MIGRATION.read_text(encoding="utf-8")
+
+    assert "CREATE OR REPLACE FUNCTION annotation_records_are_immutable" in source
+    assert "DROP FUNCTION IF EXISTS annotation_records_are_immutable()" in source
+    assert "DROP FUNCTION IF EXISTS dataset_records_are_immutable" not in source
+    assert "op.bulk_insert" not in source
+    assert "INSERT INTO" not in source
+
+
+def test_the_annotation_trigger_guards_update_and_leaves_delete_open() -> None:
+    """The CASCADE above is a DELETE, so a trigger on DELETE would break it."""
+    source = ANNOTATION_MIGRATION.read_text(encoding="utf-8")
+
+    assert "BEFORE UPDATE ON image_annotations" in source
+    assert "BEFORE UPDATE ON centering_measurements" in source
+    assert "BEFORE UPDATE OR DELETE" not in source
+
+
+def test_the_annotation_migration_and_the_declaration_share_the_composed_checks(
+    annotation_migration: ModuleType,
+) -> None:
+    """The five the generic source search skips, compared by value.
+
+    The vocabulary one is the important one: it carries §14's, §15's and §16's
+    three lists, and Alembic compares a check's name but never its text — so a
+    migration whose label list had drifted from `tcg_domain.annotation` would
+    pass every other guard in this repository.
+    """
+    assert one_check(image_annotations, "kind_region_and_label_agree") == (
+        annotation_migration.KIND_REGION_AND_LABEL
+    )
+    assert one_check(image_annotations, "bounding_box_lies_inside_the_artifact") == (
+        annotation_migration.BOX_LIES_INSIDE_THE_ARTIFACT
+    )
+    assert one_check(centering_measurements, "ratios_are_unit_intervals") == (
+        annotation_migration.RATIOS_ARE_UNIT_INTERVALS
+    )
+    for table in (image_annotations, centering_measurements):
+        assert one_check(table, "annotator_id_is_opaque") == (
+            f"annotator_id ~ '{annotation_migration.ANNOTATOR_ID_PATTERN}'"
+        )
+
+
+def test_the_migration_spells_the_vocabulary_the_domain_spells() -> None:
+    """The composed CHECK is built from `LABELS_BY_KIND`, so this closes the loop.
+
+    `test_domain_annotation.py` holds the mappings to the specification by value;
+    this holds the constraint to the mappings, and the test above holds the
+    migration to the constraint.
+    """
+    rule = one_check(image_annotations, "kind_region_and_label_agree")
+
+    for kind, labels in LABELS_BY_KIND.items():
+        clause = next(part for part in rule.split(" OR (kind = ") if f"'{kind.value}'" in part)
+        for label in labels:
+            assert f"'{label}'" in clause
+        for region in REGIONS_BY_KIND[kind]:
+            assert f"'{region}'" in clause

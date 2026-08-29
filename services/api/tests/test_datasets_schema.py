@@ -36,8 +36,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.catalog.tables import cards, sets
 from tcg_api.datasets.tables import (
+    centering_measurements,
     dataset_members,
     dataset_versions,
+    image_annotations,
     physical_copies,
     training_image_fingerprints,
     training_images,
@@ -127,8 +129,8 @@ def empty_tables() -> Iterator[None]:
     DELETE, and TRUNCATE would work either way.
     """
     tables = (
-        "training_image_fingerprints, dataset_members, dataset_versions, "
-        "training_images, physical_copies, cards, sets"
+        "image_annotations, centering_measurements, training_image_fingerprints, "
+        "dataset_members, dataset_versions, training_images, physical_copies, cards, sets"
     )
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
@@ -641,3 +643,287 @@ def test_a_fingerprint_goes_when_its_image_does() -> None:
 def test_a_fingerprint_needs_an_image_that_exists() -> None:
     with pytest.raises(IntegrityError, match="fk_training_image_fingerprints_image"):
         insert_fingerprint(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# #158's annotations, against the database rather than the declaration
+# ---------------------------------------------------------------------------
+#: A corner annotation every constraint accepts. Each test below spoils exactly
+#: one field, so a failure names the rule that was broken.
+LEGAL_ANNOTATION: dict[str, Any] = {
+    "kind": "corner",
+    "region": "top_left",
+    "label": "whitening",
+    "severity": "minor",
+    "confidence": 0.8,
+    "annotator_id": "annotator-1",
+}
+
+
+def insert_annotation(**overrides: Any) -> uuid.UUID:
+    identifier = overrides.pop("id", uuid.uuid4())
+    image = overrides.pop("training_image_id", None) or insert_image()
+    execute(
+        sa.insert(image_annotations),
+        {"id": identifier, "training_image_id": image, **LEGAL_ANNOTATION, **overrides},
+    )
+    return identifier
+
+
+def insert_centering(**overrides: Any) -> uuid.UUID:
+    identifier = overrides.pop("id", uuid.uuid4())
+    image = overrides.pop("training_image_id", None) or insert_image()
+    execute(
+        sa.insert(centering_measurements),
+        {
+            "id": identifier,
+            "training_image_id": image,
+            "horizontal": 0.52,
+            "vertical": 0.48,
+            "confidence": 0.9,
+            "annotator_id": "annotator-1",
+            **overrides,
+        },
+    )
+    return identifier
+
+
+def test_an_annotation_carrying_uncertainty_round_trips() -> None:
+    """§30's eleven, stored and read back — the acceptance criterion.
+
+    The confidence in particular: it is one of the eleven, it comes back a real
+    number, and `unknown` beside it is the other half of the same rule.
+    """
+    seed_catalog()
+    image = insert_image(card_id=CARD_ID)
+    insert_annotation(
+        training_image_id=image,
+        kind="surface",
+        region=None,
+        label="unknown",
+        severity=None,
+        confidence=0.25,
+        bbox_x=0.1,
+        bbox_y=0.2,
+        bbox_width=0.05,
+        bbox_height=0.05,
+        polygon=[[0.1, 0.2], [0.15, 0.2], [0.15, 0.25]],
+    )
+
+    (row,) = fetch(sa.select(image_annotations))
+
+    assert row.label == "unknown"
+    assert row.severity is None
+    assert row.confidence == pytest.approx(0.25)
+    assert row.polygon == [[0.1, 0.2], [0.15, 0.2], [0.15, 0.25]]
+    assert row.metadata == {}
+    assert row.created_at is not None
+
+
+def test_a_defect_without_a_severity_is_refused() -> None:
+    """§17 requires one beside every defect, and `chipping` is a defect."""
+    with pytest.raises(IntegrityError, match="a_defect_carries_a_severity"):
+        insert_annotation(label="chipping", severity=None)
+
+
+def test_a_clean_corner_carrying_a_severity_is_refused() -> None:
+    """The other direction of the same equality — there is nothing to rate."""
+    with pytest.raises(IntegrityError, match="a_defect_carries_a_severity"):
+        insert_annotation(label="clean", severity="minor")
+
+
+def test_a_clean_corner_without_a_severity_is_accepted() -> None:
+    """§14 opens with `clean`: a corner inspected and found sound is recorded."""
+    insert_annotation(label="clean", severity=None)
+
+    (row,) = fetch(sa.select(image_annotations))
+
+    assert (row.label, row.severity) == ("clean", None)
+
+
+def test_a_severity_outside_the_three_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="severity_is_a_known_severity"):
+        insert_annotation(severity="catastrophic")
+
+
+def test_a_surface_label_on_a_corner_is_refused() -> None:
+    """The three vocabularies are three lists, and this is why that matters."""
+    with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
+        insert_annotation(label="scratch")
+
+
+def test_an_edge_label_on_a_corner_is_refused() -> None:
+    """`rough_cut` is a cutting defect an edge has and a corner has not."""
+    with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
+        insert_annotation(label="rough_cut")
+
+
+def test_a_surface_annotation_naming_a_region_is_refused() -> None:
+    """§16 names no positions; a surface defect is placed by its box."""
+    with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
+        insert_annotation(kind="surface", region="top_left", label="scratch", severity="minor")
+
+
+def test_a_corner_annotation_without_a_region_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
+        insert_annotation(region=None)
+
+
+def test_an_edge_region_on_a_corner_is_refused() -> None:
+    """`top` is an edge and `top_left` is a corner; the two sets do not overlap."""
+    with pytest.raises(IntegrityError, match="kind_region_and_label_agree"):
+        insert_annotation(region="top")
+
+
+def test_a_confidence_outside_the_unit_interval_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="confidence_is_a_unit_interval"):
+        insert_annotation(confidence=1.5)
+
+
+def test_a_bounding_box_running_off_the_artifact_is_refused() -> None:
+    """Coordinates are fractions of the 756x1056 artifact, so they fit in [0, 1]."""
+    with pytest.raises(IntegrityError, match="bounding_box_lies_inside_the_artifact"):
+        insert_annotation(bbox_x=0.9, bbox_y=0.1, bbox_width=0.2, bbox_height=0.1)
+
+
+def test_a_bounding_box_with_no_area_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="bounding_box_lies_inside_the_artifact"):
+        insert_annotation(bbox_x=0.1, bbox_y=0.1, bbox_width=0.0, bbox_height=0.1)
+
+
+def test_three_of_four_box_coordinates_are_refused() -> None:
+    """Three of four is not a smaller box, it is a box nobody can draw."""
+    with pytest.raises(IntegrityError, match="bounding_box_is_whole_or_absent"):
+        insert_annotation(bbox_x=0.1, bbox_y=0.1, bbox_width=0.1)
+
+
+def test_a_polygon_that_is_not_an_array_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="polygon_is_an_array"):
+        insert_annotation(polygon={"points": []})
+
+
+def test_an_annotator_who_could_be_a_person_is_refused() -> None:
+    """Spec §53's restraint, enforced rather than requested."""
+    with pytest.raises(IntegrityError, match="annotator_id_is_opaque"):
+        insert_annotation(annotator_id="someone@example.com")
+
+
+def test_an_annotation_cannot_be_edited() -> None:
+    """A corrected annotation is a new row — #27's and #50's rule, here.
+
+    A dataset version that referenced the old reading must keep meaning what it
+    meant, which is the whole reason this domain freezes anything at all.
+    """
+    identifier = insert_annotation()
+
+    with pytest.raises(Exception, match="image_annotations is append-only"):
+        execute(
+            sa.update(image_annotations)
+            .where(image_annotations.c.id == identifier)
+            .values(severity="severe")
+        )
+
+
+def test_a_centering_measurement_cannot_be_edited() -> None:
+    identifier = insert_centering()
+
+    with pytest.raises(Exception, match="centering_measurements is append-only"):
+        execute(
+            sa.update(centering_measurements)
+            .where(centering_measurements.c.id == identifier)
+            .values(horizontal=0.5)
+        )
+
+
+def test_a_dataset_version_still_refuses_an_update() -> None:
+    """#158 adds a second immutability function; this proves it added rather than replaced.
+
+    The two hints differ deliberately, and a downgrade that dropped the wrong
+    function would leave this passing silently.
+    """
+    identifier = insert_version()
+
+    with pytest.raises(Exception, match="dataset_versions is frozen"):
+        execute(
+            sa.update(dataset_versions)
+            .where(dataset_versions.c.id == identifier)
+            .values(split_seed=1)
+        )
+
+
+def test_an_annotation_is_removable_and_goes_with_its_image() -> None:
+    """CASCADE: ADR 0008's withdrawal must not be blocked by a label."""
+    image = insert_image()
+    insert_annotation(training_image_id=image)
+    insert_centering(training_image_id=image)
+
+    execute(sa.delete(training_images).where(training_images.c.id == image))
+
+    assert fetch(sa.select(image_annotations)) == []
+    assert fetch(sa.select(centering_measurements)) == []
+
+
+def test_centering_measurements_are_stored_and_queried_as_numbers() -> None:
+    """§13: ratios rather than qualitative labels, and the issue's own test.
+
+    The `WHERE` is the point — a label could be read back, but only a number can
+    be compared in a range the annotator never wrote down.
+    """
+    insert_centering(horizontal=0.52, vertical=0.48)
+
+    rows = fetch(
+        sa.select(centering_measurements).where(
+            centering_measurements.c.horizontal.between(0.45, 0.55)
+        )
+    )
+
+    (row,) = rows
+    assert isinstance(row.horizontal, float)
+    assert row.vertical == pytest.approx(0.48)
+
+
+def test_a_borderless_card_measures_one_axis_and_says_so() -> None:
+    """§21 names full-art and borderless layouts; one axis has no border to read."""
+    insert_centering(horizontal=None, vertical=0.5, confidence=0.4, notes="borderless full art")
+
+    (row,) = fetch(sa.select(centering_measurements))
+
+    assert row.horizontal is None
+    assert row.vertical == pytest.approx(0.5)
+
+
+def test_a_measurement_of_neither_axis_is_refused() -> None:
+    """That row records an annotator and a time and nothing else."""
+    with pytest.raises(IntegrityError, match="a_measurement_measures_something"):
+        insert_centering(horizontal=None, vertical=None)
+
+
+def test_a_ratio_outside_the_unit_interval_is_refused() -> None:
+    """A border cannot be more than all of the border."""
+    with pytest.raises(IntegrityError, match="ratios_are_unit_intervals"):
+        insert_centering(horizontal=1.4)
+
+
+def test_a_centering_annotator_who_could_be_a_person_is_refused() -> None:
+    with pytest.raises(IntegrityError, match="annotator_id_is_opaque"):
+        insert_centering(annotator_id="Ada Lovelace")
+
+
+def test_an_image_may_carry_a_corrected_annotation_beside_the_original() -> None:
+    """Append-only means two rows, and the newest one is the current reading.
+
+    Nothing is unique per image and per region, deliberately: that is what makes
+    a correction representable at all, and a surface has as many defects as it
+    has.
+    """
+    image = insert_image()
+    insert_annotation(training_image_id=image, severity="minor")
+    insert_annotation(training_image_id=image, severity="severe")
+
+    rows = fetch(
+        sa.select(image_annotations)
+        .where(image_annotations.c.training_image_id == image)
+        .order_by(image_annotations.c.created_at)
+    )
+
+    assert [row.severity for row in rows] == ["minor", "severe"]
