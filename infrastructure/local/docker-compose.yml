@@ -213,8 +213,11 @@ services:
       TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
       TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
       # Spelled out rather than left to the default, so that overriding
-      # WEB_PORT does not silently break CORS for the app that was moved.
-      TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}"]'
+      # WEB_PORT or ANNOTATION_PORT does not silently break CORS for the app
+      # that was moved. **Both applications are here**: the annotation tool is a
+      # browser client of this API too, and leaving it out fails as a fetch that
+      # never arrives — which the tool can only report as "not answering".
+      TCG_API_CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}","http://localhost:${ANNOTATION_PORT:-3001}"]'
       TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     ports:
