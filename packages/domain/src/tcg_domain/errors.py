@@ -30,6 +30,7 @@ __all__ = [
     "InvalidCardReference",
     "InvalidCardSearch",
     "InvalidCatalogRecord",
+    "InvalidConditionAssessment",
     "InvalidConfidence",
     "InvalidGrade",
     "InvalidGradeDistribution",
@@ -130,6 +131,22 @@ class InvalidQualityReport(DomainError, ValueError):
     rule is why this is an error rather than something the gate merely tries to
     honour: a condition nobody assessed must be *reported* undetermined, not
     quietly left out of the answer.
+    """
+
+
+class InvalidConditionAssessment(DomainError, ValueError):
+    """A condition representation is not representable — spec §13, §17, #180.
+
+    One error for every shape in :mod:`tcg_domain.condition`, on
+    :class:`InvalidQualityReport`'s precedent: a defect, a finding, a centering
+    block and the assessment that composes them are a single family, always
+    built together by the same analyzers, and a caller that needs to know which
+    shape failed reads the message rather than the class.
+
+    Covers a bounding box or polygon outside the unit square, a label that is
+    a bare string rather than a vocabulary member, a severity that contradicts
+    its label, a non-surface defect declaring the `original` frame, and an
+    assessment whose mappings are not total over the V1 sides and regions.
     """
 
 

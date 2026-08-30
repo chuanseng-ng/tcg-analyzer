@@ -74,6 +74,7 @@ def test_the_public_surface_is_explicit() -> None:
         "card_geometry",
         "catalog",
         "catalog_version",
+        "condition",
         "confidence",
         "dataset",
         "distribution",
