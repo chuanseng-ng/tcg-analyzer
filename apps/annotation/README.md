@@ -60,7 +60,9 @@ reads one variable, so this application knows exactly one origin.
 ## What it shows, and why the badge matters
 
 **The normalized artifact, not the photograph.** `ml/normalization` warps a
-photograph to a fixed 756×1056, and an annotation is stored as a _fraction of
+photograph to a fixed artifact (the card at 12 px/mm, since #194 inside a 2 mm
+background margin whose card rectangle the service reports as `card_frame`),
+and an annotation is stored as a _fraction of
 that artifact_. A corner marked at 12% across a raw photograph says nothing
 comparable about the card, because the next photograph is framed differently.
 
@@ -131,7 +133,7 @@ tries to name one is refused.
 
 ## What the artifact can and cannot resolve
 
-`ml/normalization` warps to `pixels_per_mm = 12`, which is 756x1056 on a 63x88 mm
+`ml/normalization` warps to `pixels_per_mm = 12`, which puts the card at 756x1056 on a 63x88 mm
 card — exactly 63:88, and about 305 dpi. One artifact pixel is **83 microns**.
 Against that, the defect classes §30 asks an annotator to mark are not equal.
 The question was settled — by arithmetic where arithmetic sufficed, and by

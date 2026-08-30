@@ -85,7 +85,7 @@ Beside them: `physical_copy_id`, `card_id`, `side`, `original_uri`, `sha256`,
 ### The artifact, and why it is a column
 
 `original_uri` names the photograph. `normalized_uri` names the standardized
-756x1056 artifact spec §30's annotation tool shows and §21's coordinates are
+standardized artifact spec §30's annotation tool shows and §21's coordinates are
 fractions of, and `normalization_details` records how it was made — the
 projective transform, the quarter-turn, the artifact's size, the stage version
 and its thresholds, which is `images.normalization_details`' shape exactly.

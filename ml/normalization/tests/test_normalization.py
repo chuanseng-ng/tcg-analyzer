@@ -47,7 +47,11 @@ CARD_WIDTH, CARD_HEIGHT = 945, 1320
 #: band that came back wider than it went in.
 INK, PAPER = 100, 140
 
-TARGET_WIDTH, TARGET_HEIGHT = 756, 1056
+#: The card's own pixels in the artifact, and the background margin around it
+#: (#194): 63 x 88 mm at 12 px/mm, inside a 2 mm frame of real photograph.
+CARD_PX_WIDTH, CARD_PX_HEIGHT = 756, 1056
+MARGIN_PX = 24
+TARGET_WIDTH, TARGET_HEIGHT = CARD_PX_WIDTH + 2 * MARGIN_PX, CARD_PX_HEIGHT + 2 * MARGIN_PX
 
 
 def border_width(width: int, height: int) -> int:
@@ -88,9 +92,11 @@ def borders(picture: NDArray[np.uint8]) -> tuple[int, int, int, int]:
     """The four border widths in the artifact — left, right, top, bottom.
 
     Read across the middle of the card, where the gutter guarantees the run
-    ends at the border's inner edge.
+    ends at the border's inner edge. The margin is sliced off first: it holds
+    the photograph's own dark surface, which is not the card's border.
     """
-    dark = (picture.mean(axis=2) < (INK + PAPER) / 2).astype(np.uint8)
+    card = picture[MARGIN_PX:-MARGIN_PX, MARGIN_PX:-MARGIN_PX]
+    dark = (card.mean(axis=2) < (INK + PAPER) / 2).astype(np.uint8)
     row, column = dark.shape[0] // 2, dark.shape[1] // 2
     return (
         _run(dark[row, :]),
@@ -178,9 +184,13 @@ def test_a_square_card_normalizes_to_the_target_resolution() -> None:
     assert decoded(artifact).shape == (TARGET_HEIGHT, TARGET_WIDTH, 3)
 
 
-def test_the_target_resolution_is_exactly_the_proportions_of_a_real_card() -> None:
-    """63 x 88 mm at 12 px/mm, so a centering ratio measured on it means what it says."""
-    assert pytest.approx(63.0 / 88.0, abs=1e-12) == TARGET_WIDTH / TARGET_HEIGHT
+def test_the_card_within_the_artifact_is_exactly_the_proportions_of_a_real_card() -> None:
+    """63 x 88 mm at 12 px/mm, so a centering ratio measured on it means what it says.
+
+    The margin sits *around* that: the artifact is larger, but the card's own
+    rectangle keeps a real card's proportions with no rounding.
+    """
+    assert pytest.approx(63.0 / 88.0, abs=1e-12) == CARD_PX_WIDTH / CARD_PX_HEIGHT
 
 
 def test_a_skewed_photograph_comes_back_rectangular() -> None:
@@ -198,7 +208,7 @@ def test_a_skewed_photograph_comes_back_rectangular() -> None:
     )
     artifact = normalized(corners=skewed)
 
-    expected = border_width(CARD_WIDTH, CARD_HEIGHT) * (TARGET_HEIGHT / CARD_HEIGHT)
+    expected = border_width(CARD_WIDTH, CARD_HEIGHT) * (CARD_PX_HEIGHT / CARD_HEIGHT)
     measured = borders(decoded(artifact))
     for side in measured:
         assert side == pytest.approx(expected, abs=2), measured
@@ -221,7 +231,7 @@ def test_a_card_photographed_on_its_side_is_still_the_right_way_round() -> None:
     assert (artifact.width, artifact.height) == (TARGET_WIDTH, TARGET_HEIGHT)
     assert artifact.quarter_turns == 1
 
-    expected = border_width(CARD_HEIGHT, CARD_WIDTH) * (TARGET_HEIGHT / CARD_HEIGHT)
+    expected = border_width(CARD_HEIGHT, CARD_WIDTH) * (CARD_PX_HEIGHT / CARD_HEIGHT)
     measured = borders(decoded(artifact))
     for side in measured:
         assert side == pytest.approx(expected, abs=2), measured
@@ -253,9 +263,10 @@ def test_the_transform_round_trips_a_known_point() -> None:
     forward = cv2.perspectiveTransform(corner_in_original, matrix)
     back = cv2.perspectiveTransform(forward, np.linalg.inv(matrix))
 
-    # The card's first corner is the artifact's first corner.
-    assert forward[0][0][0] == pytest.approx(0.0, abs=1.5)
-    assert forward[0][0][1] == pytest.approx(0.0, abs=1.5)
+    # The card's first corner is the inner rectangle's first corner — the
+    # margin is what sits between it and the artifact's own origin (#194).
+    assert forward[0][0][0] == pytest.approx(MARGIN_PX, abs=1.5)
+    assert forward[0][0][1] == pytest.approx(MARGIN_PX, abs=1.5)
     assert back[0][0] == pytest.approx(corner_in_original[0][0], abs=1e-6)
 
 
@@ -267,8 +278,8 @@ def test_the_transform_maps_the_far_corner_to_the_far_corner() -> None:
     matrix = np.array(artifact.matrix, dtype=np.float64).reshape(3, 3)
     mapped = cv2.perspectiveTransform(np.array([[list(corners[2])]], dtype=np.float64), matrix)
 
-    assert mapped[0][0][0] == pytest.approx(TARGET_WIDTH, abs=1.5)
-    assert mapped[0][0][1] == pytest.approx(TARGET_HEIGHT, abs=1.5)
+    assert mapped[0][0][0] == pytest.approx(MARGIN_PX + CARD_PX_WIDTH, abs=1.5)
+    assert mapped[0][0][1] == pytest.approx(MARGIN_PX + CARD_PX_HEIGHT, abs=1.5)
 
 
 def test_the_record_carries_everything_needed_to_explain_the_artifact() -> None:
@@ -304,8 +315,9 @@ def test_the_photograph_is_not_enhanced() -> None:
     """
     picture = decoded(normalized())
 
-    # Away from the edges, where the warp samples the surface underneath.
-    inside = picture[80:-80, 80:-80]
+    # Away from the card's edges and clear of the margin, where the warp
+    # samples the surface underneath.
+    inside = picture[MARGIN_PX + 80 : -(MARGIN_PX + 80), MARGIN_PX + 80 : -(MARGIN_PX + 80)]
     assert inside.min() >= INK - 6, inside.min()
     assert inside.max() <= PAPER + 6, inside.max()
 
@@ -349,7 +361,12 @@ def test_a_resolution_that_lands_mid_pixel_is_refused() -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("pixels_per_mm", 0.0), ("max_warp_multiple", 0), ("png_compression", 10)],
+    [
+        ("pixels_per_mm", 0.0),
+        ("max_warp_multiple", 0),
+        ("png_compression", 10),
+        ("margin_mm", -1.0),
+    ],
 )
 def test_a_threshold_outside_its_range_is_refused(field: str, value: float) -> None:
     with pytest.raises(ValueError):
@@ -372,3 +389,51 @@ def _run(line: NDArray[np.uint8]) -> int:
     """How many pixels the leading run of set values covers."""
     unset = np.flatnonzero(line == 0)
     return int(unset[0]) if unset.size else int(line.size)
+
+
+# --------------------------------------------------------------------------
+# The margin — #194
+# --------------------------------------------------------------------------
+
+
+def test_the_margin_holds_the_photographs_own_background() -> None:
+    """The margin exists so an annotator can read the card's edge against what
+    it was photographed on — so it must be the real surface, not a painted
+    border."""
+    picture = decoded(normalized())
+
+    surface_tone = 40
+    for band in (
+        picture[: MARGIN_PX - 2, :],
+        picture[-(MARGIN_PX - 2) :, :],
+        picture[:, : MARGIN_PX - 2],
+        picture[:, -(MARGIN_PX - 2) :],
+    ):
+        assert abs(float(band.mean()) - surface_tone) < 12, band.mean()
+
+
+def test_a_zero_margin_is_the_bare_card() -> None:
+    """`margin_mm=0` is the pre-#194 artifact exactly — the option is a size,
+    never a mode."""
+    data, corners = photograph()
+
+    bare = normalize(data, a_geometry(corners), thresholds=NormalizationThresholds(margin_mm=0.0))
+
+    assert isinstance(bare, Normalized)
+    assert (bare.width, bare.height) == (CARD_PX_WIDTH, CARD_PX_HEIGHT)
+
+
+def test_a_margin_that_lands_mid_pixel_is_refused() -> None:
+    """The card's rectangle must sit on whole pixels inside the artifact, or a
+    stored fraction of the artifact stops naming an exact place on the card."""
+    with pytest.raises(ValueError, match="whole number of pixels"):
+        NormalizationThresholds(margin_mm=0.1)
+
+
+def test_the_record_names_the_margin() -> None:
+    """The card's inner rectangle must be derivable from the stored record
+    alone — the server that serves `card_frame` may not import this package."""
+    record = DEFAULT_NORMALIZATION_THRESHOLDS.as_record()
+
+    assert record["normalization_margin_mm"] == 2.0
+    assert record["normalization_pixels_per_mm"] == 12.0

@@ -168,6 +168,120 @@ def test_a_worn_front_with_no_luminance_contrast_is_found_by_its_colour() -> Non
     assert found.area_fraction == pytest.approx(0.288, abs=0.02)
 
 
+def test_a_shadow_blob_below_the_fill_threshold_loses_to_the_clear_card_beside_it() -> None:
+    """#192's first failure: the merged blob is too small to be refused and wins.
+
+    #176's refusal needs the blob to fill 70% of the frame. The corpus's back
+    photographs produced the same card-plus-shadow blob at ~60% fill: the card
+    with its far corner dragged to the frame's own corner by a shadow lobe. It
+    touches the boundary, survives the hugging filter on area, shares the true
+    card's centre-group and outvotes it as largest member — and the warp of
+    that quadrilateral shows the card tilted with background at the corners. A
+    member that touches the frame boundary must lose to one that is clear of
+    it, however large it is.
+    """
+    picture = background(235)
+    left, top, width, height = 300, 380, 780, 1090  # the far corner near the frame's
+    right, bottom = left + width, top + height
+    # The shadow: a lobe off the card's bottom-right, reaching 1 px short of
+    # the frame corner (the real corner sat 4 px inside a 3024-px frame).
+    lobe = np.array(
+        [(right - 40, bottom - 500), (WIDTH - 1, HEIGHT - 1), (right - 500, bottom - 40)]
+    )
+    cv2.fillConvexPoly(picture, lobe, (130, 130, 130))
+    picture[top:bottom, left:right] = (150, 80, 40)  # saturated blue
+    found = located(png(picture))
+
+    corners = found.corners
+    assert corners[0] == pytest.approx((left, top), abs=10)
+    assert corners[2] == pytest.approx((right, bottom), abs=10)
+
+
+def test_a_worn_back_whose_chroma_ring_is_broken_at_the_corners_is_found() -> None:
+    """#192's second failure: wear breaks the saturation map into fragments.
+
+    The corpus's heavily worn back is visible only in chroma — the swirl is
+    isoluminant with the white table — and it is *mottled*: whitened corners
+    sever the blue border ring outright, and the interior is blue patches, not
+    a field. Thresholded, that is a cloud of fragments no 3x3 closing joins,
+    so no map produced a candidate and the only quadrilateral left was the
+    card-plus-shadow blob. A closing kernel sized for wear (9x9 at the working
+    scale) merges the fragments into one card-shaped region.
+    """
+    picture = background(235)
+    left, top, width, height = CARD
+    picture[top : top + height, left : left + width] = (235, 235, 235)
+    # The border: a 45-px ring, isoluminant with the surface (gray ~235, the
+    # worn-front test's trick) and saturated — chroma is all there is.
+    ring = 45
+    blue = (170, 250, 232)
+    picture[top : top + ring, left : left + width] = blue
+    picture[top + height - ring : top + height, left : left + width] = blue
+    picture[top : top + height, left : left + ring] = blue
+    picture[top : top + height, left + width - ring : left + width] = blue
+    # The interior mottle: blue patches on a 20-px pitch, gaps a 3x3 closing
+    # cannot join at the working scale and a 9x9 can.
+    for row in range(top + ring + 4, top + height - ring - 12, 20):
+        for column in range(left + ring + 4, left + width - ring - 12, 20):
+            picture[row : row + 12, column : column + 12] = blue
+    # The wear: each corner of the ring severed outright — 55 px, wider than
+    # the ring itself, as a whitened corner is.
+    notch = 55
+    for corner_top, corner_left in (
+        (top, left),
+        (top, left + width - notch),
+        (top + height - notch, left),
+        (top + height - notch, left + width - notch),
+    ):
+        picture[corner_top : corner_top + notch, corner_left : corner_left + notch] = (
+            235,
+            235,
+            235,
+        )
+    found = located(png(picture))
+
+    centre_x = sum(x for x, _y in found.corners) / 4
+    centre_y = sum(y for _x, y in found.corners) / 4
+    assert centre_x == pytest.approx(left + width / 2, abs=20)
+    assert centre_y == pytest.approx(top + height / 2, abs=20)
+    assert found.area_fraction == pytest.approx(0.26, abs=0.04)
+
+
+def test_a_light_bordered_card_on_a_light_table_is_found_by_its_shadow() -> None:
+    """#193: the auto-Canny thresholds sit above a soft drop shadow's gradient.
+
+    The corpus's silver-bordered card on a white table produced no candidate on
+    any map — the median of a mostly-white frame puts both Canny levels far
+    above the card edge's gradient, both Otsu polarities split the card's
+    interior from its border rather than the card from the table, and the
+    border is as unsaturated as the table. What remains is what a physical card
+    always has: a drop shadow, a few tones darker, hugging the edge. The fixed
+    low-threshold pass exists for exactly this photograph.
+    """
+    picture = background(235)
+    left, top, width, height = CARD
+    # A soft shadow ring: 6 px around the card, a little darker than the table.
+    cv2.rectangle(
+        picture,
+        (left - 6, top - 6),
+        (left + width + 6, top + height + 6),
+        (215, 215, 215),
+        thickness=6,
+    )
+    # The face: barely brighter than the table, inside the speckle amplitude,
+    # so no tonal split can separate them — and unsaturated, so the chroma
+    # pass sees nothing either. The artwork window: the one strong rectangle,
+    # which must not win.
+    picture[top : top + height, left : left + width] = (238, 238, 238)
+    art_left, art_top = left + 60, top + 70
+    picture[art_top : art_top + 480, art_left : art_left + 510] = (90, 110, 60)
+    found = located(png(picture))
+
+    corners = found.corners
+    assert corners[0] == pytest.approx((left - 6, top - 6), abs=14)
+    assert corners[2] == pytest.approx((left + width + 6, top + height + 6), abs=14)
+
+
 def test_a_jpeg_is_read_as_readily_as_a_png() -> None:
     encoded = cv2.imencode(".jpg", photograph(), [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
 

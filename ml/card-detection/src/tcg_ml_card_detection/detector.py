@@ -18,8 +18,13 @@ both polarities since either the card or the surface may be the brighter one.
 #176 names two more, both close-range: a card whose luminance contrast wear has
 taken, and a card merged with its own shadow. A saturation pass handles both —
 a card face is saturated where a white surface and the card's own grey shadow
-are not. Any pass may find the card, and their results are pooled and then
-grouped.
+are not; its closing kernel is sized for wear (#192), because a worn back is
+chroma *fragments* — a border ring severed at whitened corners, a mottled
+swirl — that a 3x3 closing never joins into a card. #193 names a sixth: a
+light-bordered card on a light table, whose only boundary evidence is its own
+drop shadow, a gradient the median-derived Canny levels of a mostly-white
+frame sit far above — a fixed low-threshold Canny pass sees it. Any pass may
+find the card, and their results are pooled and then grouped.
 
 **A frame-filling quadrilateral is refused, not returned.** #176's shadow-merged
 close-ups fitted a quadrilateral running to the frame's own corner and reported
@@ -41,7 +46,11 @@ is how sleeve obstruction gets answered at all.
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
-whitening that matters most.
+whitening that matters most. One exception (#192): a member touching the frame
+boundary loses to any member clear of it, however large — the corpus's
+card-plus-shadow blobs sat below the frame-filling refusal's area line, and a
+quadrilateral that ends on the picture's own edge ends there because the
+picture does, not because the card does.
 
 **Failure is a result, not an exception.** Nothing card-like found means
 :data:`INSUFFICIENT_INFORMATION` with a reason, never a guessed quadrilateral —
@@ -106,6 +115,23 @@ _ASPECT_TOLERANCE: Final = 0.25
 #: :attr:`DetectionThresholds.frame_margin_fraction`'s.
 _EDGE_TOLERANCE: Final = 0.02
 
+#: The saturation map's closing kernel, in pixels at the working scale. Sized
+#: for wear rather than for compression gaps (#192): a worn back thresholds to
+#: chroma fragments — a border ring severed at whitened corners, a mottled
+#: swirl — and the corpus's worn backs merged into one card-shaped region at
+#: 9 and not at 3. The other maps keep the 3x3 kernel: edges they leave open
+#: are compression artifacts, not wear.
+_WEAR_CLOSE: Final = 9
+
+#: The fixed Canny levels of the drop-shadow pass (#193). The other two Canny
+#: passes derive their levels from the frame's median so a dark photograph is
+#: not measured against a bright one's thresholds — but on a mostly-white
+#: frame that median puts both levels far above the soft gradient of a card's
+#: drop shadow, which for a light-bordered card on a light table is the only
+#: boundary evidence there is. Fixed and low, because the shadow's step is a
+#: couple of dozen tones whatever the exposure.
+_SHADOW_EDGE_LEVELS: Final = (20, 60)
+
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
@@ -163,7 +189,14 @@ def detect(
         grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
     card_group = max(groups, key=lambda group: max(member.area for member in group))
-    card = max(card_group, key=lambda member: member.area)
+    # The outermost member clear of the frame boundary, and the outermost of
+    # all only when every member touches it (#192) — a clipped card is still
+    # returned, but a card-plus-shadow blob whose far corner is the picture's
+    # own is never preferred over the card found beside it.
+    clear_of_the_boundary = [
+        member for member in card_group if member.boundary_margin > thresholds.frame_margin_fraction
+    ]
+    card = max(clear_of_the_boundary or card_group, key=lambda member: member.area)
 
     return CardGeometry(
         corners=_rescaled(card.quad, scale=scale, width=original_width, height=original_height),
@@ -209,13 +242,14 @@ def _working_copies(colour: _Gray, *, long_edge: int) -> tuple[_Gray, _Gray, flo
 
 
 def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
-    """The four extraction passes, as maps `findContours` can walk.
+    """The five extraction passes, as maps `findContours` can walk.
 
-    Five maps rather than four: the Otsu pass contributes both polarities. See
-    the module docstring for why there are four. The closing kernel joins
+    Six maps rather than five: the Otsu pass contributes both polarities. See
+    the module docstring for why there are five. The 3x3 closing kernel joins
     an edge that a compression artifact or a soft focus left with a gap in it —
     without it a card is found as four unconnected lines and no quadrilateral at
-    all.
+    all. The saturation pass closes at :data:`_WEAR_CLOSE` instead, because the
+    gaps it must join are wear, which is wider than any compression artifact.
     """
     kernel = np.ones((3, 3), np.uint8)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -245,8 +279,11 @@ def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
         cv2.morphologyEx(
             cv2.threshold(saturation, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
             cv2.MORPH_CLOSE,
-            kernel,
+            np.ones((_WEAR_CLOSE, _WEAR_CLOSE), np.uint8),
         ),
+        # The drop-shadow pass (#193): fixed low Canny levels, for the card
+        # whose only boundary evidence is the shadow it casts.
+        cv2.morphologyEx(cv2.Canny(blurred, *_SHADOW_EDGE_LEVELS), cv2.MORPH_CLOSE, kernel),
     )
 
 

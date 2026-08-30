@@ -165,15 +165,24 @@ def normalize(
     # The detected quadrilateral is warped *whole*: no inset, because the
     # detector returns the outermost member of its group on purpose and M7's
     # edge and corner analysis needs the card's real edge, which a tight crop
-    # shaves off.
+    # shaves off. The card's corners land on the inner rectangle, a margin in
+    # from the artifact's own (#194): the pixels outside it are the photograph
+    # around the card, sampled by the same warp — the surface a card's edge can
+    # actually be judged against. Where the photograph itself runs out the
+    # margin is black, which is honest: the picture ended there.
+    inset = float(thresholds.margin * multiple)
+    far = (
+        inset + thresholds.card_width * multiple - 1.0,
+        inset + thresholds.card_height * multiple - 1.0,
+    )
     warp_matrix = cv2.getPerspectiveTransform(
         np.array(corners, dtype=np.float32),
         np.array(
             [
-                (0.0, 0.0),
-                (warp[0] - 1.0, 0.0),
-                (warp[0] - 1.0, warp[1] - 1.0),
-                (0.0, warp[1] - 1.0),
+                (inset, inset),
+                (far[0], inset),
+                (far[0], far[1]),
+                (inset, far[1]),
             ],
             dtype=np.float32,
         ),
@@ -229,13 +238,14 @@ def _warp_multiple(corners: _Quad, thresholds: NormalizationThresholds) -> int:
     Chosen so the warp samples the original at roughly one output pixel per
     source pixel — enough that the warp itself does not have to decimate, and no
     more than that, since the box filter afterwards is what removes the detail
-    the output cannot hold.
+    the output cannot hold. Measured against the *card's* pixels, not the
+    artifact's: the margin adds output but no card detail.
     """
     long_edge = max(
         _distance(corners[1], corners[2]),
         _distance(corners[3], corners[0]),
     )
-    wanted = round(long_edge / thresholds.target_height)
+    wanted = round(long_edge / thresholds.card_height)
     return max(1, min(thresholds.max_warp_multiple, wanted))
 
 

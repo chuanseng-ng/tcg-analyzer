@@ -89,6 +89,16 @@ sound, where a surface carries one annotation per defect found and none at all
 when there are none. So "this corner is clean" is a row, and "this surface is
 clean" is the absence of rows.
 
+**The corpus protocol extends the absence rule to corners and edges**
+(annotator's decision, 2026-08-30, during #181): on an image that has been
+worked on — one that carries at least one row across the two tables — a corner,
+edge or surface with no marker is clean. An explicit `clean` row remains valid
+and is the *emphatic* form: it carries a chosen confidence where protocol
+absence carries none, so a reader must treat absence as clean-at-unstated-
+confidence, never as clean-at-certainty. `unknown` remains the way to record
+"I could not tell", and is neither. A reader may apply the absence rule **only**
+to worked-on images — an image with no rows at all has not been examined.
+
 **Every vocabulary ends in `unknown`.** That is spec §2.7's uncertainty inside
 the vocabulary rather than beside it. An annotator who can see damage but cannot
 name it records where it is and says so, which is a usable training signal where
@@ -115,7 +125,10 @@ direction can be relaxed on its own: `chipping` with no severity is as refused a
 
 ### Coordinates are fractions of the representation the row names
 
-`ml/normalization` (#38) warps every image to one 756×1056 artifact. An
+`ml/normalization` (#38) warps every image to one standardized artifact — the
+card at 12 px/mm inside a fixed background margin since #194, the bare card
+before it; the card's own rectangle is derived per artifact from its stored
+`normalization_details` and served as `card_frame`, never assumed. An
 annotation stored against **those** coordinates survives a retake and compares
 across cards; one stored against raw-photograph pixels becomes unusable the
 moment the framing changes. That was the whole rule until ADR 0010 measured its

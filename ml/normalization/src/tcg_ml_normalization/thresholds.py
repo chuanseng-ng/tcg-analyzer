@@ -33,7 +33,7 @@ __all__ = [
 #: What produced an artifact. Recorded on every image normalization ran
 #: against; never a pointer to "current", per the project's versioning
 #: invariant.
-NORMALIZATION_VERSION: Final = "normalization-opencv-v0.1.0"
+NORMALIZATION_VERSION: Final = "normalization-opencv-v0.2.0"
 
 #: A trading card, in millimetres. A physical fact rather than a threshold,
 #: which is why it is not tunable and why `ml/card-detection` deriving
@@ -75,6 +75,15 @@ class NormalizationThresholds:
     #: whatever OpenCV decides its default should be.
     png_compression: int = 6
 
+    #: How much of the photograph around the card the artifact keeps, in
+    #: millimetres of card scale on every side (#194). The card's edge can only
+    #: be judged against what it was photographed on — edge wear, whitening and
+    #: a rough cut are read against the background, and an artifact warped
+    #: edge-to-edge contains none. Zero is the bare card. The card itself stays
+    #: at `pixels_per_mm` in a known inner rectangle; the margin is real
+    #: photograph, never padding.
+    margin_mm: float = 2.0
+
     def __post_init__(self) -> None:
         if self.pixels_per_mm <= 0.0:
             raise ValueError(f"pixels_per_mm must be positive, got {self.pixels_per_mm!r}")
@@ -85,11 +94,20 @@ class NormalizationThresholds:
             )
         if not 0 <= self.png_compression <= 9:
             raise ValueError(f"png_compression must lie in [0, 9], got {self.png_compression!r}")
+        if self.margin_mm < 0.0:
+            raise ValueError(f"margin_mm cannot be negative, got {self.margin_mm!r}")
 
         # The 63:88 claim is the reason this resolution was chosen, so it is
         # checked rather than trusted: a pixels_per_mm that lands mid-pixel on
-        # either edge distorts the aspect by however much it rounds.
-        for label, millimetres in (("width", CARD_WIDTH_MM), ("height", CARD_HEIGHT_MM)):
+        # either edge distorts the aspect by however much it rounds. The margin
+        # is held to the same rule, or the card's inner rectangle stops sitting
+        # on whole pixels and a stored fraction of the artifact stops naming an
+        # exact place on the card.
+        for label, millimetres in (
+            ("width", CARD_WIDTH_MM),
+            ("height", CARD_HEIGHT_MM),
+            ("margin", self.margin_mm),
+        ):
             exact = millimetres * self.pixels_per_mm
             if abs(exact - round(exact)) > 1e-9:
                 raise ValueError(
@@ -98,14 +116,29 @@ class NormalizationThresholds:
                 )
 
     @property
-    def target_width(self) -> int:
-        """The artifact's width in pixels."""
+    def card_width(self) -> int:
+        """The card's own width in artifact pixels — the inner rectangle's."""
         return round(CARD_WIDTH_MM * self.pixels_per_mm)
 
     @property
-    def target_height(self) -> int:
-        """The artifact's height in pixels."""
+    def card_height(self) -> int:
+        """The card's own height in artifact pixels — the inner rectangle's."""
         return round(CARD_HEIGHT_MM * self.pixels_per_mm)
+
+    @property
+    def margin(self) -> int:
+        """The margin in pixels, on every side of the card."""
+        return round(self.margin_mm * self.pixels_per_mm)
+
+    @property
+    def target_width(self) -> int:
+        """The artifact's width in pixels, margin included."""
+        return self.card_width + 2 * self.margin
+
+    @property
+    def target_height(self) -> int:
+        """The artifact's height in pixels, margin included."""
+        return self.card_height + 2 * self.margin
 
     def as_record(self) -> dict[str, float]:
         """The form persisted alongside the artifact.

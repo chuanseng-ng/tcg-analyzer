@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   boxFrom,
   CANNOT_TELL_CONFIDENCE,
-  centeringFrom,
+  centeringFromQuads,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
   CORNER_REGIONS,
@@ -27,9 +27,10 @@ import {
   type MarkerDraft,
   type MarkerRequest,
   type SurfaceLabel,
+  type Quad,
 } from "@/lib/annotations";
 import type { Representation, StoredMarker } from "@/lib/api";
-import { fractionAt, transformOf, type Size, type View } from "@/lib/viewport";
+import { fractionAt, transformOf, type Fraction, type Size, type View } from "@/lib/viewport";
 
 import styles from "./page.module.css";
 
@@ -71,6 +72,9 @@ export function Overlay({
   drafts,
   stored,
   pending,
+  outer,
+  inner,
+  points,
   shown,
 }: {
   view: View;
@@ -78,6 +82,11 @@ export function Overlay({
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   pending: BoundingBox | null;
+  /** Centering's quadrilaterals — the card's outer edge, then the inner frame. */
+  outer: Quad | null;
+  inner: Quad | null;
+  /** The corners clicked so far towards the next quadrilateral. */
+  points: readonly Fraction[];
   shown: Representation;
 }) {
   /*
@@ -129,6 +138,34 @@ export function Overlay({
           </rect>
         ) : null,
       )}
+      {outer ? (
+        <polygon
+          className={styles.markOuter}
+          points={outer.map((corner) => `${String(corner.x)},${String(corner.y)}`).join(" ")}
+          vectorEffect="non-scaling-stroke"
+        >
+          <title>The card&apos;s outer edge</title>
+        </polygon>
+      ) : null}
+      {inner ? (
+        <polygon
+          className={styles.markPending}
+          points={inner.map((corner) => `${String(corner.x)},${String(corner.y)}`).join(" ")}
+          vectorEffect="non-scaling-stroke"
+        >
+          <title>The printed inner frame</title>
+        </polygon>
+      ) : null}
+      {points.map((point, index) => (
+        <circle
+          key={index}
+          className={styles.markPoint}
+          cx={point.x}
+          cy={point.y}
+          r={0.006}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
       {pending ? (
         <rect
           className={styles.markPending}
@@ -157,13 +194,25 @@ export function CaptureLayer({
   image,
   onPreview,
   onPlace,
+  onPoint = null,
 }: {
   view: View;
   image: Size;
   onPreview: (box: BoundingBox | null) => void;
   onPlace: (box: BoundingBox) => void;
+  /**
+   * When given, the layer collects clicked corners instead of dragged boxes —
+   * centering's mode, where four corners make a quadrilateral because the card
+   * need not sit straight in the frame.
+   */
+  onPoint?: ((point: Fraction) => void) | null;
 }) {
-  const [from, setFrom] = useState<{ x: number; y: number } | null>(null);
+  // A ref rather than state, and deliberately: releasing the mouse fires
+  // `pointerup` and then — because the browser drops pointer capture — a
+  // `lostpointercapture` straight after it. The abandon handler must see that
+  // the drag already ended, or it wipes the box `pointerup` just placed; a
+  // state update would not be visible until the next render, a ref is.
+  const from = useRef<{ x: number; y: number } | null>(null);
 
   const pointOn = (event: React.PointerEvent<HTMLDivElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
@@ -173,8 +222,12 @@ export function CaptureLayer({
     });
   };
 
-  const finish = () => {
-    setFrom(null);
+  // The abandon path — a cancelled pointer, or capture lost mid-drag. Stands
+  // down when no drag is in progress, which is exactly the post-`pointerup`
+  // `lostpointercapture` case.
+  const abandon = () => {
+    if (from.current === null) return;
+    from.current = null;
     onPreview(null);
   };
 
@@ -185,24 +238,44 @@ export function CaptureLayer({
         // Primary button only. A right-click here would otherwise start a drag
         // the context menu then strands, which is the bug the frame had.
         if (event.button !== 0) return;
+        // Stopped here, or the frame underneath starts a pan from the same
+        // press and — because its handler also calls `setPointerCapture`, and
+        // the last call wins — steals the whole pointer stream: the view pans
+        // under the box and this layer never sees the pointerup that would
+        // have placed it. Covering the frame does not stop bubbling; this
+        // does, and it is what keeps the frame's pan handlers untouched.
+        event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
-        setFrom(pointOn(event));
+        from.current = pointOn(event);
       }}
       onPointerMove={(event) => {
-        if (from === null) return;
-        onPreview(boxFrom(from, pointOn(event)));
+        if (from.current === null) return;
+        event.stopPropagation();
+        if (onPoint !== null) return;
+        onPreview(boxFrom(from.current, pointOn(event)));
       }}
       onPointerUp={(event) => {
-        if (from === null) return;
-        const box = boxFrom(from, pointOn(event));
-        finish();
+        if (from.current === null) return;
+        event.stopPropagation();
+        if (onPoint !== null) {
+          // A corner is placed where the press ended, so a slight wobble
+          // between down and up chooses the release point rather than
+          // becoming a box too small to mean anything.
+          from.current = null;
+          onPoint(pointOn(event));
+          return;
+        }
+        const box = boxFrom(from.current, pointOn(event));
+        from.current = null;
         // A click that did not move is not a region — `bbox_width > 0` is a
         // CHECK, and a marker made from one would be refused after the annotator
-        // thought they had placed it.
+        // thought they had placed it. Its preview is cleared; a placed box
+        // replaces the preview by being set over it.
         if (box !== null) onPlace(box);
+        else onPreview(null);
       }}
-      onPointerCancel={finish}
-      onLostPointerCapture={finish}
+      onPointerCancel={abandon}
+      onLostPointerCapture={abandon}
     />
   );
 }
@@ -480,25 +553,35 @@ function ConfidenceChoice({
 /**
  * Centering, measured rather than typed.
  *
- * The annotator drags a box round the inner frame and the two ratios follow from
- * where its edges sit — spec §21 asks for a measurement, and somebody doing
- * division under time pressure is not one. The artifact's edges *are* the card's,
- * so the borders are what is left outside the box.
+ * Two boxes, both the annotator's: first the card's **outer edge**, traced
+ * against the background margin the artifact keeps around the card (#194), then
+ * the printed **inner frame**. The borders are what lies between the two, and
+ * the ratios follow — spec §21 asks for a measurement, and somebody doing
+ * division under time pressure is not one. The detector's own idea of the card
+ * edge is deliberately not part of the measurement: a border is a few percent
+ * of the card, so a few pixels of quad error swings the ratio wildly — a fine
+ * card once read 88.7/11.3 that way.
  *
  * Each axis can be switched off, and that is not a convenience either: §21 names
  * full-art and borderless layouts outright, and a card with no border on an axis
  * has no ratio there. `null` says so; `0.5` would be a fabrication.
  */
 export function CenteringControls({
-  pending,
+  outer,
+  inner,
+  pointsPlaced,
+  image,
   existing,
-  onClearPending,
+  onRestart,
   onSet,
   onClear,
 }: {
-  pending: BoundingBox | null;
+  outer: Quad | null;
+  inner: Quad | null;
+  pointsPlaced: number;
+  image: Size;
   existing: CenteringRequest | null;
-  onClearPending: () => void;
+  onRestart: () => void;
   onSet: (reading: CenteringRequest) => void;
   onClear: () => void;
 }) {
@@ -509,10 +592,15 @@ export function CenteringControls({
 
   const ratios = useMemo(
     () =>
-      pending === null
+      inner === null || outer === null
         ? null
-        : centeringFrom(pending, { horizontal: measuresHorizontal, vertical: measuresVertical }),
-    [pending, measuresHorizontal, measuresVertical],
+        : centeringFromQuads(
+            inner,
+            outer,
+            { horizontal: measuresHorizontal, vertical: measuresVertical },
+            image,
+          ),
+    [inner, outer, image, measuresHorizontal, measuresVertical],
   );
 
   const complete = ratios !== null && confidence !== null;
@@ -524,14 +612,15 @@ export function CenteringControls({
         event.preventDefault();
         if (ratios === null || confidence === null) return;
         onSet({ ...ratios, confidence, notes: notes.trim() === "" ? null : notes.trim() });
-        onClearPending();
+        onRestart();
         setNotes("");
         setConfidence(null);
       }}
     >
       <p className={styles.placement}>
-        Drag a box round the inner frame — the printed border of the artwork. The borders are what
-        is left outside it.
+        {outer === null
+          ? `Step 1 of 2 — click the card's four corners, where the card meets the background (${String(pointsPlaced)} of 4 placed).`
+          : `Step 2 of 2 — click the four corners of the printed inner frame (${String(pointsPlaced)} of 4 placed). The borders are what lies between the two outlines, however the card sits.`}
       </p>
 
       <fieldset className={styles.fieldset}>
@@ -560,9 +649,9 @@ export function CenteringControls({
 
       <output className={styles.derived}>
         {ratios === null
-          ? pending === null
-            ? "No box yet."
-            : "That box leaves no border to measure against."
+          ? outer === null || inner === null
+            ? "Both outlines are needed before there is anything to compute."
+            : "That outline leaves no border to measure against."
           : `${describeRatio("Horizontal", ratios.horizontal)} · ${describeRatio("Vertical", ratios.vertical)}`}
       </output>
 
@@ -585,6 +674,11 @@ export function CenteringControls({
         <button type="submit" disabled={!complete}>
           Set the centering
         </button>
+        {outer !== null || pointsPlaced > 0 ? (
+          <button type="button" className={styles.secondary} onClick={onRestart}>
+            Start again
+          </button>
+        ) : null}
         {existing ? (
           <button type="button" className={styles.secondary} onClick={onClear}>
             Remove the measurement
@@ -687,6 +781,13 @@ export function SaveBar({
           This image has no artifact, so nothing staged against one can be stored. Remove the corner
           and edge boxes and the centering measurement — surface marks against the original
           photograph are fine — or normalize the image first.
+        </p>
+      ) : null}
+      {count > 0 && drafts.length === 0 ? (
+        <p className={styles.hint}>
+          No defect markers are staged, so saving records this side as clean apart from the
+          centering — corners, edges and surfaces without a marker are clean by the corpus&apos;s
+          protocol. Mark what you see, or save as it stands.
         </p>
       ) : null}
       {count > 0 ? <p className={styles.hint}>Nothing is written until you save.</p> : null}

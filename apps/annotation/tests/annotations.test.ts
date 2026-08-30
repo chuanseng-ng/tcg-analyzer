@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   boxFrom,
   centeringFrom,
+  centeringFromQuads,
+  orderedQuad,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
   EDGE_LABELS,
@@ -90,6 +92,47 @@ describe("centering, derived rather than typed", () => {
         { horizontal: false, vertical: true },
       ),
     ).toEqual({ horizontal: null, vertical: 0.5 });
+  });
+
+  it("measures the borders against the card's frame, not the artifact's edges", () => {
+    // #194: the artifact holds a margin of photograph around the card, so the
+    // card's own rectangle arrives from the service. A box centred in the CARD
+    // is 0.5/0.5 even though it is not centred in the artifact.
+    const frame = { x: 24 / 804, y: 24 / 1104, width: 756 / 804, height: 1056 / 1104 };
+    const box = {
+      x: frame.x + frame.width * 0.25,
+      y: frame.y + frame.height * 0.25,
+      width: frame.width * 0.5,
+      height: frame.height * 0.5,
+    };
+
+    const ratios = centeringFrom(box, both, frame);
+
+    expect(ratios?.horizontal).toBeCloseTo(0.5, 10);
+    expect(ratios?.vertical).toBeCloseTo(0.5, 10);
+  });
+
+  it("reads an off-centre frame off the card's edge, not the margin's", () => {
+    // Card frame insets 0.1 each side; inner box leaves 0.1 of border on the
+    // left and 0.3 on the right *of the card* — 0.25 of the pair.
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    const ratios = centeringFrom({ x: 0.2, y: 0.2, width: 0.4, height: 0.4 }, both, frame);
+
+    expect(ratios?.horizontal).toBeCloseTo((0.2 - 0.1) / (0.2 - 0.1 + 0.9 - 0.6), 10);
+    expect(ratios?.vertical).toBeCloseTo(0.25, 10);
+  });
+
+  it("clamps a box that strays into the margin rather than going negative", () => {
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    // The box's left edge is inside the margin: the left border is 0, not -0.05.
+    const ratios = centeringFrom({ x: 0.05, y: 0.2, width: 0.5, height: 0.4 }, both, frame);
+
+    expect(ratios?.horizontal).toBe(0);
+  });
+
+  it("refuses a box that fills the card's frame rather than dividing by zero", () => {
+    const frame = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+    expect(centeringFrom({ x: 0.1, y: 0.3, width: 0.8, height: 0.4 }, both, frame)).toBeNull();
   });
 
   it("refuses a reading of neither axis, which the schema refuses too", () => {
@@ -219,5 +262,110 @@ describe("what one save sends", () => {
     expect(markerRepresentation(draft(box).marker)).toBe("normalized");
     expect(markerRepresentation(surface("original", box).marker)).toBe("original");
     expect(markerRepresentation(surface("normalized", box).marker)).toBe("normalized");
+  });
+});
+
+describe("a quadrilateral from four clicked corners", () => {
+  it("orders any click order into a clockwise cycle from the top left", () => {
+    const quad = orderedQuad([
+      { x: 0.9, y: 0.9 },
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.1, y: 0.9 },
+    ]);
+
+    expect(quad).toEqual([
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: 0.1, y: 0.9 },
+    ]);
+  });
+});
+
+describe("centering from two quadrilaterals", () => {
+  const square = { width: 1000, height: 1000 };
+  const both = { horizontal: true, vertical: true };
+  const rectQuad = (x: number, y: number, w: number, h: number) =>
+    orderedQuad([
+      { x, y },
+      { x: x + w, y },
+      { x: x + w, y: y + h },
+      { x, y: y + h },
+    ]);
+
+  it("agrees with the rectangle formula when both quads are straight", () => {
+    // Outer 0.1..0.9 both ways; inner leaves borders of 0.16 and 0.24
+    // horizontally (0.4 of the pair) and 0.2 / 0.2 vertically.
+    const ratios = centeringFromQuads(
+      rectQuad(0.26, 0.3, 0.4, 0.4),
+      rectQuad(0.1, 0.1, 0.8, 0.8),
+      both,
+      square,
+    );
+
+    expect(ratios?.horizontal).toBeCloseTo(0.4, 6);
+    expect(ratios?.vertical).toBeCloseTo(0.5, 6);
+  });
+
+  it("is unchanged when the card is tilted — both quads rotated together", () => {
+    // The reason four points exist at all: a card sitting at an angle in the
+    // frame has the same borders it has when straight, and the measurement
+    // must say so.
+    const rotate = (quad: ReturnType<typeof rectQuad>, degrees: number) => {
+      const radians = (degrees * Math.PI) / 180;
+      const centre = { x: 0.5, y: 0.5 };
+      return orderedQuad(
+        quad.map((point) => ({
+          x:
+            centre.x +
+            (point.x - centre.x) * Math.cos(radians) -
+            (point.y - centre.y) * Math.sin(radians),
+          y:
+            centre.y +
+            (point.x - centre.x) * Math.sin(radians) +
+            (point.y - centre.y) * Math.cos(radians),
+        })),
+      );
+    };
+
+    const ratios = centeringFromQuads(
+      rotate(rectQuad(0.26, 0.3, 0.4, 0.4), 15),
+      rotate(rectQuad(0.1, 0.1, 0.8, 0.8), 15),
+      both,
+      square,
+    );
+
+    expect(ratios?.horizontal).toBeCloseTo(0.4, 6);
+    expect(ratios?.vertical).toBeCloseTo(0.5, 6);
+  });
+
+  it("measures in pixels, not fractions, so the artifact's aspect cannot skew an axis", () => {
+    // On an 800x1200 artifact the same fractions are different distances.
+    // Equal fraction borders of 0.1 horizontally are 80 px each — still 0.5 —
+    // and top 0.1 / bottom 0.3 are 120 px / 360 px: 0.25 of the pair.
+    const ratios = centeringFromQuads(
+      rectQuad(0.2, 0.2, 0.6, 0.4),
+      rectQuad(0.1, 0.1, 0.8, 0.8),
+      both,
+      { width: 800, height: 1200 },
+    );
+
+    expect(ratios?.horizontal).toBeCloseTo(0.5, 6);
+    expect(ratios?.vertical).toBeCloseTo(0.25, 6);
+  });
+
+  it("sends null for an axis nobody measures and refuses a gap of nothing", () => {
+    const outer = rectQuad(0.1, 0.1, 0.8, 0.8);
+
+    expect(
+      centeringFromQuads(
+        rectQuad(0.2, 0.2, 0.6, 0.6),
+        outer,
+        { horizontal: true, vertical: false },
+        square,
+      )?.vertical,
+    ).toBeNull();
+    expect(centeringFromQuads(outer, outer, both, square)).toBeNull();
   });
 });

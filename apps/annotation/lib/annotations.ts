@@ -14,7 +14,7 @@
 
 import type { components } from "./api-types";
 import type { Representation } from "./api";
-import type { Fraction } from "./viewport";
+import type { Fraction, Size } from "./viewport";
 
 export type CornerRegion = components["schemas"]["CornerRegion"];
 export type EdgeRegion = components["schemas"]["EdgeRegion"];
@@ -167,14 +167,134 @@ export interface MeasuredAxes {
 }
 
 /**
- * Spec §21's two ratios, from where the annotator put the inner frame.
+ * Where the card sits inside its artifact, as fractions of the artifact.
  *
- * **The artifact's edges are the card's edges** — `ml/normalization` warps the
- * detected quadrilateral onto the whole target with no inset, precisely so that
- * corner and edge analysis sees the real edge — so the left border is the box's
- * `x`, the right border is `1 - (x + width)`, and their sum is `1 - width`:
+ * The service derives this from the artifact's own stored normalization record
+ * (#194 put a margin of photograph around the card), so it is right for
+ * whatever version produced the artifact. `WHOLE_ARTIFACT` is the pre-margin
+ * frame — an artifact whose card really does reach the edges.
+ */
+export interface CardFrame {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export const WHOLE_ARTIFACT: CardFrame = { x: 0, y: 0, width: 1, height: 1 };
+
+/** Four corners, clockwise from the top left — the shape of a clicked box. */
+export type Quad = readonly [Fraction, Fraction, Fraction, Fraction];
+
+/**
+ * Four clicked points as a deterministic clockwise cycle from the top left.
  *
- *     horizontal = left / (left + right) = x / (1 - width)
+ * The annotator clicks corners in whatever order their hand takes; the cycle is
+ * fixed by the angle around the centroid (y grows downward, so ascending angle
+ * is clockwise on screen) and the phase by the corner nearest the origin —
+ * `ml/card-detection` orders a detected quadrilateral the same way, for the
+ * same reason: side names mean nothing until the corners have an order.
+ */
+export function orderedQuad(points: readonly Fraction[]): Quad {
+  const centre = {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+  const cycle = [...points].sort(
+    (a, b) =>
+      Math.atan2(a.y - centre.y, a.x - centre.x) - Math.atan2(b.y - centre.y, b.x - centre.x),
+  );
+  let start = 0;
+  for (let index = 1; index < cycle.length; index += 1) {
+    const candidate = cycle[index];
+    const best = cycle[start];
+    if (candidate && best && candidate.x + candidate.y < best.x + best.y) start = index;
+  }
+  const rotated = [...cycle.slice(start), ...cycle.slice(0, start)];
+  return [rotated[0], rotated[1], rotated[2], rotated[3]] as unknown as Quad;
+}
+
+/** Midpoint of one side of a quad, sides indexed clockwise from the top. */
+function sideMidpoint(quad: Quad, side: number, image: Size): { x: number; y: number } {
+  const a = quad[side % 4] as Fraction;
+  const b = quad[(side + 1) % 4] as Fraction;
+  return { x: ((a.x + b.x) / 2) * image.width, y: ((a.y + b.y) / 2) * image.height };
+}
+
+/** Unsigned distance from a point to the line through one side of a quad, in pixels. */
+function sideDistance(
+  point: { x: number; y: number },
+  quad: Quad,
+  side: number,
+  image: Size,
+): number {
+  const a = quad[side % 4] as Fraction;
+  const b = quad[(side + 1) % 4] as Fraction;
+  const ax = a.x * image.width;
+  const ay = a.y * image.height;
+  const bx = b.x * image.width;
+  const by = b.y * image.height;
+  const length = Math.hypot(bx - ax, by - ay);
+  if (length === 0) return 0;
+  return Math.abs((bx - ax) * (point.y - ay) - (by - ay) * (point.x - ax)) / length;
+}
+
+/**
+ * Spec §21's two ratios, from two clicked quadrilaterals.
+ *
+ * The four-point form of {@link centeringFrom}, for the card that does not sit
+ * straight in the frame: each border is the distance from the midpoint of an
+ * inner side to the line through the matching outer side, measured in artifact
+ * **pixels** — fractions are of two different lengths, and a ratio mixing them
+ * would skew whichever axis the artifact is longer in. Rotating card and frame
+ * together changes nothing, which is the point.
+ *
+ * Sides are matched by the shared clockwise-from-top-left order
+ * ({@link orderedQuad}): top to top, right to right. The null rules are
+ * {@link centeringFrom}'s own.
+ *
+ * ponytail: unsigned distances — an inner corner clicked *outside* the outer
+ * edge still measures a positive border. The quads are drawn seconds apart on
+ * the same card, so the case is a mis-click the annotator can see and redo.
+ */
+export function centeringFromQuads(
+  inner: Quad,
+  outer: Quad,
+  axes: MeasuredAxes,
+  image: Size,
+): { horizontal: number | null; vertical: number | null } | null {
+  if (!axes.horizontal && !axes.vertical) return null;
+
+  const border = (side: number) =>
+    sideDistance(sideMidpoint(inner, side, image), outer, side, image);
+  const top = border(0);
+  const right = border(1);
+  const bottom = border(2);
+  const left = border(3);
+  if (axes.horizontal && left + right <= 0) return null;
+  if (axes.vertical && top + bottom <= 0) return null;
+
+  return {
+    horizontal: axes.horizontal ? left / (left + right) : null,
+    vertical: axes.vertical ? top / (top + bottom) : null,
+  };
+}
+
+/**
+ * Spec §21's two ratios, from the gap between two drawn boxes.
+ *
+ * **The borders are measured against the card's own rectangle**, and since the
+ * artifact keeps a margin of photograph around the card (#194) that rectangle
+ * is the annotator's first box — the card's outer edge, traced where the card
+ * meets the background. Not the detector's `card_frame`: a border is a few
+ * percent of the card, so a few pixels of quad error swings the ratio wildly.
+ * So the left border is `box.x - card.x`, the right is
+ * `card.x + card.width - (box.x + box.width)`:
+ *
+ *     horizontal = left / (left + right)
+ *
+ * A box edge that strays into the margin clamps its border to zero — the card
+ * has no border outside itself.
  *
  * `0.5` is perfect centering, which is the direction
  * `centering_measurements.horizontal` is documented in. The annotator marks
@@ -191,17 +311,20 @@ export interface MeasuredAxes {
 export function centeringFrom(
   box: BoundingBox,
   axes: MeasuredAxes,
+  card: CardFrame = WHOLE_ARTIFACT,
 ): { horizontal: number | null; vertical: number | null } | null {
   if (!axes.horizontal && !axes.vertical) return null;
 
-  const horizontalBorders = 1 - box.width;
-  const verticalBorders = 1 - box.height;
-  if (axes.horizontal && horizontalBorders <= 0) return null;
-  if (axes.vertical && verticalBorders <= 0) return null;
+  const left = Math.max(0, box.x - card.x);
+  const right = Math.max(0, card.x + card.width - (box.x + box.width));
+  const top = Math.max(0, box.y - card.y);
+  const bottom = Math.max(0, card.y + card.height - (box.y + box.height));
+  if (axes.horizontal && left + right <= 0) return null;
+  if (axes.vertical && top + bottom <= 0) return null;
 
   return {
-    horizontal: axes.horizontal ? box.x / horizontalBorders : null,
-    vertical: axes.vertical ? box.y / verticalBorders : null,
+    horizontal: axes.horizontal ? left / (left + right) : null,
+    vertical: axes.vertical ? top / (top + bottom) : null,
   };
 }
 

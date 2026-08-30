@@ -86,6 +86,38 @@ function drag(
   fireEvent.pointerDown(layer, { button: 0, pointerId: 1, ...point(from) });
   fireEvent.pointerMove(layer, { pointerId: 1, ...point(to) });
   fireEvent.pointerUp(layer, { pointerId: 1, ...point(to) });
+  // A real browser releases pointer capture after pointerup and fires
+  // lostpointercapture — the event that wiped a just-placed box before the
+  // abandon path learned to stand down once the drag has ended.
+  fireEvent.lostPointerCapture(layer, { pointerId: 1 });
+}
+
+/** Click one corner, in artifact fractions — centering's four-point mode. */
+function clickCorner(
+  layer: Element,
+  view: { scale: number; x: number; y: number },
+  at: { x: number; y: number },
+) {
+  const position = {
+    clientX: at.x * ARTIFACT.width * view.scale + view.x,
+    clientY: at.y * ARTIFACT.height * view.scale + view.y,
+  };
+  fireEvent.pointerDown(layer, { button: 0, pointerId: 1, ...position });
+  fireEvent.pointerUp(layer, { pointerId: 1, ...position });
+  fireEvent.lostPointerCapture(layer, { pointerId: 1 });
+}
+
+/** Click all four corners of an axis-aligned outline, deliberately out of order. */
+function clickOutline(
+  layer: Element,
+  view: { scale: number; x: number; y: number },
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  clickCorner(layer, view, { x: to.x, y: to.y });
+  clickCorner(layer, view, { x: from.x, y: from.y });
+  clickCorner(layer, view, { x: to.x, y: from.y });
+  clickCorner(layer, view, { x: from.x, y: to.y });
 }
 
 function captureLayer(): Element {
@@ -298,14 +330,22 @@ describe("admitting you cannot tell", () => {
 });
 
 describe("centering", () => {
-  it("derives both ratios from where the inner frame was drawn", async () => {
+  it("derives both ratios from the gap between the outer edge and the inner frame", async () => {
+    // Two quadrilaterals, four clicked corners each: the card's outer edge
+    // traced against the background margin, then the printed inner frame. The
+    // detector's idea of the card edge is not part of the measurement — a few
+    // pixels of quad error on a border a few percent wide swings the ratio
+    // wildly, which is how a fine card once read 88.7/11.3.
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    // Borders of 0.2 and 0.3 horizontally: 0.2 / 0.5 = 0.4.
-    drag(captureLayer(), view, { x: 0.2, y: 0.25 }, { x: 0.7, y: 0.75 });
+    // Step 1 — the card's outer edge.
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    // Step 2 — the inner frame. Borders: left 0.16, right 0.24 (0.4 of the
+    // pair); top 0.2, bottom 0.2 (0.5).
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
 
     fireEvent.click(screen.getByRole("radio", { name: "Fairly sure" }));
     fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
@@ -321,13 +361,82 @@ describe("centering", () => {
     expect(centering?.confidence).toBe(0.6);
   });
 
+  it("counts corners towards the outer edge and then asks for the inner frame", async () => {
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    expect(screen.getByText(/card&#x27;s four corners|card's four corners/)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 4/)).toBeInTheDocument();
+
+    clickCorner(captureLayer(), view, { x: 0.1, y: 0.1 });
+    expect(screen.getByText(/1 of 4/)).toBeInTheDocument();
+
+    clickCorner(captureLayer(), view, { x: 0.9, y: 0.1 });
+    clickCorner(captureLayer(), view, { x: 0.9, y: 0.9 });
+    clickCorner(captureLayer(), view, { x: 0.1, y: 0.9 });
+
+    expect(screen.getByText(/inner frame/)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 4/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set the centering" })).toBeDisabled();
+  });
+
+  it("measures a tilted card the same as a straight one", async () => {
+    // The reason four points exist: rotate card and frame together and the
+    // borders — and so the ratios — are what they were.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+    const rotate = (point: { x: number; y: number }) => {
+      const radians = Math.PI / 12;
+      return {
+        x: 0.5 + (point.x - 0.5) * Math.cos(radians) - (point.y - 0.5) * Math.sin(radians),
+        y: 0.5 + (point.x - 0.5) * Math.sin(radians) + (point.y - 0.5) * Math.cos(radians),
+      };
+    };
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    for (const corner of [
+      { x: 0.15, y: 0.15 },
+      { x: 0.85, y: 0.15 },
+      { x: 0.85, y: 0.85 },
+      { x: 0.15, y: 0.85 },
+    ]) {
+      clickCorner(captureLayer(), view, rotate(corner));
+    }
+    // The inner frame sits 0.14 in from the left and 0.28 from the right of a
+    // 0.7-wide card (a third of the pair), 0.21 from both top and bottom.
+    for (const corner of [
+      { x: 0.29, y: 0.36 },
+      { x: 0.57, y: 0.36 },
+      { x: 0.57, y: 0.64 },
+      { x: 0.29, y: 0.64 },
+    ]) {
+      clickCorner(captureLayer(), view, rotate(corner));
+    }
+
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save 1/ }));
+
+    await waitFor(() => {
+      expect(saveAnnotationsMock).toHaveBeenCalled();
+    });
+
+    const centering = saveAnnotationsMock.mock.calls[0]?.[1].centering;
+    expect(centering?.horizontal).toBeCloseTo(0.14 / 0.42, 5);
+    expect(centering?.vertical).toBeCloseTo(0.5, 5);
+  });
+
   it("sends null for an axis the card has no border on", async () => {
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.2, y: 0.25 }, { x: 0.7, y: 0.75 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.1 }, { x: 0.66, y: 0.9 });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Top and bottom" }));
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
@@ -348,15 +457,57 @@ describe("centering", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0, y: 0 }, { x: 1, y: 1 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
 
     expect(screen.getByText(/leaves no border/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set the centering" })).toBeDisabled();
   });
+
+  it("starts again from the outer edge when asked", async () => {
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start again" }));
+
+    expect(screen.getByText(/card&#x27;s four corners|card's four corners/)).toBeInTheDocument();
+  });
 });
 
 describe("saving", () => {
+  it("says a save with no defect markers records the side as clean", async () => {
+    // The corpus protocol (#181): corners, edges and surfaces without a marker
+    // on a saved image are clean — the surface rule, extended. The bar says so
+    // at the moment it becomes true, so silence is a choice and not an
+    // accident.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
+
+    expect(screen.getByText(/records this side as clean/)).toBeInTheDocument();
+
+    // Stage a defect and the claim withdraws — the side is no longer clean.
+    fireEvent.click(screen.getByRole("button", { name: "Corner" }));
+    fireEvent.change(screen.getByLabelText("What is there"), { target: { value: "whitening" } });
+    fireEvent.click(screen.getByRole("radio", { name: "minor" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add corner/ }));
+
+    expect(screen.queryByText(/records this side as clean/)).not.toBeInTheDocument();
+  });
+
   it("writes nothing until the annotator says so, and stages removably meanwhile", async () => {
     // Both tables refuse an UPDATE, so a mistake has to be removable *before* it
     // is written. That is why nothing posts as it is placed.
@@ -532,5 +683,25 @@ describe("what is already recorded", () => {
 
     expect(screen.getByText(/minor/)).toBeInTheDocument();
     expect(screen.getByText(/severe/)).toBeInTheDocument();
+  });
+});
+
+describe("a box drag belongs to the capture layer alone", () => {
+  it("does not pan the view underneath — the frame must never steal the drag", async () => {
+    // The frame's pan handler captures the pointer on pointerdown. Before the
+    // capture layer learned to stop propagation, an armed drag bubbled to it:
+    // the frame stole the capture, the view panned under the box, and the
+    // layer never saw the pointerup — so releasing never placed anything and
+    // every later hover kept rubber-banding. Found by the first real
+    // annotation session; jsdom routes no capture, but the pan half of the
+    // theft reproduces here.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const before = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Corner" }));
+    drag(captureLayer(), before, { x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 });
+
+    expect(currentView(element)).toEqual(before);
   });
 });
