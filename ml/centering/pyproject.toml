@@ -1,9 +1,25 @@
 [project]
 name = "tcg-ml-centering"
 version = "0.0.0"
-description = "Centering measurement"
+description = "Template-aware centering: spec §21's four ratios, measured from the normalized artifact"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # The inner-frame contour work. **Headless** for the reason `ml/image-quality`
+    # gives: plain `opencv-python` links against libGL and raises ImportError in
+    # a slim image with no X stack, which a worker container has no reason to
+    # carry.
+    "opencv-python-headless>=4.10",
+    # A transitive dependency of OpenCV; named because this package uses it
+    # directly for the quadrilateral arithmetic.
+    "numpy>=2",
+    # `Centering`, `BoundingBox`, `Confidence` and `Uncertain`. Stdlib-only, and
+    # the reason this package needs no dependency on the detector or the
+    # normalizer whose artifact it measures.
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

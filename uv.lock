@@ -1486,6 +1486,18 @@ source = { editable = "ml/card-identification" }
 name = "tcg-ml-centering"
 version = "0.0.0"
 source = { editable = "ml/centering" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "tcg-domain", editable = "packages/domain" },
+]
 
 [[package]]
 name = "tcg-ml-condition"
