@@ -538,3 +538,23 @@ describe("what is already recorded", () => {
     expect(screen.getByText(/severe/)).toBeInTheDocument();
   });
 });
+
+describe("a box drag belongs to the capture layer alone", () => {
+  it("does not pan the view underneath — the frame must never steal the drag", async () => {
+    // The frame's pan handler captures the pointer on pointerdown. Before the
+    // capture layer learned to stop propagation, an armed drag bubbled to it:
+    // the frame stole the capture, the view panned under the box, and the
+    // layer never saw the pointerup — so releasing never placed anything and
+    // every later hover kept rubber-banding. Found by the first real
+    // annotation session; jsdom routes no capture, but the pan half of the
+    // theft reproduces here.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const before = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Corner" }));
+    drag(captureLayer(), before, { x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 });
+
+    expect(currentView(element)).toEqual(before);
+  });
+});

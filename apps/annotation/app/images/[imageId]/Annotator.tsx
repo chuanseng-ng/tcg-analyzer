@@ -195,15 +195,24 @@ export function CaptureLayer({
         // Primary button only. A right-click here would otherwise start a drag
         // the context menu then strands, which is the bug the frame had.
         if (event.button !== 0) return;
+        // Stopped here, or the frame underneath starts a pan from the same
+        // press and — because its handler also calls `setPointerCapture`, and
+        // the last call wins — steals the whole pointer stream: the view pans
+        // under the box and this layer never sees the pointerup that would
+        // have placed it. Covering the frame does not stop bubbling; this
+        // does, and it is what keeps the frame's pan handlers untouched.
+        event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
         from.current = pointOn(event);
       }}
       onPointerMove={(event) => {
         if (from.current === null) return;
+        event.stopPropagation();
         onPreview(boxFrom(from.current, pointOn(event)));
       }}
       onPointerUp={(event) => {
         if (from.current === null) return;
+        event.stopPropagation();
         const box = boxFrom(from.current, pointOn(event));
         from.current = null;
         // A click that did not move is not a region — `bbox_width > 0` is a
