@@ -49,7 +49,8 @@ class SurfaceThresholds:
             ordered chain.
     """
 
-    #: The border strip surface never reads: the edge and corner analyzers'
+    #: The border strip surface never claims a candidate in: the edge and
+    #: corner analyzers'
     #: detection and reference bands run to depth
     #: ``edge_inset_px + 2 * edge_band_px`` = 26 px (`ml/edges`, mirrored by
     #: `ml/corners`' L-bands), and near-white there is their whitening

@@ -301,6 +301,22 @@ def test_confidence_is_a_bounded_heuristic() -> None:
     assert 0.5 <= finding.confidence.value <= 0.95
 
 
+def test_confidence_grows_with_the_area_margin() -> None:
+    """The margin recipe is not a constant: more area past the floor is more
+    confidence. Both blobs sit inside the recipe's 1.0-2.0 mm² window —
+    the margin saturates at twice the floor, so anything past 288 px would
+    compare equal at 0.95."""
+    smaller = a_plain_card()
+    a_blob(smaller, STAIN_BGR, at=(200, 300), size=(13, 13))
+    larger = a_plain_card()
+    a_blob(larger, STAIN_BGR, at=(200, 300), size=(16, 16))
+
+    (faint,) = classified(smaller).findings
+    (plain,) = classified(larger).findings
+
+    assert faint.confidence.value < plain.confidence.value
+
+
 def test_undecodable_bytes_refuse_the_whole_side() -> None:
     result = classify(b"not a png", side=ImageSide.FRONT, card_frame=CARD_FRAME)
 

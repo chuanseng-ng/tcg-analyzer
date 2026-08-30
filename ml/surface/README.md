@@ -36,8 +36,9 @@ defect texture is indistinguishable from the face's own, and both refuse
 class-level rather than guess (the issue's holo clause). A candidate whose
 surroundings are busy sits inside artwork and is dropped before anything is
 claimed (#176's filter-before-selection). The outer 26 px strip is the edge
-and corner analyzers' detection and reference bands and is never read here —
-#184's seam rule, extended to this axis.
+and corner analyzers' detection and reference bands and never yields a
+candidate here — #184's seam rule, extended to this axis — though the
+context ring of a candidate near the face boundary may sample into it.
 
 `dent`, `indentation`, `color_issue`, `registration_issue` and
 `factory_defect` are **never emitted** by this baseline: the first two are

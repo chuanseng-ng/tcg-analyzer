@@ -32,10 +32,13 @@ Both run only where the face itself is quiet: at or past
 defect texture — the issue's holo clause — and both classes refuse rather
 than guess. A surviving candidate whose surrounding annulus is busy sits
 inside artwork and is dropped before anything is claimed (#176's
-filter-before-selection). **The outer ``border_exclusion_px`` strip is
-never read**: it is the edge and corner analyzers' detection and reference
-bands, and near-white there is their whitening signal — #184's seam rule,
-extended to this axis.
+filter-before-selection). **The outer ``border_exclusion_px`` strip never
+yields a candidate**: it is the edge and corner analyzers' detection and
+reference bands, and near-white there is their whitening signal — #184's
+seam rule, extended to this axis. (The context ring of a candidate near the
+face boundary may still *sample* up to ``context_margin_px`` into the
+strip, where a printed border's transition reads busy — a claim is never
+made there, but the gate can hear it.)
 
 Named ceilings, all #188's to price (ponytail: each names its upgrade
 path): the grey and HSV thresholds are absolute, so exposure moves what
