@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   hasWork,
+  orderedQuad,
   requestBodyFrom,
   type BoundingBox,
+  type Quad,
   type CenteringRequest,
   type MarkerDraft,
   type MarkerRequest,
@@ -40,6 +42,7 @@ import {
   zoom,
   zoomAt,
   ZOOM_STEP,
+  type Fraction,
   type Size,
   type View,
 } from "@/lib/viewport";
@@ -112,11 +115,21 @@ export function ImageViewer({ imageId }: { imageId: string }) {
   const [tool, setTool] = useState<Tool>("pan");
   const [shown, setShown] = useState<Representation>("normalized");
   const [pending, setPending] = useState<BoundingBox | null>(null);
-  // Centering's first box — the card's outer edge, traced by the annotator
-  // against the background margin. Lives beside `pending` because the second
-  // drag must not erase the first, and cleared wherever `pending` is: both are
-  // fractions of the frame on screen.
-  const [outerEdge, setOuterEdge] = useState<BoundingBox | null>(null);
+  // Centering's two quadrilaterals — the card's outer edge, traced by the
+  // annotator against the background margin, then the printed inner frame —
+  // and the corners clicked so far towards the next of them. Quads rather
+  // than boxes because the card need not sit straight in the frame (#181).
+  // Cleared wherever `pending` is: all of it is fractions of the frame on
+  // screen.
+  const [centeringPoints, setCenteringPoints] = useState<readonly Fraction[]>([]);
+  const [artifactSize, setArtifactSize] = useState<Size | null>(null);
+  const [outerQuad, setOuterQuad] = useState<Quad | null>(null);
+  const [innerQuad, setInnerQuad] = useState<Quad | null>(null);
+  const clearCentering = useCallback(() => {
+    setCenteringPoints([]);
+    setOuterQuad(null);
+    setInnerQuad(null);
+  }, []);
   const [drafts, setDrafts] = useState<readonly MarkerDraft[]>([]);
   const [centering, setCentering] = useState<CenteringRequest | null>(null);
   const [saving, setSaving] = useState(false);
@@ -167,11 +180,11 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     setDrafts([]);
     setCentering(null);
     setPending(null);
-    setOuterEdge(null);
+    clearCentering();
     setTool("pan");
     setShown("normalized");
     setSaveFailure(null);
-  }, []);
+  }, [clearCentering]);
 
   /** Confirm before an action that would strand staged work. */
   const mayLeave = useCallback(() => {
@@ -241,7 +254,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     if (!armable(candidate)) return;
     setTool(candidate);
     setPending(null);
-    setOuterEdge(null);
+    clearCentering();
   };
 
   const toggleRepresentation = () => {
@@ -251,7 +264,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     // A placed box's fractions belong to the frame it was drawn on; drafts are
     // kept — same image — and the overlay shows each against its own frame.
     setPending(null);
-    setOuterEdge(null);
+    clearCentering();
     if (next === "original" && tool !== "pan" && tool !== "surface") setTool("pan");
   };
 
@@ -333,22 +346,34 @@ export function ImageViewer({ imageId }: { imageId: string }) {
         tool={tool}
         representation={displayed}
         pending={pending}
-        outer={tool === "centering" ? outerEdge : null}
+        outer={tool === "centering" ? outerQuad : null}
+        inner={tool === "centering" ? innerQuad : null}
+        points={tool === "centering" ? centeringPoints : []}
         drafts={drafts}
         stored={stored}
         onArm={arm}
         onToggleRepresentation={toggleRepresentation}
         onPreview={setPending}
-        onPlace={(box) => {
-          // Centering is two boxes: the first drag is the card's outer edge,
-          // every later one the inner frame. The other tools stay one-box.
-          if (tool === "centering" && outerEdge === null) {
-            setOuterEdge(box);
-            setPending(null);
-          } else {
-            setPending(box);
-          }
-        }}
+        onPlace={setPending}
+        onMeasured={setArtifactSize}
+        onPoint={
+          tool !== "centering"
+            ? null
+            : (point) => {
+                // Four corners make a quadrilateral: the first the card's
+                // outer edge, the next four the printed inner frame. Clicking
+                // on with both placed starts the inner one over.
+                const placed = [...centeringPoints, point];
+                if (placed.length < 4) {
+                  setCenteringPoints(placed);
+                  return;
+                }
+                const quad = orderedQuad(placed);
+                setCenteringPoints([]);
+                if (outerQuad === null) setOuterQuad(quad);
+                else setInnerQuad(quad);
+              }
+        }
         onCycleView={() => {
           const at = views.findIndex((candidate) => candidate.id === current.id);
           const next = views[(at + 1) % views.length];
@@ -391,13 +416,12 @@ export function ImageViewer({ imageId }: { imageId: string }) {
 
         {tool === "centering" ? (
           <CenteringControls
-            outer={outerEdge}
-            pending={pending}
+            outer={outerQuad}
+            inner={innerQuad}
+            pointsPlaced={centeringPoints.length}
+            image={artifactSize ?? FALLBACK_IMAGE}
             existing={centering}
-            onRestart={() => {
-              setPending(null);
-              setOuterEdge(null);
-            }}
+            onRestart={clearCentering}
             onSet={setCentering}
             onClear={() => {
               setCentering(null);
@@ -539,6 +563,9 @@ function SideToggle({
 }
 
 const FALLBACK_FRAME: Size = { width: 640, height: 800 };
+// Only reachable while the image has not measured itself; the ratios are
+// recomputed the moment it has.
+const FALLBACK_IMAGE: Size = { width: 1, height: 1 };
 
 function Frame({
   view,
@@ -546,25 +573,33 @@ function Frame({
   representation,
   pending,
   outer,
+  inner,
+  points,
   drafts,
   stored,
   onArm,
   onToggleRepresentation,
   onPreview,
   onPlace,
+  onPoint,
+  onMeasured,
   onCycleView,
 }: {
   view: AnnotationImageSummary;
   tool: Tool;
   representation: Representation;
   pending: BoundingBox | null;
-  outer: BoundingBox | null;
+  outer: Quad | null;
+  inner: Quad | null;
+  points: readonly Fraction[];
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   onArm: (tool: Tool) => void;
   onToggleRepresentation: () => void;
   onPreview: (box: BoundingBox | null) => void;
   onPlace: (box: BoundingBox) => void;
+  onPoint: ((point: Fraction) => void) | null;
+  onMeasured: (image: Size) => void;
   onCycleView: () => void;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
@@ -770,10 +805,15 @@ function Frame({
           draggable={false}
           style={{ transform: transformOf(transform) }}
           onLoad={(event) => {
-            reset({
+            const measured = {
               width: event.currentTarget.naturalWidth || FALLBACK_FRAME.width,
               height: event.currentTarget.naturalHeight || FALLBACK_FRAME.height,
-            });
+            };
+            reset(measured);
+            // The controls need the artifact's size too: centering's border
+            // distances are measured in its pixels, because fractions of two
+            // different lengths do not compare.
+            onMeasured(measured);
           }}
         />
 
@@ -785,6 +825,8 @@ function Frame({
             stored={stored}
             pending={pending}
             outer={outer}
+            inner={inner}
+            points={points}
             shown={representation}
           />
         )}
@@ -796,7 +838,13 @@ function Frame({
          * nothing to reset.
          */}
         {tool !== "pan" && natural !== null ? (
-          <CaptureLayer view={transform} image={natural} onPreview={onPreview} onPlace={onPlace} />
+          <CaptureLayer
+            view={transform}
+            image={natural}
+            onPreview={onPreview}
+            onPlace={onPlace}
+            onPoint={onPoint}
+          />
         ) : null}
       </div>
 

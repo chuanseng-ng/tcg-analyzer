@@ -244,6 +244,12 @@
   stroke-width: 2;
 }
 
+/* A clicked corner on its way to becoming a quadrilateral. */
+.markPoint {
+  fill: var(--color-warning);
+  stroke: none;
+}
+
 /*
  * Mounted only while a tool is armed. It covers the frame, so a drag lands here
  * and never reaches the pan handlers — the mode is which element exists.

@@ -92,6 +92,34 @@ function drag(
   fireEvent.lostPointerCapture(layer, { pointerId: 1 });
 }
 
+/** Click one corner, in artifact fractions — centering's four-point mode. */
+function clickCorner(
+  layer: Element,
+  view: { scale: number; x: number; y: number },
+  at: { x: number; y: number },
+) {
+  const position = {
+    clientX: at.x * ARTIFACT.width * view.scale + view.x,
+    clientY: at.y * ARTIFACT.height * view.scale + view.y,
+  };
+  fireEvent.pointerDown(layer, { button: 0, pointerId: 1, ...position });
+  fireEvent.pointerUp(layer, { pointerId: 1, ...position });
+  fireEvent.lostPointerCapture(layer, { pointerId: 1 });
+}
+
+/** Click all four corners of an axis-aligned outline, deliberately out of order. */
+function clickOutline(
+  layer: Element,
+  view: { scale: number; x: number; y: number },
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  clickCorner(layer, view, { x: to.x, y: to.y });
+  clickCorner(layer, view, { x: from.x, y: from.y });
+  clickCorner(layer, view, { x: to.x, y: from.y });
+  clickCorner(layer, view, { x: from.x, y: to.y });
+}
+
 function captureLayer(): Element {
   // The one element inside the frame that takes a drag. It exists only while a
   // tool is armed, which is the whole mechanism.
@@ -303,22 +331,21 @@ describe("admitting you cannot tell", () => {
 
 describe("centering", () => {
   it("derives both ratios from the gap between the outer edge and the inner frame", async () => {
-    // Two boxes, not one: the borders are measured between the card's own
-    // outer edge — traced by the annotator against the background margin —
-    // and the printed inner frame. The detector's idea of where the card
-    // edge sits is not part of the measurement: a few pixels of quad error
-    // on a border a few percent wide swings the ratio wildly, which is how
-    // a fine card once read 88.7/11.3.
+    // Two quadrilaterals, four clicked corners each: the card's outer edge
+    // traced against the background margin, then the printed inner frame. The
+    // detector's idea of the card edge is not part of the measurement — a few
+    // pixels of quad error on a border a few percent wide swings the ratio
+    // wildly, which is how a fine card once read 88.7/11.3.
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
     // Step 1 — the card's outer edge.
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
     // Step 2 — the inner frame. Borders: left 0.16, right 0.24 (0.4 of the
     // pair); top 0.2, bottom 0.2 (0.5).
-    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
 
     fireEvent.click(screen.getByRole("radio", { name: "Fairly sure" }));
     fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
@@ -334,18 +361,72 @@ describe("centering", () => {
     expect(centering?.confidence).toBe(0.6);
   });
 
-  it("asks for the inner frame after the outer edge and only then shows ratios", async () => {
+  it("counts corners towards the outer edge and then asks for the inner frame", async () => {
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    expect(screen.getByText(/outer edge/)).toBeInTheDocument();
+    expect(screen.getByText(/card&#x27;s four corners|card's four corners/)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 4/)).toBeInTheDocument();
 
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickCorner(captureLayer(), view, { x: 0.1, y: 0.1 });
+    expect(screen.getByText(/1 of 4/)).toBeInTheDocument();
+
+    clickCorner(captureLayer(), view, { x: 0.9, y: 0.1 });
+    clickCorner(captureLayer(), view, { x: 0.9, y: 0.9 });
+    clickCorner(captureLayer(), view, { x: 0.1, y: 0.9 });
 
     expect(screen.getByText(/inner frame/)).toBeInTheDocument();
+    expect(screen.getByText(/0 of 4/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set the centering" })).toBeDisabled();
+  });
+
+  it("measures a tilted card the same as a straight one", async () => {
+    // The reason four points exist: rotate card and frame together and the
+    // borders — and so the ratios — are what they were.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+    const rotate = (point: { x: number; y: number }) => {
+      const radians = Math.PI / 12;
+      return {
+        x: 0.5 + (point.x - 0.5) * Math.cos(radians) - (point.y - 0.5) * Math.sin(radians),
+        y: 0.5 + (point.x - 0.5) * Math.sin(radians) + (point.y - 0.5) * Math.cos(radians),
+      };
+    };
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    for (const corner of [
+      { x: 0.15, y: 0.15 },
+      { x: 0.85, y: 0.15 },
+      { x: 0.85, y: 0.85 },
+      { x: 0.15, y: 0.85 },
+    ]) {
+      clickCorner(captureLayer(), view, rotate(corner));
+    }
+    // The inner frame sits 0.14 in from the left and 0.28 from the right of a
+    // 0.7-wide card (a third of the pair), 0.21 from both top and bottom.
+    for (const corner of [
+      { x: 0.29, y: 0.36 },
+      { x: 0.57, y: 0.36 },
+      { x: 0.57, y: 0.64 },
+      { x: 0.29, y: 0.64 },
+    ]) {
+      clickCorner(captureLayer(), view, rotate(corner));
+    }
+
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Save 1/ }));
+
+    await waitFor(() => {
+      expect(saveAnnotationsMock).toHaveBeenCalled();
+    });
+
+    const centering = saveAnnotationsMock.mock.calls[0]?.[1].centering;
+    expect(centering?.horizontal).toBeCloseTo(0.14 / 0.42, 5);
+    expect(centering?.vertical).toBeCloseTo(0.5, 5);
   });
 
   it("sends null for an axis the card has no border on", async () => {
@@ -354,8 +435,8 @@ describe("centering", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
-    drag(captureLayer(), view, { x: 0.26, y: 0.1 }, { x: 0.66, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.1 }, { x: 0.66, y: 0.9 });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Top and bottom" }));
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
@@ -376,8 +457,8 @@ describe("centering", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
 
     expect(screen.getByText(/leaves no border/)).toBeInTheDocument();
@@ -390,12 +471,12 @@ describe("centering", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
-    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
 
     fireEvent.click(screen.getByRole("button", { name: "Start again" }));
 
-    expect(screen.getByText(/outer edge/)).toBeInTheDocument();
+    expect(screen.getByText(/card&#x27;s four corners|card's four corners/)).toBeInTheDocument();
   });
 });
 
@@ -410,8 +491,8 @@ describe("saving", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
-    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+    clickOutline(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    clickOutline(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
     fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
 

@@ -5,7 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import {
   boxFrom,
   CANNOT_TELL_CONFIDENCE,
-  centeringFrom,
+  centeringFromQuads,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
   CORNER_REGIONS,
@@ -27,9 +27,10 @@ import {
   type MarkerDraft,
   type MarkerRequest,
   type SurfaceLabel,
+  type Quad,
 } from "@/lib/annotations";
 import type { Representation, StoredMarker } from "@/lib/api";
-import { fractionAt, transformOf, type Size, type View } from "@/lib/viewport";
+import { fractionAt, transformOf, type Fraction, type Size, type View } from "@/lib/viewport";
 
 import styles from "./page.module.css";
 
@@ -72,6 +73,8 @@ export function Overlay({
   stored,
   pending,
   outer,
+  inner,
+  points,
   shown,
 }: {
   view: View;
@@ -79,8 +82,11 @@ export function Overlay({
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   pending: BoundingBox | null;
-  /** Centering's first box — the card's outer edge (#181's two-box measurement). */
-  outer: BoundingBox | null;
+  /** Centering's quadrilaterals — the card's outer edge, then the inner frame. */
+  outer: Quad | null;
+  inner: Quad | null;
+  /** The corners clicked so far towards the next quadrilateral. */
+  points: readonly Fraction[];
   shown: Representation;
 }) {
   /*
@@ -133,17 +139,33 @@ export function Overlay({
         ) : null,
       )}
       {outer ? (
-        <rect
+        <polygon
           className={styles.markOuter}
-          x={outer.x}
-          y={outer.y}
-          width={outer.width}
-          height={outer.height}
+          points={outer.map((corner) => `${String(corner.x)},${String(corner.y)}`).join(" ")}
           vectorEffect="non-scaling-stroke"
         >
           <title>The card&apos;s outer edge</title>
-        </rect>
+        </polygon>
       ) : null}
+      {inner ? (
+        <polygon
+          className={styles.markPending}
+          points={inner.map((corner) => `${String(corner.x)},${String(corner.y)}`).join(" ")}
+          vectorEffect="non-scaling-stroke"
+        >
+          <title>The printed inner frame</title>
+        </polygon>
+      ) : null}
+      {points.map((point, index) => (
+        <circle
+          key={index}
+          className={styles.markPoint}
+          cx={point.x}
+          cy={point.y}
+          r={0.006}
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
       {pending ? (
         <rect
           className={styles.markPending}
@@ -172,11 +194,18 @@ export function CaptureLayer({
   image,
   onPreview,
   onPlace,
+  onPoint = null,
 }: {
   view: View;
   image: Size;
   onPreview: (box: BoundingBox | null) => void;
   onPlace: (box: BoundingBox) => void;
+  /**
+   * When given, the layer collects clicked corners instead of dragged boxes —
+   * centering's mode, where four corners make a quadrilateral because the card
+   * need not sit straight in the frame.
+   */
+  onPoint?: ((point: Fraction) => void) | null;
 }) {
   // A ref rather than state, and deliberately: releasing the mouse fires
   // `pointerup` and then — because the browser drops pointer capture — a
@@ -222,11 +251,20 @@ export function CaptureLayer({
       onPointerMove={(event) => {
         if (from.current === null) return;
         event.stopPropagation();
+        if (onPoint !== null) return;
         onPreview(boxFrom(from.current, pointOn(event)));
       }}
       onPointerUp={(event) => {
         if (from.current === null) return;
         event.stopPropagation();
+        if (onPoint !== null) {
+          // A corner is placed where the press ended, so a slight wobble
+          // between down and up chooses the release point rather than
+          // becoming a box too small to mean anything.
+          from.current = null;
+          onPoint(pointOn(event));
+          return;
+        }
         const box = boxFrom(from.current, pointOn(event));
         from.current = null;
         // A click that did not move is not a region — `bbox_width > 0` is a
@@ -530,14 +568,18 @@ function ConfidenceChoice({
  */
 export function CenteringControls({
   outer,
-  pending,
+  inner,
+  pointsPlaced,
+  image,
   existing,
   onRestart,
   onSet,
   onClear,
 }: {
-  outer: BoundingBox | null;
-  pending: BoundingBox | null;
+  outer: Quad | null;
+  inner: Quad | null;
+  pointsPlaced: number;
+  image: Size;
   existing: CenteringRequest | null;
   onRestart: () => void;
   onSet: (reading: CenteringRequest) => void;
@@ -550,14 +592,15 @@ export function CenteringControls({
 
   const ratios = useMemo(
     () =>
-      pending === null || outer === null
+      inner === null || outer === null
         ? null
-        : centeringFrom(
-            pending,
-            { horizontal: measuresHorizontal, vertical: measuresVertical },
+        : centeringFromQuads(
+            inner,
             outer,
+            { horizontal: measuresHorizontal, vertical: measuresVertical },
+            image,
           ),
-    [pending, outer, measuresHorizontal, measuresVertical],
+    [inner, outer, image, measuresHorizontal, measuresVertical],
   );
 
   const complete = ratios !== null && confidence !== null;
@@ -576,8 +619,8 @@ export function CenteringControls({
     >
       <p className={styles.placement}>
         {outer === null
-          ? "Step 1 of 2 — drag a box along the card's outer edge, where the card meets the background."
-          : "Step 2 of 2 — drag a box round the inner frame, the printed border of the artwork. The borders are what lies between the two boxes."}
+          ? `Step 1 of 2 — click the card's four corners, where the card meets the background (${String(pointsPlaced)} of 4 placed).`
+          : `Step 2 of 2 — click the four corners of the printed inner frame (${String(pointsPlaced)} of 4 placed). The borders are what lies between the two outlines, however the card sits.`}
       </p>
 
       <fieldset className={styles.fieldset}>
@@ -606,9 +649,9 @@ export function CenteringControls({
 
       <output className={styles.derived}>
         {ratios === null
-          ? outer === null || pending === null
-            ? "Both boxes are needed before there is anything to compute."
-            : "That box leaves no border to measure against."
+          ? outer === null || inner === null
+            ? "Both outlines are needed before there is anything to compute."
+            : "That outline leaves no border to measure against."
           : `${describeRatio("Horizontal", ratios.horizontal)} · ${describeRatio("Vertical", ratios.vertical)}`}
       </output>
 
@@ -631,7 +674,7 @@ export function CenteringControls({
         <button type="submit" disabled={!complete}>
           Set the centering
         </button>
-        {outer !== null ? (
+        {outer !== null || pointsPlaced > 0 ? (
           <button type="button" className={styles.secondary} onClick={onRestart}>
             Start again
           </button>
