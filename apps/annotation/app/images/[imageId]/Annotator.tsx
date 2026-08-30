@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   boxFrom,
@@ -164,7 +164,12 @@ export function CaptureLayer({
   onPreview: (box: BoundingBox | null) => void;
   onPlace: (box: BoundingBox) => void;
 }) {
-  const [from, setFrom] = useState<{ x: number; y: number } | null>(null);
+  // A ref rather than state, and deliberately: releasing the mouse fires
+  // `pointerup` and then — because the browser drops pointer capture — a
+  // `lostpointercapture` straight after it. The abandon handler must see that
+  // the drag already ended, or it wipes the box `pointerup` just placed; a
+  // state update would not be visible until the next render, a ref is.
+  const from = useRef<{ x: number; y: number } | null>(null);
 
   const pointOn = (event: React.PointerEvent<HTMLDivElement>) => {
     const box = event.currentTarget.getBoundingClientRect();
@@ -174,8 +179,12 @@ export function CaptureLayer({
     });
   };
 
-  const finish = () => {
-    setFrom(null);
+  // The abandon path — a cancelled pointer, or capture lost mid-drag. Stands
+  // down when no drag is in progress, which is exactly the post-`pointerup`
+  // `lostpointercapture` case.
+  const abandon = () => {
+    if (from.current === null) return;
+    from.current = null;
     onPreview(null);
   };
 
@@ -187,23 +196,25 @@ export function CaptureLayer({
         // the context menu then strands, which is the bug the frame had.
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
-        setFrom(pointOn(event));
+        from.current = pointOn(event);
       }}
       onPointerMove={(event) => {
-        if (from === null) return;
-        onPreview(boxFrom(from, pointOn(event)));
+        if (from.current === null) return;
+        onPreview(boxFrom(from.current, pointOn(event)));
       }}
       onPointerUp={(event) => {
-        if (from === null) return;
-        const box = boxFrom(from, pointOn(event));
-        finish();
+        if (from.current === null) return;
+        const box = boxFrom(from.current, pointOn(event));
+        from.current = null;
         // A click that did not move is not a region — `bbox_width > 0` is a
         // CHECK, and a marker made from one would be refused after the annotator
-        // thought they had placed it.
+        // thought they had placed it. Its preview is cleared; a placed box
+        // replaces the preview by being set over it.
         if (box !== null) onPlace(box);
+        else onPreview(null);
       }}
-      onPointerCancel={finish}
-      onLostPointerCapture={finish}
+      onPointerCancel={abandon}
+      onLostPointerCapture={abandon}
     />
   );
 }

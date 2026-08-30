@@ -86,6 +86,10 @@ function drag(
   fireEvent.pointerDown(layer, { button: 0, pointerId: 1, ...point(from) });
   fireEvent.pointerMove(layer, { pointerId: 1, ...point(to) });
   fireEvent.pointerUp(layer, { pointerId: 1, ...point(to) });
+  // A real browser releases pointer capture after pointerup and fires
+  // lostpointercapture — the event that wiped a just-placed box before the
+  // abandon path learned to stand down once the drag has ended.
+  fireEvent.lostPointerCapture(layer, { pointerId: 1 });
 }
 
 function captureLayer(): Element {
