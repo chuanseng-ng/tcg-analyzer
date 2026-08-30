@@ -128,16 +128,17 @@ def classify(
     top = round(card_frame.y * height)
     crop_width = round(card_frame.width * width)
     crop_height = round(card_frame.height * height)
+    card = decoded[top : top + crop_height, left : left + crop_width]
+    # The gate reads the slice's actual shape, not the intended dimensions:
+    # a run must fit between the two corner exclusions in both axes, and
+    # opposite edges' bands must not overlap. An edge run one pixel short of
+    # this would leave the reference band empty and its fraction undefined.
     minimum = max(
         2 * thresholds.corner_exclusion_px + 1,
         2 * (thresholds.edge_inset_px + 2 * thresholds.edge_band_px),
     )
-    if min(crop_width, crop_height) < minimum:
+    if min(card.shape[:2]) < minimum:
         return InsufficientInformation(_CARD_TOO_SMALL)
-    # The rounded rect can overshoot the image by a pixel when both round()s
-    # go up; numpy slicing clamps it, and everything downstream reads the
-    # slice's actual shape rather than these intended dimensions.
-    card = decoded[top : top + crop_height, left : left + crop_width]
 
     hsv = cv2.cvtColor(card, cv2.COLOR_BGR2HSV)
     raw = (hsv[:, :, 1] <= thresholds.max_white_saturation) & (

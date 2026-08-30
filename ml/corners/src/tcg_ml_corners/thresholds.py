@@ -48,7 +48,11 @@ class CornerThresholds:
     """
 
     #: The corner crop's side, in artifact pixels: 7 mm at 12 px/mm — the
-    #: region ADR 0010's contact sheet judged corner extent from.
+    #: region ADR 0010's contact sheet judged corner extent from. Also the
+    #: corner/edge boundary: `ml/edges` excludes exactly this much from each
+    #: end of every edge run (`corner_exclusion_px`, #184) — change one side
+    #: of the mirror and the other, or a defect at the seam is
+    #: double-reported or dropped.
     corner_size_px: int = 84
 
     #: How deep the whitening detection band runs along each card edge

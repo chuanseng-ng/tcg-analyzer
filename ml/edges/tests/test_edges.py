@@ -197,6 +197,23 @@ def test_a_white_bordered_card_answers_unknown_for_every_edge() -> None:
         assert finding.label is EdgeLabel.UNKNOWN
         assert finding.severity is None
         assert finding.bounding_box is None
+        assert finding.confidence.value == 0.5
+
+
+def test_whitening_straddling_the_seam_reports_only_the_edge_half() -> None:
+    """The other half of the boundary contract: a patch crossing the 84 px
+    seam is reported by the edge for its own half only, with the box
+    starting at the seam — the corner half is the corner analyzer's."""
+    picture = a_drawn_card()
+    whitened_along_the_edge(picture, region=EdgeRegion.TOP, along=slice(70, 100))
+
+    finding = classified(picture)[EdgeRegion.TOP]
+
+    assert finding.label is EdgeLabel.WHITENING
+    box = finding.bounding_box
+    assert isinstance(box, BoundingBox)
+    assert box.x == pytest.approx((MARGIN_PX + CORNER_EXCLUSION) / WIDTH, abs=1e-9)
+    assert box.width == pytest.approx((100 - CORNER_EXCLUSION) / WIDTH, abs=1e-9)
 
 
 def test_a_white_text_box_in_the_interior_does_not_read_as_whitening() -> None:
