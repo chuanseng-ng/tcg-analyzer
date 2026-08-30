@@ -1508,6 +1508,18 @@ source = { editable = "ml/condition" }
 name = "tcg-ml-corners"
 version = "0.0.0"
 source = { editable = "ml/corners" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "tcg-domain", editable = "packages/domain" },
+]
 
 [[package]]
 name = "tcg-ml-edges"
