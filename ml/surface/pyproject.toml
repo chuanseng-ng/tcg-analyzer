@@ -1,9 +1,16 @@
 [project]
 name = "tcg-ml-surface"
 version = "0.0.0"
-description = "Surface condition assessment"
+description = "Surface classification: spec §16's coarse defects from the normalized artifact, the fine four refused per ADR 0010"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "opencv-python-headless>=4.10",   # headless: plain opencv-python links libGL
+    "numpy>=2",
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
