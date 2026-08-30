@@ -1,7 +1,7 @@
 [project]
 name = "tcg-ml-corners"
 version = "0.0.0"
-description = "Corner classification: spec §14's eight corners, judged from the normalized artifact"
+description = "Corner classification: spec §14's corners, four per side, judged from the normalized artifact"
 requires-python = ">=3.12"
 dependencies = [
     "opencv-python-headless>=4.10",   # headless: plain opencv-python links libGL

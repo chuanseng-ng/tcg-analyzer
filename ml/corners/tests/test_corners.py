@@ -256,21 +256,34 @@ def test_a_pre_194_artifact_with_no_margin_still_classifies() -> None:
         assert finding.label is CornerLabel.CLEAN
 
 
-def test_the_bounding_box_names_where_the_whitening_sits() -> None:
-    """The finding's spatial claim is fractions of the whole artifact (§17),
-    inside the corner's own crop rectangle."""
+@pytest.mark.parametrize("region", list(CornerRegion))
+def test_the_bounding_box_names_where_the_whitening_sits(region: CornerRegion) -> None:
+    """The finding's spatial claim is fractions of the whole artifact (§17).
+
+    Asserted as the exact drawn rectangle at every corner, because the
+    canonical flips are undone on the way out — a dropped or inverted
+    un-flip would mirror the box inside the crop and still pass a
+    within-the-crop check.
+    """
     picture = a_drawn_card()
-    whitened_along_the_top_edge(picture, columns=slice(CLEAR_OF_TIP, CLEAR_OF_TIP + 30))
+    left = region in (CornerRegion.TOP_LEFT, CornerRegion.BOTTOM_LEFT)
+    bottom = region in (CornerRegion.BOTTOM_LEFT, CornerRegion.BOTTOM_RIGHT)
+    columns = (
+        slice(CLEAR_OF_TIP, CLEAR_OF_TIP + 30)
+        if left
+        else slice(CARD_PX_WIDTH - CLEAR_OF_TIP - 30, CARD_PX_WIDTH - CLEAR_OF_TIP)
+    )
+    whitened_along_the_top_edge(picture, columns=columns, at_the_bottom=bottom)
 
-    finding = classified(picture)[CornerRegion.TOP_LEFT]
+    box = classified(picture)[region].bounding_box
 
-    box = finding.bounding_box
     assert isinstance(box, BoundingBox)
-    crop = DEFAULT_CORNER_THRESHOLDS.corner_size_px
-    assert box.x >= MARGIN_PX / WIDTH
-    assert box.x + box.width <= (MARGIN_PX + crop) / WIDTH + 1e-9
-    assert box.y >= MARGIN_PX / HEIGHT
-    assert box.y + box.height <= (MARGIN_PX + crop) / HEIGHT + 1e-9
+    expected_x = MARGIN_PX + columns.start
+    expected_y = MARGIN_PX + (CARD_PX_HEIGHT - BAND_BOTTOM if bottom else BAND_TOP)
+    assert box.x == pytest.approx(expected_x / WIDTH, abs=1e-9)
+    assert box.y == pytest.approx(expected_y / HEIGHT, abs=1e-9)
+    assert box.width == pytest.approx(30 / WIDTH, abs=1e-9)
+    assert box.height == pytest.approx((BAND_BOTTOM - BAND_TOP) / HEIGHT, abs=1e-9)
 
 
 def test_thresholds_reject_a_disordered_band() -> None:

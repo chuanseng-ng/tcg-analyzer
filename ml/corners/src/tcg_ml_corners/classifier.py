@@ -39,7 +39,10 @@ reference band reads as a white border and flips the answer to `unknown`
 rather than `severe` — refusal in the ambiguous direction, and damage that
 deep also surfaces on the edge axis (#184); a strong specular highlight on
 foil can graze `minor` — the despeckle and the noise floor absorb glints,
-not highlight bands.
+not highlight bands; and a printing whose corner cut is larger than the
+nominal ``corner_radius_px`` arc puts background inside the detection band,
+which on a white surface reads as whitening — the upgrade is tracing the
+actual arc rather than assuming the nominal one.
 """
 
 from __future__ import annotations
@@ -132,6 +135,9 @@ def classify(
     crop_height = round(card_frame.height * height)
     if min(crop_width, crop_height) < 2 * thresholds.corner_size_px:
         return InsufficientInformation(_CARD_TOO_SMALL)
+    # The rounded rect can overshoot the image by a pixel when both round()s
+    # go up; numpy slicing clamps it, and everything downstream reads the
+    # slice's actual shape rather than these intended dimensions.
     card = decoded[top : top + crop_height, left : left + crop_width]
 
     hsv = cv2.cvtColor(card, cv2.COLOR_BGR2HSV)
@@ -164,7 +170,9 @@ def _region_masks(thresholds: CornerThresholds) -> tuple[_Mask, _Mask]:
     Both are L-shaped bands following the two card edges — detection at
     depth ``[inset, inset + band)``, reference one band deeper — and both
     are clipped inside the corner-cut arc in the tip square, because beyond
-    the arc the picture shows background, not card.
+    the arc the picture shows background, not card. The arc clip is
+    tightened by the same ``edge_inset_px`` as the straight edges: the
+    anti-aliased card/background blend runs along the arc too.
     """
     size = thresholds.corner_size_px
     inset = thresholds.edge_inset_px
