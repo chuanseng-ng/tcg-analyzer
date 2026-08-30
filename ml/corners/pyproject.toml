@@ -1,9 +1,16 @@
 [project]
 name = "tcg-ml-corners"
 version = "0.0.0"
-description = "Corner condition assessment"
+description = "Corner classification: spec §14's eight corners, judged from the normalized artifact"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "opencv-python-headless>=4.10",   # headless: plain opencv-python links libGL
+    "numpy>=2",
+    "tcg-domain",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
