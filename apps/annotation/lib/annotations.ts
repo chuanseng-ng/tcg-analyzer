@@ -184,13 +184,15 @@ export interface CardFrame {
 export const WHOLE_ARTIFACT: CardFrame = { x: 0, y: 0, width: 1, height: 1 };
 
 /**
- * Spec §21's two ratios, from where the annotator put the inner frame.
+ * Spec §21's two ratios, from the gap between two drawn boxes.
  *
- * **The borders are measured against the card's own rectangle**, which since
- * #194 is an inner frame the service reports beside the image — the artifact
- * holds a margin of photograph around the card, and a border measured from the
- * artifact's edge would count that margin as border. So the left border is
- * `box.x - card.x`, the right is `card.x + card.width - (box.x + box.width)`:
+ * **The borders are measured against the card's own rectangle**, and since the
+ * artifact keeps a margin of photograph around the card (#194) that rectangle
+ * is the annotator's first box — the card's outer edge, traced where the card
+ * meets the background. Not the detector's `card_frame`: a border is a few
+ * percent of the card, so a few pixels of quad error swings the ratio wildly.
+ * So the left border is `box.x - card.x`, the right is
+ * `card.x + card.width - (box.x + box.width)`:
  *
  *     horizontal = left / (left + right)
  *

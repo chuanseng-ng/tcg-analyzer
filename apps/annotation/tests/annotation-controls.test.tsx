@@ -302,14 +302,23 @@ describe("admitting you cannot tell", () => {
 });
 
 describe("centering", () => {
-  it("derives both ratios from where the inner frame was drawn", async () => {
+  it("derives both ratios from the gap between the outer edge and the inner frame", async () => {
+    // Two boxes, not one: the borders are measured between the card's own
+    // outer edge — traced by the annotator against the background margin —
+    // and the printed inner frame. The detector's idea of where the card
+    // edge sits is not part of the measurement: a few pixels of quad error
+    // on a border a few percent wide swings the ratio wildly, which is how
+    // a fine card once read 88.7/11.3.
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    // Borders of 0.2 and 0.3 horizontally: 0.2 / 0.5 = 0.4.
-    drag(captureLayer(), view, { x: 0.2, y: 0.25 }, { x: 0.7, y: 0.75 });
+    // Step 1 — the card's outer edge.
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    // Step 2 — the inner frame. Borders: left 0.16, right 0.24 (0.4 of the
+    // pair); top 0.2, bottom 0.2 (0.5).
+    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
 
     fireEvent.click(screen.getByRole("radio", { name: "Fairly sure" }));
     fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
@@ -325,13 +334,28 @@ describe("centering", () => {
     expect(centering?.confidence).toBe(0.6);
   });
 
+  it("asks for the inner frame after the outer edge and only then shows ratios", async () => {
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    expect(screen.getByText(/outer edge/)).toBeInTheDocument();
+
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+
+    expect(screen.getByText(/inner frame/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set the centering" })).toBeDisabled();
+  });
+
   it("sends null for an axis the card has no border on", async () => {
     render(<ImageViewer imageId={IMAGE_ID} />);
     const element = await ready();
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0.2, y: 0.25 }, { x: 0.7, y: 0.75 });
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    drag(captureLayer(), view, { x: 0.26, y: 0.1 }, { x: 0.66, y: 0.9 });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Top and bottom" }));
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
@@ -352,11 +376,26 @@ describe("centering", () => {
     const view = currentView(element);
 
     fireEvent.click(screen.getByRole("button", { name: "Centering" }));
-    drag(captureLayer(), view, { x: 0, y: 0 }, { x: 1, y: 1 });
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
     fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
 
     expect(screen.getByText(/leaves no border/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set the centering" })).toBeDisabled();
+  });
+
+  it("starts again from the outer edge when asked", async () => {
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start again" }));
+
+    expect(screen.getByText(/outer edge/)).toBeInTheDocument();
   });
 });
 

@@ -5,7 +5,6 @@ import { useMemo, useRef, useState } from "react";
 import {
   boxFrom,
   CANNOT_TELL_CONFIDENCE,
-  type CardFrame,
   centeringFrom,
   CONFIDENCE_LEVELS,
   CORNER_LABELS,
@@ -72,6 +71,7 @@ export function Overlay({
   drafts,
   stored,
   pending,
+  outer,
   shown,
 }: {
   view: View;
@@ -79,6 +79,8 @@ export function Overlay({
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   pending: BoundingBox | null;
+  /** Centering's first box — the card's outer edge (#181's two-box measurement). */
+  outer: BoundingBox | null;
   shown: Representation;
 }) {
   /*
@@ -130,6 +132,18 @@ export function Overlay({
           </rect>
         ) : null,
       )}
+      {outer ? (
+        <rect
+          className={styles.markOuter}
+          x={outer.x}
+          y={outer.y}
+          width={outer.width}
+          height={outer.height}
+          vectorEffect="non-scaling-stroke"
+        >
+          <title>The card&apos;s outer edge</title>
+        </rect>
+      ) : null}
       {pending ? (
         <rect
           className={styles.markPending}
@@ -501,28 +515,31 @@ function ConfidenceChoice({
 /**
  * Centering, measured rather than typed.
  *
- * The annotator drags a box round the inner frame and the two ratios follow from
- * where its edges sit — spec §21 asks for a measurement, and somebody doing
- * division under time pressure is not one. The borders are what lies between the
- * box and the card's own edge — the service reports where that edge sits inside
- * the artifact, because #194 put a margin of photograph around it.
+ * Two boxes, both the annotator's: first the card's **outer edge**, traced
+ * against the background margin the artifact keeps around the card (#194), then
+ * the printed **inner frame**. The borders are what lies between the two, and
+ * the ratios follow — spec §21 asks for a measurement, and somebody doing
+ * division under time pressure is not one. The detector's own idea of the card
+ * edge is deliberately not part of the measurement: a border is a few percent
+ * of the card, so a few pixels of quad error swings the ratio wildly — a fine
+ * card once read 88.7/11.3 that way.
  *
  * Each axis can be switched off, and that is not a convenience either: §21 names
  * full-art and borderless layouts outright, and a card with no border on an axis
  * has no ratio there. `null` says so; `0.5` would be a fabrication.
  */
 export function CenteringControls({
+  outer,
   pending,
   existing,
-  cardFrame,
-  onClearPending,
+  onRestart,
   onSet,
   onClear,
 }: {
+  outer: BoundingBox | null;
   pending: BoundingBox | null;
   existing: CenteringRequest | null;
-  cardFrame: CardFrame;
-  onClearPending: () => void;
+  onRestart: () => void;
   onSet: (reading: CenteringRequest) => void;
   onClear: () => void;
 }) {
@@ -533,14 +550,14 @@ export function CenteringControls({
 
   const ratios = useMemo(
     () =>
-      pending === null
+      pending === null || outer === null
         ? null
         : centeringFrom(
             pending,
             { horizontal: measuresHorizontal, vertical: measuresVertical },
-            cardFrame,
+            outer,
           ),
-    [pending, measuresHorizontal, measuresVertical, cardFrame],
+    [pending, outer, measuresHorizontal, measuresVertical],
   );
 
   const complete = ratios !== null && confidence !== null;
@@ -552,14 +569,15 @@ export function CenteringControls({
         event.preventDefault();
         if (ratios === null || confidence === null) return;
         onSet({ ...ratios, confidence, notes: notes.trim() === "" ? null : notes.trim() });
-        onClearPending();
+        onRestart();
         setNotes("");
         setConfidence(null);
       }}
     >
       <p className={styles.placement}>
-        Drag a box round the inner frame — the printed border of the artwork. The borders are what
-        lies between it and the card&apos;s edge; the margin beyond the card does not count.
+        {outer === null
+          ? "Step 1 of 2 — drag a box along the card's outer edge, where the card meets the background."
+          : "Step 2 of 2 — drag a box round the inner frame, the printed border of the artwork. The borders are what lies between the two boxes."}
       </p>
 
       <fieldset className={styles.fieldset}>
@@ -588,8 +606,8 @@ export function CenteringControls({
 
       <output className={styles.derived}>
         {ratios === null
-          ? pending === null
-            ? "No box yet."
+          ? outer === null || pending === null
+            ? "Both boxes are needed before there is anything to compute."
             : "That box leaves no border to measure against."
           : `${describeRatio("Horizontal", ratios.horizontal)} · ${describeRatio("Vertical", ratios.vertical)}`}
       </output>
@@ -613,6 +631,11 @@ export function CenteringControls({
         <button type="submit" disabled={!complete}>
           Set the centering
         </button>
+        {outer !== null ? (
+          <button type="button" className={styles.secondary} onClick={onRestart}>
+            Start again
+          </button>
+        ) : null}
         {existing ? (
           <button type="button" className={styles.secondary} onClick={onClear}>
             Remove the measurement

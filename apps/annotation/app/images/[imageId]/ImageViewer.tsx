@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   hasWork,
   requestBodyFrom,
-  WHOLE_ARTIFACT,
   type BoundingBox,
   type CenteringRequest,
   type MarkerDraft,
@@ -113,6 +112,11 @@ export function ImageViewer({ imageId }: { imageId: string }) {
   const [tool, setTool] = useState<Tool>("pan");
   const [shown, setShown] = useState<Representation>("normalized");
   const [pending, setPending] = useState<BoundingBox | null>(null);
+  // Centering's first box — the card's outer edge, traced by the annotator
+  // against the background margin. Lives beside `pending` because the second
+  // drag must not erase the first, and cleared wherever `pending` is: both are
+  // fractions of the frame on screen.
+  const [outerEdge, setOuterEdge] = useState<BoundingBox | null>(null);
   const [drafts, setDrafts] = useState<readonly MarkerDraft[]>([]);
   const [centering, setCentering] = useState<CenteringRequest | null>(null);
   const [saving, setSaving] = useState(false);
@@ -163,6 +167,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     setDrafts([]);
     setCentering(null);
     setPending(null);
+    setOuterEdge(null);
     setTool("pan");
     setShown("normalized");
     setSaveFailure(null);
@@ -236,6 +241,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     if (!armable(candidate)) return;
     setTool(candidate);
     setPending(null);
+    setOuterEdge(null);
   };
 
   const toggleRepresentation = () => {
@@ -245,6 +251,7 @@ export function ImageViewer({ imageId }: { imageId: string }) {
     // A placed box's fractions belong to the frame it was drawn on; drafts are
     // kept — same image — and the overlay shows each against its own frame.
     setPending(null);
+    setOuterEdge(null);
     if (next === "original" && tool !== "pan" && tool !== "surface") setTool("pan");
   };
 
@@ -326,12 +333,22 @@ export function ImageViewer({ imageId }: { imageId: string }) {
         tool={tool}
         representation={displayed}
         pending={pending}
+        outer={tool === "centering" ? outerEdge : null}
         drafts={drafts}
         stored={stored}
         onArm={arm}
         onToggleRepresentation={toggleRepresentation}
         onPreview={setPending}
-        onPlace={setPending}
+        onPlace={(box) => {
+          // Centering is two boxes: the first drag is the card's outer edge,
+          // every later one the inner frame. The other tools stay one-box.
+          if (tool === "centering" && outerEdge === null) {
+            setOuterEdge(box);
+            setPending(null);
+          } else {
+            setPending(box);
+          }
+        }}
         onCycleView={() => {
           const at = views.findIndex((candidate) => candidate.id === current.id);
           const next = views[(at + 1) % views.length];
@@ -374,11 +391,12 @@ export function ImageViewer({ imageId }: { imageId: string }) {
 
         {tool === "centering" ? (
           <CenteringControls
+            outer={outerEdge}
             pending={pending}
             existing={centering}
-            cardFrame={current.card_frame ?? WHOLE_ARTIFACT}
-            onClearPending={() => {
+            onRestart={() => {
               setPending(null);
+              setOuterEdge(null);
             }}
             onSet={setCentering}
             onClear={() => {
@@ -527,6 +545,7 @@ function Frame({
   tool,
   representation,
   pending,
+  outer,
   drafts,
   stored,
   onArm,
@@ -539,6 +558,7 @@ function Frame({
   tool: Tool;
   representation: Representation;
   pending: BoundingBox | null;
+  outer: BoundingBox | null;
   drafts: readonly MarkerDraft[];
   stored: readonly StoredMarker[];
   onArm: (tool: Tool) => void;
@@ -764,6 +784,7 @@ function Frame({
             drafts={drafts}
             stored={stored}
             pending={pending}
+            outer={outer}
             shown={representation}
           />
         )}

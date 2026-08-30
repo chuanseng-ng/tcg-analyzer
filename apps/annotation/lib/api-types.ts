@@ -490,7 +490,7 @@ export interface components {
              * @description Every marker recorded against this image, oldest first. **Not collapsed to a current reading**: both annotation tables are append-only, so a correction is a newer row, and a surface has as many defects as it has. The work list excludes an annotated image, so this endpoint is the only way one is ever seen again.
              */
             annotations: components["schemas"]["StoredMarkerResponse"][];
-            /** @description Where the card sits inside the artifact — null exactly when `has_artifact` is false. The client must measure centering against this rectangle and never assume the artifact's edges are the card's (#194). */
+            /** @description Where the card sits inside the artifact — null exactly when `has_artifact` is false. The detector's placement, served as a reference; centering is measured between two annotator-drawn boxes, never against this rectangle or the artifact's edges (#194). */
             card_frame?: components["schemas"]["CardFrameModel"] | null;
             /**
              * Card Id
@@ -761,8 +761,11 @@ export interface components {
          *     the card's edges are an inner rectangle. The frame is derived from the
          *     artifact's own stored normalization record, so it is correct for whatever
          *     version produced that artifact — a pre-margin artifact honestly reports the
-         *     whole unit square. Centering is measured against **this** rectangle, never
-         *     against the artifact's edges.
+         *     whole unit square. **This is the detector's placement, a display reference**:
+         *     centering is measured between two boxes the annotator draws — the card's
+         *     outer edge traced against the margin, then the printed inner frame — because
+         *     a border is a few percent of the card and a few pixels of quad error would
+         *     swing the ratio wildly.
          */
         CardFrameModel: {
             /**

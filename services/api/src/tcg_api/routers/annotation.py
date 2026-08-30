@@ -131,8 +131,11 @@ class CardFrameModel(BaseModel):
     the card's edges are an inner rectangle. The frame is derived from the
     artifact's own stored normalization record, so it is correct for whatever
     version produced that artifact — a pre-margin artifact honestly reports the
-    whole unit square. Centering is measured against **this** rectangle, never
-    against the artifact's edges.
+    whole unit square. **This is the detector's placement, a display reference**:
+    centering is measured between two boxes the annotator draws — the card's
+    outer edge traced against the margin, then the printed inner frame — because
+    a border is a few percent of the card and a few pixels of quad error would
+    swing the ratio wildly.
     """
 
     x: float = Field(description="The card's left edge, as a fraction of the artifact's width.")
@@ -231,8 +234,9 @@ class AnnotationImageResponse(BaseModel):
         default=None,
         description=(
             "Where the card sits inside the artifact — null exactly when "
-            "`has_artifact` is false. The client must measure centering against this "
-            "rectangle and never assume the artifact's edges are the card's (#194)."
+            "`has_artifact` is false. The detector's placement, served as a reference; "
+            "centering is measured between two annotator-drawn boxes, never against "
+            "this rectangle or the artifact's edges (#194)."
         ),
     )
     siblings: list[AnnotationImageSummary] = Field(

@@ -236,6 +236,14 @@
   stroke-dasharray: 3 3;
 }
 
+/* Centering's first box — the card's outer edge. Solid, so the in-progress
+ * inner frame (dashed) reads as the one still being placed. */
+.markOuter {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
 /*
  * Mounted only while a tool is armed. It covers the frame, so a drag lands here
  * and never reaches the pan handlers — the mode is which element exists.
