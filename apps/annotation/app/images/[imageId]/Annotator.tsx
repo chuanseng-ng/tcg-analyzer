@@ -740,6 +740,13 @@ export function SaveBar({
           photograph are fine — or normalize the image first.
         </p>
       ) : null}
+      {count > 0 && drafts.length === 0 ? (
+        <p className={styles.hint}>
+          No defect markers are staged, so saving records this side as clean apart from the
+          centering — corners, edges and surfaces without a marker are clean by the corpus&apos;s
+          protocol. Mark what you see, or save as it stands.
+        </p>
+      ) : null}
       {count > 0 ? <p className={styles.hint}>Nothing is written until you save.</p> : null}
     </div>
   );

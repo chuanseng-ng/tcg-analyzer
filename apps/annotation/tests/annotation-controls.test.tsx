@@ -400,6 +400,33 @@ describe("centering", () => {
 });
 
 describe("saving", () => {
+  it("says a save with no defect markers records the side as clean", async () => {
+    // The corpus protocol (#181): corners, edges and surfaces without a marker
+    // on a saved image are clean — the surface rule, extended. The bar says so
+    // at the moment it becomes true, so silence is a choice and not an
+    // accident.
+    render(<ImageViewer imageId={IMAGE_ID} />);
+    const element = await ready();
+    const view = currentView(element);
+
+    fireEvent.click(screen.getByRole("button", { name: "Centering" }));
+    drag(captureLayer(), view, { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 });
+    drag(captureLayer(), view, { x: 0.26, y: 0.3 }, { x: 0.66, y: 0.7 });
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set the centering" }));
+
+    expect(screen.getByText(/records this side as clean/)).toBeInTheDocument();
+
+    // Stage a defect and the claim withdraws — the side is no longer clean.
+    fireEvent.click(screen.getByRole("button", { name: "Corner" }));
+    fireEvent.change(screen.getByLabelText("What is there"), { target: { value: "whitening" } });
+    fireEvent.click(screen.getByRole("radio", { name: "minor" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Sure" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add corner/ }));
+
+    expect(screen.queryByText(/records this side as clean/)).not.toBeInTheDocument();
+  });
+
   it("writes nothing until the annotator says so, and stages removably meanwhile", async () => {
     // Both tables refuse an UPDATE, so a mistake has to be removable *before* it
     // is written. That is why nothing posts as it is placed.
