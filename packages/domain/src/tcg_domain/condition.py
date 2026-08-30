@@ -149,6 +149,18 @@ type Polygon = tuple[tuple[float, float], ...]
 _NO_METADATA: Final[Mapping[str, object]] = MappingProxyType({})
 
 
+def _coerced[MemberT: StrEnum](enum: type[MemberT], value: object) -> MemberT:
+    """Coerce a stored-string field to its member, refusing as the domain error.
+
+    A bare ``ValueError`` escaping a constructor would break `errors.py`'s
+    catch-the-whole-domain-with-one-clause invariant.
+    """
+    try:
+        return enum(value)  # type: ignore[arg-type]
+    except ValueError as error:
+        raise InvalidConditionAssessment(str(error)) from error
+
+
 def _validated_polygon(value: object) -> Polygon | None:
     if value is None:
         return None
@@ -158,6 +170,10 @@ def _validated_polygon(value: object) -> Polygon | None:
         )
     points: list[tuple[float, float]] = []
     for point in value:
+        if not isinstance(point, Iterable) or isinstance(point, (str, bytes)):
+            raise InvalidConditionAssessment(
+                f"a polygon point must be an (x, y) pair, got {point!r}"
+            )
         coordinates = tuple(point)
         if len(coordinates) != 2:
             raise InvalidConditionAssessment(
@@ -236,8 +252,8 @@ class Defect:
             raise InvalidConditionAssessment(
                 f"a {self.type} defect must carry a severity (spec §17), got {self.severity!r}"
             )
-        set_field(self, "side", ImageSide(self.side))
-        set_field(self, "representation", Representation(self.representation))
+        set_field(self, "side", _coerced(ImageSide, self.side))
+        set_field(self, "representation", _coerced(Representation, self.representation))
         if self.representation is Representation.ORIGINAL and not isinstance(
             self.type, SurfaceLabel
         ):
@@ -394,7 +410,7 @@ class SurfaceAssessment:
 
         refused: dict[SurfaceLabel, InsufficientInformation] = {}
         for key, verdict in self.not_assessed.items():
-            label = SurfaceLabel(key)
+            label = _coerced(SurfaceLabel, key)
             if not isinstance(verdict, InsufficientInformation):
                 raise InvalidConditionAssessment(
                     f"a refusal must be InsufficientInformation, got {type(verdict).__name__}"
@@ -451,6 +467,36 @@ def _validated_axis[RegionT: StrEnum, LabelT: StrEnum](
                 )
         frozen[side] = MappingProxyType({region: answer[region] for region in regions})
     return MappingProxyType(frozen)
+
+
+def _validated_manufacturing_defects(value: object) -> Uncertain[tuple[Defect, ...]]:
+    """Freeze the derived member, refusing anything but defects or the refusal.
+
+    Takes ``object`` so the runtime guards stay reachable — the field's type is
+    for callers, not a promise about what arrives (`_validated_measurement`'s
+    pattern in `image_quality.py`).
+    """
+    if isinstance(value, InsufficientInformation):
+        return value
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+        raise InvalidConditionAssessment(
+            f"manufacturing defects must be a sequence of Defect or the refusal, "
+            f"got {type(value).__name__}"
+        )
+    derived = tuple(value)
+    for defect in derived:
+        if not isinstance(defect, Defect):
+            raise InvalidConditionAssessment(
+                f"manufacturing defects must be Defect, got {type(defect).__name__}"
+            )
+        if defect.side not in V1_SIDES:
+            # The other axes are total over V1_SIDES by construction; a derived
+            # defect is the one place a side arrives on the value itself.
+            raise InvalidConditionAssessment(
+                f"a manufacturing defect names {defect.side.value}, but the V1 "
+                f"assessment composes {sorted(side.value for side in V1_SIDES)} only"
+            )
+    return derived
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,14 +584,11 @@ class ConditionAssessment:
             surface[side] = answer
         set_field(self, "surface", MappingProxyType(surface))
 
-        if not isinstance(self.manufacturing_defects, InsufficientInformation):
-            derived = tuple(self.manufacturing_defects)
-            for defect in derived:
-                if not isinstance(defect, Defect):
-                    raise InvalidConditionAssessment(
-                        f"manufacturing defects must be Defect, got {type(defect).__name__}"
-                    )
-            set_field(self, "manufacturing_defects", derived)
+        set_field(
+            self,
+            "manufacturing_defects",
+            _validated_manufacturing_defects(self.manufacturing_defects),
+        )
 
         if not isinstance(self.eye_appeal, InsufficientInformation):
             raise InvalidConditionAssessment(

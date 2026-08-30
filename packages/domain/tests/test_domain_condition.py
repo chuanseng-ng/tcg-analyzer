@@ -337,6 +337,72 @@ def test_metadata_is_frozen_and_copied() -> None:
         defect.metadata["detector"] = "changed"  # type: ignore[index]
 
 
+def test_a_corner_label_cannot_name_a_defect() -> None:
+    """`Defect.type` deliberately excludes `CornerLabel` (epic decision 3):
+    corners travel as :class:`RegionFinding`, and `manufacturing_defects`
+    derives from surface and edge findings only.
+    """
+    with pytest.raises(InvalidConditionAssessment):
+        Defect(
+            type=CornerLabel.WHITENING,  # type: ignore[arg-type]
+            confidence=sure(),
+            severity=DefectSeverity.MINOR,
+            side=ImageSide.FRONT,
+            representation=Representation.NORMALIZED,
+        )
+
+
+def test_a_side_or_frame_the_domain_does_not_know_is_the_domain_error() -> None:
+    """errors.py's invariant: the whole domain is catchable with one clause,
+    so a bad coercion must never escape as a bare ValueError.
+    """
+    with pytest.raises(InvalidConditionAssessment):
+        Defect(
+            type=SurfaceLabel.STAIN,
+            confidence=sure(),
+            severity=DefectSeverity.MINOR,
+            side="sideways",  # type: ignore[arg-type]
+            representation=Representation.NORMALIZED,
+        )
+    with pytest.raises(InvalidConditionAssessment):
+        Defect(
+            type=SurfaceLabel.STAIN,
+            confidence=sure(),
+            severity=DefectSeverity.MINOR,
+            side=ImageSide.FRONT,
+            representation="warped",  # type: ignore[arg-type]
+        )
+
+
+def test_a_malformed_polygon_point_is_the_domain_error() -> None:
+    """A point that is not an (x, y) pair is refused, never a TypeError."""
+    with pytest.raises(InvalidConditionAssessment):
+        Defect(
+            type=SurfaceLabel.STAIN,
+            confidence=sure(),
+            severity=DefectSeverity.MINOR,
+            side=ImageSide.FRONT,
+            representation=Representation.NORMALIZED,
+            polygon=(1, 2, 3),  # type: ignore[arg-type]
+        )
+
+
+def test_a_fraction_must_be_a_finite_real() -> None:
+    """NaN measures nothing, infinity lies, and True is not a number."""
+    with pytest.raises(InvalidConditionAssessment):
+        BoundingBox(x=float("nan"), y=0.0, width=0.5, height=0.5)
+    with pytest.raises(InvalidConditionAssessment):
+        BoundingBox(x=True, y=0.0, width=0.5, height=0.5)
+    with pytest.raises(InvalidConditionAssessment):
+        Centering(
+            front_horizontal=float("inf"),
+            front_vertical=0.5,
+            back_horizontal=0.5,
+            back_vertical=0.5,
+            confidence=sure(),
+        )
+
+
 # ----------------------------------------------------------------
 # RegionFinding
 # ----------------------------------------------------------------
@@ -546,6 +612,24 @@ def test_a_corner_finding_must_speak_the_corner_vocabulary() -> None:
         assessment(corners={ImageSide.FRONT: with_edge_label, ImageSide.BACK: sound_corners()})
 
 
+def test_an_edge_finding_must_speak_the_edge_vocabulary() -> None:
+    """The generic axis check has two callers; both branches are pinned."""
+    with_corner_label = sound_edges()
+    with_corner_label[EdgeRegion.TOP] = RegionFinding(
+        label=CornerLabel.ROUNDING,
+        confidence=sure(),
+        severity=DefectSeverity.MINOR,
+    )
+    with pytest.raises(InvalidConditionAssessment):
+        assessment(edges={ImageSide.FRONT: with_corner_label, ImageSide.BACK: sound_edges()})
+
+
+def test_an_unknown_refusal_class_is_the_domain_error() -> None:
+    """A `not_assessed` key outside §16's classes is refused as the domain error."""
+    with pytest.raises(InvalidConditionAssessment):
+        SurfaceAssessment(findings=(), not_assessed={"shine": INSUFFICIENT_INFORMATION})  # type: ignore[dict-item]
+
+
 def test_a_surface_defect_agrees_with_its_side_key() -> None:
     """A back stain filed under the front's surface is a composition bug."""
     with pytest.raises(InvalidConditionAssessment):
@@ -582,6 +666,29 @@ def test_manufacturing_defects_may_carry_an_edge_defect() -> None:
     )
     derived = assessment(manufacturing_defects=(rough, a_stain()))
     assert derived.manufacturing_defects == (rough, a_stain())
+
+
+def test_a_manufacturing_defect_stays_on_a_v1_side() -> None:
+    """The other axes are total over the V1 sides; a derived defect naming a
+    side no analyzer produced would be a composition bug wearing a value.
+    """
+    angled = Defect(
+        type=SurfaceLabel.STAIN,
+        confidence=sure(),
+        severity=DefectSeverity.MINOR,
+        side=ImageSide.ANGLED_FRONT,
+        representation=Representation.NORMALIZED,
+    )
+    with pytest.raises(InvalidConditionAssessment):
+        assessment(manufacturing_defects=(angled,))
+
+
+def test_manufacturing_defects_must_be_defects_or_the_refusal() -> None:
+    """A non-sequence must be refused as the domain error, never a TypeError."""
+    with pytest.raises(InvalidConditionAssessment):
+        assessment(manufacturing_defects=5)
+    with pytest.raises(InvalidConditionAssessment):
+        assessment(manufacturing_defects=("stain",))
 
 
 def test_the_mappings_are_frozen() -> None:
