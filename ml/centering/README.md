@@ -16,8 +16,12 @@ sides.
 The arithmetic is the annotation tool's, on purpose: borders are the
 midpoint-to-side distances between the found frame and the card rectangle, in
 artifact pixels, and the ratios are `left / (left + right)` and
-`top / (top + bottom)`, 0.5 perfect. `ml/evaluation` compares this package
-against `centering_measurements`, so the two derivations must agree.
+`top / (top + bottom)`, 0.5 perfect. The formula agrees with the tool's; the
+outer edge's source deliberately differs — the annotator traces the card's
+actual outline where this package takes the nominal rectangle as
+normalization's promise, and that residual is a systematic bias
+`ml/evaluation`'s comparison against `centering_measurements` exists to
+measure.
 
 Template-aware means knowing when not to answer: a full-art, borderless or
 unrecognised layout yields no frame-like quadrilateral in the accepted band

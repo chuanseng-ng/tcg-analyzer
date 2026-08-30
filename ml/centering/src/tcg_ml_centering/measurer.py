@@ -28,9 +28,14 @@ distances from the midpoints of the found frame's sides to the card
 rectangle's matching sides, in artifact pixels — `centeringFromQuads` in
 `apps/annotation/lib/annotations.ts`, against an axis-aligned outer quad —
 and the ratios are `left / (left + right)` and `top / (top + bottom)`, 0.5
-perfect. #188's evaluation compares this package against
-`centering_measurements`, so the two derivations must agree; a zero
-denominator refuses the axis there and refuses it here.
+perfect; a zero denominator refuses the axis there and refuses it here. The
+**formula** agrees; the **outer edge's source** deliberately differs: the
+annotator traces the card's actual outline because residual detection error
+leaves the card a pixel or two off the nominal rectangle, where this package
+takes the nominal rectangle as normalization's promise. That residual is a
+systematic bias #188's evaluation against `centering_measurements` exists to
+measure — correcting for it classically would mean re-detecting the card
+edge, which is the benchmark's call to demand, not this baseline's to guess.
 
 **Failure is a result, not an exception.** Nothing frame-like found means
 :class:`InsufficientInformation` with a reason, never a guessed ratio —
@@ -135,6 +140,10 @@ class SideCentering:
                 "a side with nothing measured is the whole-side refusal — "
                 "spell it InsufficientInformation instead"
             )
+        if not isinstance(self.confidence, Confidence):
+            raise ValueError(
+                f"confidence must be a Confidence, got {type(self.confidence).__name__}"
+            )
 
 
 def measure(
@@ -171,14 +180,11 @@ def measure(
 
     gray = cv2.cvtColor(card, cv2.COLOR_BGR2GRAY)
     frame = _inner_frame(gray, thresholds=thresholds)
-    if frame is None:
-        return InsufficientInformation(_NO_FRAME)
+    if isinstance(frame, InsufficientInformation):
+        return frame
 
-    borders = _borders(frame.quad, width=crop_width, height=crop_height)
-    if max(borders) > thresholds.max_border_fraction * crop_width:
-        return InsufficientInformation(_IMPLAUSIBLE_FRAME)
-    horizontal = _ratio(borders[0], borders[1], floor=thresholds.min_axis_border_px)
-    vertical = _ratio(borders[2], borders[3], floor=thresholds.min_axis_border_px)
+    horizontal = _ratio(frame.borders[0], frame.borders[1], floor=thresholds.min_axis_border_px)
+    vertical = _ratio(frame.borders[2], frame.borders[3], floor=thresholds.min_axis_border_px)
     if isinstance(horizontal, InsufficientInformation) and isinstance(
         vertical, InsufficientInformation
     ):
@@ -191,8 +197,12 @@ def measure(
 
 
 def _ratio(near: float, far: float, *, floor: float) -> Uncertain[float]:
-    """One axis's ratio, or the refusal where the denominator says nothing."""
-    if near + far < floor:
+    """One axis's ratio, or the refusal where the denominator says nothing.
+
+    At or below the floor is refused, matching the threshold's own comment —
+    the refusal-biased side of the boundary.
+    """
+    if near + far <= floor:
         return InsufficientInformation(_BORDERLESS_AXIS)
     return near / (near + far)
 
@@ -240,16 +250,29 @@ class _Frame:
     area: float
     rectangularity: float
     aspect: float
+    borders: tuple[float, float, float, float]
 
 
-def _inner_frame(gray: MatLike, *, thresholds: CenteringThresholds) -> _Frame | None:
-    """The card's printed border frame, or `None` when no template has one."""
+def _inner_frame(
+    gray: MatLike, *, thresholds: CenteringThresholds
+) -> _Frame | InsufficientInformation:
+    """The card's printed border frame, or the refusal naming why not.
+
+    A candidate implying an implausibly thick border is dropped **before**
+    selection — #176's filter-before-grouping lesson: a junk quadrilateral
+    that would lose the plausibility check must not shadow a legitimate
+    smaller frame out of the running. A scene where only implausible
+    candidates were seen refuses naming them; one with no candidates at all
+    refuses as the template having no frame.
+    """
     height, width = gray.shape[:2]
     card_area = float(height * width)
     smallest = thresholds.min_frame_area_fraction * card_area
     largest = thresholds.max_frame_area_fraction * card_area
+    thickest = thresholds.max_border_fraction * width
 
     best: _Frame | None = None
+    saw_implausible = False
     for binary in _binary_maps(gray):
         contours, _hierarchy = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
@@ -258,8 +281,13 @@ def _inner_frame(gray: MatLike, *, thresholds: CenteringThresholds) -> _Frame | 
             contour_area = float(cv2.contourArea(contour))
             if not smallest <= contour_area <= largest:
                 continue
-            candidate = _as_frame(contour, contour_area, thresholds=thresholds)
+            candidate = _as_frame(
+                contour, contour_area, width=width, height=height, thresholds=thresholds
+            )
             if candidate is None or not smallest <= candidate.area <= largest:
+                continue
+            if max(candidate.borders) > thickest:
+                saw_implausible = True
                 continue
             # ponytail: largest-in-band, no centre clustering — the closed
             # Canny ribbon's two walls sit 1-2 px apart (~0.17 mm), so the
@@ -268,7 +296,9 @@ def _inner_frame(gray: MatLike, *, thresholds: CenteringThresholds) -> _Frame | 
             # margin. Subtract half the ribbon if #188 ever shows a bias.
             if best is None or candidate.area > best.area:
                 best = candidate
-    return best
+    if best is not None:
+        return best
+    return InsufficientInformation(_IMPLAUSIBLE_FRAME if saw_implausible else _NO_FRAME)
 
 
 def _binary_maps(gray: MatLike) -> tuple[MatLike, ...]:
@@ -281,20 +311,30 @@ def _binary_maps(gray: MatLike) -> tuple[MatLike, ...]:
     """
     kernel = np.ones((3, 3), np.uint8)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    median = float(np.median(blurred))
-    lower = int(max(0.0, 0.66 * median))
-    upper = int(min(255.0, 1.33 * median))
     equalised = cv2.GaussianBlur(
         cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray), (5, 5), 0
     )
-    return (
-        cv2.morphologyEx(cv2.Canny(blurred, lower, upper), cv2.MORPH_CLOSE, kernel),
-        cv2.morphologyEx(cv2.Canny(equalised, lower, upper), cv2.MORPH_CLOSE, kernel),
-    )
+
+    def edges(image: MatLike) -> MatLike:
+        # Each pass derives its Canny levels from its **own** median — the
+        # equalised image's histogram is the one its gradients are judged
+        # against, or the pass would be miscalibrated exactly on the
+        # low-contrast frames it exists to rescue.
+        median = float(np.median(image))
+        lower = int(max(0.0, 0.66 * median))
+        upper = int(min(255.0, 1.33 * median))
+        return cv2.morphologyEx(cv2.Canny(image, lower, upper), cv2.MORPH_CLOSE, kernel)
+
+    return (edges(blurred), edges(equalised))
 
 
 def _as_frame(
-    contour: MatLike, contour_area: float, *, thresholds: CenteringThresholds
+    contour: MatLike,
+    contour_area: float,
+    *,
+    width: int,
+    height: int,
+    thresholds: CenteringThresholds,
 ) -> _Frame | None:
     """One contour as a frame-like quadrilateral, or `None` if it is not one."""
     perimeter = float(cv2.arcLength(contour, closed=True))
@@ -329,6 +369,7 @@ def _as_frame(
         area=area,
         rectangularity=min(1.0, rectangularity),
         aspect=aspect,
+        borders=_borders(quad, width=width, height=height),
     )
 
 

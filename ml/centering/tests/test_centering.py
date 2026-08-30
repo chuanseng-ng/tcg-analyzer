@@ -257,6 +257,16 @@ def test_a_side_with_nothing_measured_is_not_constructible() -> None:
         )
 
 
+def test_a_bare_float_confidence_is_refused_at_construction() -> None:
+    """`Centering` guards the same field; the per-side mirror must too.
+
+    A bare float would only fail later — inside `centering_of`'s `min` or at
+    the block's construction — far from the call that got it wrong.
+    """
+    with pytest.raises(ValueError):
+        SideCentering(horizontal=0.6, vertical=0.5, confidence=0.9)  # type: ignore[arg-type]
+
+
 def test_two_measured_sides_compose_into_a_centering() -> None:
     """The block's confidence is the weaker side's — min, never a product."""
     front = SideCentering(horizontal=0.6, vertical=0.5, confidence=Confidence.of(0.9))
