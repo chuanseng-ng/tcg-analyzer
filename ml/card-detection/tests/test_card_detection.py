@@ -455,15 +455,59 @@ def test_a_bare_card_reports_nothing_enclosing_it() -> None:
     assert located(png(photograph())).enclosing_ratio == 1.0
 
 
-def test_a_card_inside_a_sleeve_reports_the_sleeve() -> None:
-    """One card, not two — and the spread within it is the sleeve."""
+def test_a_card_inside_a_holder_reports_the_holder() -> None:
+    """One card, not two — and the spread within it is the holder.
+
+    A 6 mm standoff, which at this file's 10 px/mm is a top-loader. It was a
+    2 mm sleeve until #207 measured what the extraction passes disagree by on
+    real photographs — up to 3 mm, which is more than a sleeve that thin stands
+    off — and a fixture below the detector's own resolution asserts nothing.
+    """
     picture = background()
-    place(picture, (265, 340, 670, 920), 120)
+    place(picture, (225, 300, 750, 1000), 120)
     place(picture, CARD, 215)
     found = located(png(picture))
 
     assert found.candidates == 1
     assert 1.0 < found.enclosing_ratio <= DEFAULT_DETECTION_THRESHOLDS.sleeve_max_ratio
+
+
+def test_a_holder_too_narrow_to_resolve_is_not_reported() -> None:
+    """#207's resolution limit, stated as a test.
+
+    A 2 mm standoff on every side. On the corpus's 28 real photographs the six
+    extraction passes placed the card's own boundary up to 3 mm apart from each
+    other, so a quadrilateral this close is not distinguishable from another
+    pass's opinion of the same edge — and answering "sleeved" from it is the
+    confidently-wrong output spec §2.7 forbids. Reporting nothing is the honest
+    answer, and the condition can only warn, never refuse, so nothing is lost
+    but a warning that was wrong three times in four.
+    """
+    picture = background()
+    place(picture, (265, 340, 670, 920), 120)
+    place(picture, CARD, 215)
+
+    assert located(png(picture)).enclosing_ratio == 1.0
+
+
+def test_a_quadrilateral_that_stands_off_on_two_sides_only_is_not_a_holder() -> None:
+    """#207's measured shape: a drop shadow, not a holder.
+
+    A holder surrounds the card; a shadow falls on the side away from the light.
+    On the corpus the enclosing quadrilateral's four per-side standoffs ran as
+    unevenly as 0.0 / 6.0 / 4.4 / -0.1 mm — one side flush with the card and one
+    corner *outside* the enclosing quad altogether — because the passes that
+    found it were reading the card's shadow, its Otsu region or its saturation
+    map rather than a second object. Averaging those four into one number, which
+    is what an area ratio does, reads the shadow as a sleeve.
+    """
+    picture = background()
+    left, top, width, height = CARD
+    # Flush with the card's left and top edges, 4 mm clear of the other two.
+    place(picture, (left, top, width + 40, height + 40), 120)
+    place(picture, CARD, 215)
+
+    assert located(png(picture)).enclosing_ratio == 1.0
 
 
 def test_something_far_larger_than_the_card_is_not_a_sleeve() -> None:
@@ -516,7 +560,8 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("work_long_edge", 0, "work_long_edge"),
         ("min_rectangularity", 1.5, "min_rectangularity"),
         ("approx_epsilon", 0.0, "approx_epsilon"),
-        ("sleeve_min_margin", 0.0, "sleeve_min_margin"),
+        ("sleeve_standoff_fraction", 0.0, "sleeve_standoff_fraction"),
+        ("sleeve_standoff_fraction", 1.0, "sleeve_standoff_fraction"),
         ("containment_slack_px", -1.0, "containment_slack_px"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),

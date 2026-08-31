@@ -43,6 +43,20 @@ are therefore grouped by centre, a group is one card, and the *spread* within
 the winning group is what :attr:`CardGeometry.enclosing_ratio` reports — which
 is how sleeve obstruction gets answered at all.
 
+**But concentric is not the same as enclosing, and the spread is mostly this
+package disagreeing with itself.** #207: on 21 of the corpus's 28 real
+photographs — every one a bare card — the winning group held two clusters of
+quadrilaterals 0.9 to 3.0 mm apart, and the ratio between them read as a
+sleeve. Neither cluster was a second object. The six passes above answer
+slightly different questions about one edge: the fixed-level Canny pass finds
+the card's *drop shadow*, an Otsu region takes card and shadow as one
+population, the saturation map's closing lands inside a desaturated edge. So a
+quadrilateral must now stand off the card **on all four of its sides**, by a
+fraction of the card's own long edge, before its ratio is reported — an average
+standoff cannot tell a holder, which surrounds the card, from a shadow, which
+falls on one side of it. The measured consequence is stated where the threshold
+is: this resolves a rigid holder and nothing tighter, a sleeve included.
+
 **A quadrilateral wholly inside another is that card's structure, not a second
 card.** #206: a front's artwork window is convex, card-aspect and well filled,
 so it survives every candidate filter, and at close range its centre sits far
@@ -522,27 +536,64 @@ def _enclosing_ratio(group: list[_Candidate], *, thresholds: DetectionThresholds
     """How much bigger the outermost concentric quadrilateral is — §19's sleeve.
 
     `1.0` means nothing plausibly enclosing was found, which is the answer for a
-    bare card. The margin floor is what excludes the artifact: the inner and
-    outer walls of a closed Canny ribbon are a few pixels apart by construction,
-    and reporting that as a sleeve would put a sleeve on every photograph.
+    bare card.
 
-    ponytail: the weakest heuristic in this package. Any concentric object of
-    roughly card proportions a little larger than the card reads as a sleeve —
-    a card resting on a slightly bigger box, say. It costs a `poor`, which is
-    "continue but tell the user", never a refusal. M7's segmentation model is
-    the upgrade.
+    **The standoff is measured on all four sides, on the quadrilaterals
+    themselves.** Until #207 it was derived from the two areas — half the
+    difference of the side lengths of two squares of those areas — which is an
+    *average* standoff, and an average cannot tell a holder from a shadow. A
+    holder surrounds the card; a shadow falls on the side away from the light.
+    Over the corpus's 28 real photographs the enclosing quadrilateral's four
+    standoffs ran as unevenly as 0.0 / 6.0 / 4.4 / -0.1 mm — one side flush
+    with the card and one corner *outside* the enclosing quad altogether — and
+    the average of that cleared the old floor comfortably. Requiring every side
+    is what makes "encloses the card" mean what it says.
+
+    The floor itself is a fraction of the card rather than a pixel count, for
+    the same issue's second finding: what it must exclude is the six extraction
+    passes disagreeing about where this card's edge is, by up to 3.0 mm, which
+    scales with the card. See
+    :attr:`DetectionThresholds.sleeve_standoff_fraction` for the measurement.
+
+    ponytail: still the weakest heuristic in this package, and now an explicitly
+    coarse one — it resolves a rigid holder and nothing tighter, because
+    anything tighter is inside the detector's own uncertainty about the card's
+    boundary. It costs a `poor`, which is "continue but tell the user", never a
+    refusal, so being coarse is the safe direction. M7's segmentation model is
+    the upgrade, and it is what would make a sleeve answerable at all.
     """
-    largest = max(member.area for member in group)
-    smallest = min(member.area for member in group)
-    if smallest <= 0.0:
+    outer = max(group, key=lambda member: member.area)
+    inner = min(group, key=lambda member: member.area)
+    if inner.area <= 0.0 or inner is outer:
         return 1.0
-    # Half the difference of the side lengths of two squares of these areas —
-    # how far the outer quadrilateral stands off the inner one, per side.
-    margin = (math.sqrt(largest) - math.sqrt(smallest)) / 2.0
-    ratio = largest / smallest
-    if margin >= thresholds.sleeve_min_margin and ratio <= thresholds.sleeve_max_ratio:
-        return ratio
-    return 1.0
+    ratio = outer.area / inner.area
+    if ratio > thresholds.sleeve_max_ratio:
+        return 1.0
+    # Against the outer quadrilateral's long edge, because that is the boundary
+    # this function was handed and the one `detect` returns; the two differ by
+    # the standoff itself, which is under 4% by the time the floor is in play.
+    floor = thresholds.sleeve_standoff_fraction * max(_side_lengths(outer.quad))
+    if any(_standoff(outer.quad, inner.quad, side) < floor for side in range(4)):
+        return 1.0
+    return ratio
+
+
+def _standoff(enclosing: _Quad, enclosed: _Quad, side: int) -> float:
+    """How far the enclosing quadrilateral clears one side of the enclosed one.
+
+    The side's midpoint rather than its corners: a corner distance is inflated
+    by the diagonal, and inflated most for the shape this exists to refuse — a
+    quadrilateral flush along two sides and clear on the other two still has
+    two corners comfortably inside the enclosing one. Negative when that side
+    lies outside, which is not a "small" standoff but a different fact, and the
+    caller wants both refused.
+    """
+    first = enclosed[side]
+    second = enclosed[(side + 1) % 4]
+    midpoint = ((first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0)
+    return float(
+        cv2.pointPolygonTest(np.array(enclosing, dtype=np.float32), midpoint, measureDist=True)
+    )
 
 
 def _confidence(card: _Candidate) -> Confidence:

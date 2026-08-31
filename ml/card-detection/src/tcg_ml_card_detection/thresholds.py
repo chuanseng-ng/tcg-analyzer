@@ -91,15 +91,36 @@ class DetectionThresholds:
     #: error, which does not scale with the card.
     containment_slack_px: float = 6.0
 
-    #: How far outside the card a quadrilateral must sit, in pixels **at
-    #: :attr:`work_long_edge`**, before it is a sleeve rather than an artifact.
-    #: A pixel floor rather than an area ratio because the artifact it excludes
-    #: is one: the inner and outer walls of a closed edge ribbon are a fixed few
-    #: pixels apart whatever size the card is, so a ratio floor would be too
-    #: tight for a small card and too loose for a large one.
-    sleeve_min_margin: float = 7.0
+    #: How far outside the card a quadrilateral must sit **on every one of its
+    #: four sides**, as a fraction of the card's own long edge, before it is a
+    #: holder rather than another extraction pass's opinion of the same edge.
+    #: 0.035 of 88 mm is about 3 mm.
+    #:
+    #: A fraction of the card and not a pixel count (#207): the thing it must
+    #: exclude scales with the card, because it *is* the card — over the
+    #: corpus's 28 real photographs the six passes placed the same boundary up
+    #: to 3.0 mm apart, reading the drop shadow, the Otsu region or the
+    #: saturation map instead of a second object, and 2.31 mm was the largest
+    #: any of those stood off on all four sides at once. The old pixel floor
+    #: (7 px at :attr:`work_long_edge`) is 0.68 mm at the corpus's ~10 px/mm,
+    #: an order of magnitude under what it was meant to exclude, and it let
+    #: 21 of 28 bare cards report a sleeve.
+    #:
+    #: **Every side, not an average**: the corpus's enclosing quadrilaterals
+    #: stood off as unevenly as 0.0 / 6.0 / 4.4 / -0.1 mm, because a shadow
+    #: falls on one side and a holder surrounds the card. An area ratio cannot
+    #: see the difference; four standoffs can.
+    #:
+    #: The cost is stated rather than hidden: **a sleeve is not resolvable and
+    #: is not reported**. A penny sleeve stands off ~1.6 mm, which is inside
+    #: the disagreement above — and was already invisible before this issue, at
+    #: any threshold. What this condition detects is a rigid holder. Lowering
+    #: this number to "restore" sleeve sensitivity restores the false positive
+    #: instead; the way to move it is to photograph sleeved and top-loadered
+    #: cards and measure, which no corpus yet supports.
+    sleeve_standoff_fraction: float = 0.035
     #: And a quadrilateral enclosing the card by more than this is the table, a
-    #: mat or a mount. A penny sleeve sits near 1.05 and a top-loader near 1.4.
+    #: mat or a mount. A top-loader sits near 1.3.
     sleeve_max_ratio: float = 1.50
 
     #: A corner within this fraction of the frame's short edge of the frame
@@ -123,8 +144,11 @@ class DetectionThresholds:
             )
         if not 0.0 < self.approx_epsilon < 1.0:
             raise ValueError(f"approx_epsilon must lie in (0, 1), got {self.approx_epsilon!r}")
-        if self.sleeve_min_margin <= 0.0:
-            raise ValueError(f"sleeve_min_margin must be positive, got {self.sleeve_min_margin!r}")
+        if not 0.0 < self.sleeve_standoff_fraction < 1.0:
+            raise ValueError(
+                "sleeve_standoff_fraction must lie in (0, 1), got "
+                f"{self.sleeve_standoff_fraction!r}"
+            )
         if self.containment_slack_px < 0.0:
             raise ValueError(
                 f"containment_slack_px must not be negative, got {self.containment_slack_px!r}"
