@@ -45,8 +45,9 @@ The schema's source of truth is the `MetaData` in
 catalog in `tcg_api/catalog/tables.py`, the analysis spine in
 `tcg_api/analysis/tables.py`, the published grading standards in
 `tcg_api/grading/tables.py`, the market data in `tcg_api/market/tables.py`, the
-economic configuration in `tcg_api/economics/tables.py` and the dataset,
-provenance, annotation and membership records in `tcg_api/datasets/tables.py` —
+economic configuration in `tcg_api/economics/tables.py`, the dataset,
+provenance, annotation and membership records in `tcg_api/datasets/tables.py`
+and the model registry in `tcg_api/models/tables.py` —
 and `tcg_api/table_registry.py` imports them all,
 which is what makes that `MetaData` complete. `env.py` reads it from the registry
 for exactly that reason. Declare a new table in one of those modules as well as in
@@ -347,6 +348,47 @@ application because §7 forbids an unnecessary microservice, and in the OpenAPI
 schema because that is the only way `apps/annotation` can learn a shape
 ([ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md)). What keeps it
 internal is the `/internal` prefix, which is what an ingress rule matches.
+
+## Registering a model bundle
+
+Spec §58's model registry is what lets an analysis record
+`condition-model-v0.3.0` and mean one immutable artifact forever: the row holds
+the name, the version, the dataset version it trained on, its training
+configuration and metrics, and the object-storage key the bytes live under. The
+registry stores the reference; the store holds the bytes — model weights enter
+neither git nor the database. The table is empty until the first trained
+artifact exists, because heuristic analyzer versions are code constants
+composed into `PIPELINE_VERSION` and `CONDITION_VERSION`, never registry rows.
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+uv run tcg-register-model-bundle --model-name grading-psa --model-version grading-psa-v0.2.0 --training-dataset-version pokemon-condition-v0.1.0 --training-config config.json --metrics metrics.json --artifact-location model-bundles/grading-psa-v0.2.0/weights.pt
+```
+
+**Every bundle is born `experimental`, and only `status` ever changes.** There
+is no `--status` flag: promotion is a later, deliberate act, and until a
+promote path exists it is an `UPDATE model_bundles SET status = ...` by hand.
+Two triggers hold the row: any UPDATE that moves another column is refused, and
+a status move is legal only to a strictly later state in
+`experimental → candidate → production → retired` — so `retired` is terminal
+and `production` is never demoted in place. A DELETE is refused outright,
+unlike every other domain here: a registry row is the record that a version
+existed, and its disposal is `retired`, not removal.
+
+**One `production` bundle per model name.** Spec §59's "never overwrite
+production model files", held by a partial unique index — the predecessor
+retires before a successor is promoted, and the database refuses the shortcut.
+
+**`training_dataset_version` references `dataset_versions.version`**, the
+identifier rather than the surrogate key, so a registry row is legible without
+a join — and RESTRICT means a corpus a registered model trained on cannot be
+un-published. The version grammars are shared: `/latest/` is unstorable as a
+model version, as a dataset version and inside `artifact_location`, because a
+moving pointer is the one thing a reproducibility record may not name.
+
+**It runs from the API image**: registering a bundle decodes no photograph, so
+nothing on this path needs OpenCV.
 
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:

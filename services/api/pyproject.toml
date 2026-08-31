@@ -163,6 +163,11 @@ tcg-normalize-training-images = "tcg_api.datasets.normalization:main"
 # the manifest into `datasets/manifests/`. The manifest is a render of the rows
 # rather than a record, so `--regenerate` reproduces it byte for byte.
 tcg-publish-dataset-version = "tcg_api.datasets.versioning:main"
+# Registers one trained model bundle in spec §58's registry, born
+# `experimental` — the reference goes in the row, the bytes stay in object
+# storage, and heuristic analyzer versions never become rows at all. Runs from
+# the API image: registering a bundle decodes no photograph.
+tcg-register-model-bundle = "tcg_api.models.registration:main"
 
 [build-system]
 requires = ["hatchling"]
