@@ -1,0 +1,1179 @@
+{
+  "analyzer_thresholds": {
+    "centering_approx_epsilon": 0.02,
+    "centering_max_aspect": 0.9,
+    "centering_max_border_fraction": 0.15,
+    "centering_max_frame_area_fraction": 0.95,
+    "centering_min_aspect": 0.5,
+    "centering_min_axis_border_px": 2.0,
+    "centering_min_frame_area_fraction": 0.55,
+    "centering_min_rectangularity": 0.85,
+    "corners_clean_max_area_mm2": 0.25,
+    "corners_corner_radius_px": 30.0,
+    "corners_corner_size_px": 84.0,
+    "corners_edge_band_px": 12.0,
+    "corners_edge_inset_px": 2.0,
+    "corners_max_white_saturation": 60.0,
+    "corners_min_white_value": 190.0,
+    "corners_moderate_min_area_mm2": 1.5,
+    "corners_severe_min_area_mm2": 4.0,
+    "corners_white_border_fraction": 0.5,
+    "edges_clean_max_area_mm2": 0.5,
+    "edges_corner_exclusion_px": 84.0,
+    "edges_edge_band_px": 12.0,
+    "edges_edge_inset_px": 2.0,
+    "edges_max_white_saturation": 60.0,
+    "edges_min_white_value": 190.0,
+    "edges_moderate_min_area_mm2": 4.0,
+    "edges_severe_min_area_mm2": 10.0,
+    "edges_white_border_fraction": 0.5,
+    "surface_border_exclusion_px": 26.0,
+    "surface_context_busy_fraction": 0.25,
+    "surface_context_margin_px": 12.0,
+    "surface_face_busy_fraction": 0.35,
+    "surface_laplacian_threshold": 24.0,
+    "surface_max_white_saturation": 60.0,
+    "surface_min_defect_area_mm2": 1.0,
+    "surface_min_white_value": 190.0,
+    "surface_moderate_min_area_mm2": 10.0,
+    "surface_severe_min_area_mm2": 25.0,
+    "surface_stain_max_value": 60.0
+  },
+  "composition": {
+    "assessments": 14,
+    "dragged_to_flat_unknown_floor": 7,
+    "overall_confidence": {
+      "count": 14,
+      "max": 0.51875,
+      "mean": 0.5060267857142857,
+      "min": 0.5
+    },
+    "refused": {}
+  },
+  "condition_version": "condition-compose-v0.1.0+centering-opencv-v0.1.0+corners-opencv-v0.1.0+edges-opencv-v0.1.0+surface-opencv-v0.1.0",
+  "dataset_version": "pokemon-condition-v0.1.0",
+  "evaluation_version": "condition-evaluation-v0.1.0",
+  "git_commit": "3ba1c050793922c1108131fcafdf5c8d4085a32f",
+  "split_seed": 1,
+  "splits": {
+    "test": {
+      "centering": {
+        "calibration": {
+          "insufficient_information": "no_events"
+        },
+        "horizontal": {
+          "insufficient_information": "no_samples"
+        },
+        "not_measured": 0,
+        "refused": {
+          "no printed border frame was found — a full-art, borderless or unrecognised template is not measured against a frame it does not have": 2
+        },
+        "vertical": {
+          "insufficient_information": "no_samples"
+        }
+      },
+      "corners": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 1,
+              "lower": 0.6,
+              "mean_confidence": 0.625,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "count": 0,
+              "lower": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.8333333333333334,
+              "count": 6,
+              "lower": 0.9,
+              "mean_confidence": 0.9499999999999998,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.18651785714285715,
+          "count": 7,
+          "expected_calibration_error": 0.1892857142857141,
+          "log_loss": 0.6047182855004956
+        },
+        "per_label": {
+          "clean": {
+            "f1": 0.8333333333333333,
+            "false_negatives": 2,
+            "false_positives": 0,
+            "precision": 1.0,
+            "recall": 0.7142857142857143,
+            "support": 7,
+            "true_positives": 5
+          },
+          "whitening": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 2,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 1,
+        "truth_unknown": 0
+      },
+      "edges": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "count": 0,
+              "lower": 0.6,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "count": 0,
+              "lower": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.375,
+              "count": 8,
+              "lower": 0.9,
+              "mean_confidence": 0.95,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.565,
+          "count": 8,
+          "expected_calibration_error": 0.575,
+          "log_loss": 1.891567656366575
+        },
+        "per_label": {
+          "clean": {
+            "f1": 0.5454545454545454,
+            "false_negatives": 5,
+            "false_positives": 0,
+            "precision": 1.0,
+            "recall": 0.375,
+            "support": 8,
+            "true_positives": 3
+          },
+          "whitening": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 5,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 0,
+        "truth_unknown": 0
+      },
+      "excluded": {},
+      "images": 2,
+      "not_annotated": 0,
+      "scored": 2,
+      "surface": {
+        "abstained": {
+          "color_issue": 2,
+          "dent": 2,
+          "factory_defect": 2,
+          "gloss_issue": 2,
+          "indentation": 2,
+          "print_dot": 2,
+          "print_line": 2,
+          "registration_issue": 2,
+          "scratch": 2
+        },
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "accuracy": 0.0,
+              "count": 12,
+              "lower": 0.5,
+              "mean_confidence": 0.5424479166666667,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 6,
+              "lower": 0.6,
+              "mean_confidence": 0.6333333333333333,
+              "upper": 0.7
+            },
+            {
+              "accuracy": 0.0,
+              "count": 3,
+              "lower": 0.7,
+              "mean_confidence": 0.7666666666666666,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 0.0,
+              "count": 7,
+              "lower": 0.8,
+              "mean_confidence": 0.8415178571428571,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.0,
+              "count": 61,
+              "lower": 0.9,
+              "mean_confidence": 0.9498975409836065,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.7608135094803371,
+          "count": 89,
+          "expected_calibration_error": 0.8589185393258427,
+          "log_loss": 2.4201012725615096
+        },
+        "per_label": {
+          "scuff": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 33,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          },
+          "stain": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 56,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "set_aside_original_frame": 0,
+        "truth_unknown": 0
+      }
+    },
+    "train": {
+      "centering": {
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "count": 0,
+              "lower": 0.6,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 0.0,
+              "count": 1,
+              "lower": 0.8,
+              "mean_confidence": 0.8922769148391139,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.5,
+              "count": 2,
+              "lower": 0.9,
+              "mean_confidence": 0.9170809195008635,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.5508109032570486,
+          "count": 3,
+          "expected_calibration_error": 0.5754795846136136,
+          "log_loss": 1.62023569823106
+        },
+        "horizontal": {
+          "count": 3,
+          "max_error": 0.09774240023250225,
+          "mean_error": 0.06346644163037612
+        },
+        "not_measured": 0,
+        "refused": {
+          "no printed border frame was found — a full-art, borderless or unrecognised template is not measured against a frame it does not have": 17
+        },
+        "vertical": {
+          "count": 3,
+          "max_error": 0.4294738800432142,
+          "mean_error": 0.18188748552480374
+        }
+      },
+      "corners": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 1,
+              "lower": 0.6,
+              "mean_confidence": 0.6625000000000001,
+              "upper": 0.7
+            },
+            {
+              "accuracy": 0.6666666666666666,
+              "count": 3,
+              "lower": 0.7,
+              "mean_confidence": 0.7374999999999999,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 0.6666666666666666,
+              "count": 3,
+              "lower": 0.8,
+              "mean_confidence": 0.8208333333333333,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.6875,
+              "count": 64,
+              "lower": 0.9,
+              "mean_confidence": 0.9494140624999999,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.2807570422535211,
+          "count": 71,
+          "expected_calibration_error": 0.25492957746478867,
+          "log_loss": 0.9450571052951027
+        },
+        "per_label": {
+          "clean": {
+            "f1": 0.8067226890756303,
+            "false_negatives": 19,
+            "false_positives": 4,
+            "precision": 0.9230769230769231,
+            "recall": 0.7164179104477612,
+            "support": 67,
+            "true_positives": 48
+          },
+          "crease": {
+            "f1": {
+              "insufficient_information": "no_predictions"
+            },
+            "false_negatives": 1,
+            "false_positives": 0,
+            "precision": {
+              "insufficient_information": "no_predictions"
+            },
+            "recall": 0.0,
+            "support": 1,
+            "true_positives": 0
+          },
+          "whitening": {
+            "f1": 0.0,
+            "false_negatives": 3,
+            "false_positives": 19,
+            "precision": 0.0,
+            "recall": 0.0,
+            "support": 3,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 5,
+        "truth_unknown": 4
+      },
+      "edges": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "accuracy": 0.0,
+              "count": 1,
+              "lower": 0.5,
+              "mean_confidence": 0.51875,
+              "upper": 0.6
+            },
+            {
+              "count": 0,
+              "lower": 0.6,
+              "upper": 0.7
+            },
+            {
+              "accuracy": 0.6666666666666666,
+              "count": 3,
+              "lower": 0.7,
+              "mean_confidence": 0.7374999999999999,
+              "upper": 0.8
+            },
+            {
+              "count": 0,
+              "lower": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.4864864864864865,
+              "count": 74,
+              "lower": 0.9,
+              "mean_confidence": 0.95,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.4530393629807692,
+          "count": 78,
+          "expected_calibration_error": 0.4491185897435897,
+          "log_loss": 1.5174793041112045
+        },
+        "per_label": {
+          "chipping": {
+            "f1": {
+              "insufficient_information": "no_predictions"
+            },
+            "false_negatives": 4,
+            "false_positives": 0,
+            "precision": {
+              "insufficient_information": "no_predictions"
+            },
+            "recall": 0.0,
+            "support": 4,
+            "true_positives": 0
+          },
+          "clean": {
+            "f1": 0.6551724137931034,
+            "false_negatives": 34,
+            "false_positives": 6,
+            "precision": 0.8636363636363636,
+            "recall": 0.5277777777777778,
+            "support": 72,
+            "true_positives": 38
+          },
+          "notching": {
+            "f1": {
+              "insufficient_information": "no_predictions"
+            },
+            "false_negatives": 2,
+            "false_positives": 0,
+            "precision": {
+              "insufficient_information": "no_predictions"
+            },
+            "recall": 0.0,
+            "support": 2,
+            "true_positives": 0
+          },
+          "whitening": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 34,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 2,
+        "truth_unknown": 0
+      },
+      "excluded": {},
+      "images": 20,
+      "not_annotated": 0,
+      "scored": 20,
+      "surface": {
+        "abstained": {
+          "color_issue": 20,
+          "dent": 20,
+          "factory_defect": 20,
+          "gloss_issue": 20,
+          "indentation": 20,
+          "print_dot": 20,
+          "print_line": 20,
+          "registration_issue": 20,
+          "scratch": 20,
+          "scuff": 7,
+          "stain": 7
+        },
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "accuracy": 0.0,
+              "count": 25,
+              "lower": 0.5,
+              "mean_confidence": 0.545625,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 25,
+              "lower": 0.6,
+              "mean_confidence": 0.65075,
+              "upper": 0.7
+            },
+            {
+              "accuracy": 0.0,
+              "count": 15,
+              "lower": 0.7,
+              "mean_confidence": 0.7420833333333333,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 0.0,
+              "count": 14,
+              "lower": 0.8,
+              "mean_confidence": 0.8600446428571429,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.0,
+              "count": 306,
+              "lower": 0.9,
+              "mean_confidence": 0.9497855392156862,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.8123284040178571,
+          "count": 385,
+          "expected_calibration_error": 0.8927678571428571,
+          "log_loss": 2.6230272419066436
+        },
+        "per_label": {
+          "scuff": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 95,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          },
+          "stain": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 290,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "set_aside_original_frame": 0,
+        "truth_unknown": 0
+      }
+    },
+    "validation": {
+      "centering": {
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "count": 0,
+              "lower": 0.6,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "count": 0,
+              "lower": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.0,
+              "count": 2,
+              "lower": 0.9,
+              "mean_confidence": 0.9536195666368927,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.9102365366423464,
+          "count": 2,
+          "expected_calibration_error": 0.9536195666368927,
+          "log_loss": 3.320819864565891
+        },
+        "horizontal": {
+          "count": 2,
+          "max_error": 0.04694682382111043,
+          "mean_error": 0.02498287888840353
+        },
+        "not_measured": 0,
+        "refused": {
+          "no printed border frame was found — a full-art, borderless or unrecognised template is not measured against a frame it does not have": 4
+        },
+        "vertical": {
+          "count": 2,
+          "max_error": 0.1204347876575429,
+          "mean_error": 0.09647359887177598
+        }
+      },
+      "corners": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "accuracy": 1.0,
+              "count": 2,
+              "lower": 0.5,
+              "mean_confidence": 0.5249999999999999,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 1,
+              "lower": 0.6,
+              "mean_confidence": 0.6000000000000001,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "count": 0,
+              "lower": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.5882352941176471,
+              "count": 17,
+              "lower": 0.9,
+              "mean_confidence": 0.95,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.357703125,
+          "count": 20,
+          "expected_calibration_error": 0.38499999999999995,
+          "log_loss": 1.1844315338788742
+        },
+        "per_label": {
+          "clean": {
+            "f1": 0.7499999999999999,
+            "false_negatives": 8,
+            "false_positives": 0,
+            "precision": 1.0,
+            "recall": 0.6,
+            "support": 20,
+            "true_positives": 12
+          },
+          "whitening": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 8,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 4,
+        "truth_unknown": 0
+      },
+      "edges": {
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "count": 0,
+              "lower": 0.5,
+              "upper": 0.6
+            },
+            {
+              "count": 0,
+              "lower": 0.6,
+              "upper": 0.7
+            },
+            {
+              "count": 0,
+              "lower": 0.7,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 1.0,
+              "count": 1,
+              "lower": 0.8,
+              "mean_confidence": 0.8,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.4090909090909091,
+              "count": 22,
+              "lower": 0.9,
+              "mean_confidence": 0.94375,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.5060360054347826,
+          "count": 23,
+          "expected_calibration_error": 0.5201086956521739,
+          "log_loss": 1.6706705187966786
+        },
+        "per_label": {
+          "clean": {
+            "f1": 0.6060606060606061,
+            "false_negatives": 13,
+            "false_positives": 0,
+            "precision": 1.0,
+            "recall": 0.43478260869565216,
+            "support": 23,
+            "true_positives": 10
+          },
+          "whitening": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 13,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "predicted_unknown": 1,
+        "truth_unknown": 0
+      },
+      "excluded": {},
+      "images": 6,
+      "not_annotated": 0,
+      "scored": 6,
+      "surface": {
+        "abstained": {
+          "color_issue": 6,
+          "dent": 6,
+          "factory_defect": 6,
+          "gloss_issue": 6,
+          "indentation": 6,
+          "print_dot": 6,
+          "print_line": 6,
+          "registration_issue": 6,
+          "scratch": 6,
+          "scuff": 1,
+          "stain": 1
+        },
+        "axis_refused": {},
+        "calibration": {
+          "bins": [
+            {
+              "count": 0,
+              "lower": 0.0,
+              "upper": 0.1
+            },
+            {
+              "count": 0,
+              "lower": 0.1,
+              "upper": 0.2
+            },
+            {
+              "count": 0,
+              "lower": 0.2,
+              "upper": 0.3
+            },
+            {
+              "count": 0,
+              "lower": 0.3,
+              "upper": 0.4
+            },
+            {
+              "count": 0,
+              "lower": 0.4,
+              "upper": 0.5
+            },
+            {
+              "accuracy": 0.0,
+              "count": 15,
+              "lower": 0.5,
+              "mean_confidence": 0.5452083333333333,
+              "upper": 0.6
+            },
+            {
+              "accuracy": 0.0,
+              "count": 10,
+              "lower": 0.6,
+              "mean_confidence": 0.62625,
+              "upper": 0.7
+            },
+            {
+              "accuracy": 0.0,
+              "count": 9,
+              "lower": 0.7,
+              "mean_confidence": 0.746875,
+              "upper": 0.8
+            },
+            {
+              "accuracy": 0.0,
+              "count": 8,
+              "lower": 0.8,
+              "mean_confidence": 0.868359375,
+              "upper": 0.9
+            },
+            {
+              "accuracy": 0.0,
+              "count": 96,
+              "lower": 0.9,
+              "mean_confidence": 0.9485351562500001,
+              "upper": 1.0
+            }
+          ],
+          "brier_score": 0.7669923290307971,
+          "count": 138,
+          "expected_calibration_error": 0.8635416666666667,
+          "log_loss": 2.4340504608091025
+        },
+        "per_label": {
+          "scuff": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 61,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          },
+          "stain": {
+            "f1": {
+              "insufficient_information": "no_examples"
+            },
+            "false_negatives": 0,
+            "false_positives": 77,
+            "precision": 0.0,
+            "recall": {
+              "insufficient_information": "no_examples"
+            },
+            "support": 0,
+            "true_positives": 0
+          }
+        },
+        "set_aside_original_frame": 0,
+        "truth_unknown": 0
+      }
+    }
+  },
+  "thresholds": {
+    "calibration_bins": 10,
+    "centering_agreement_tolerance": 0.05,
+    "iou_threshold": 0.5
+  }
+}
