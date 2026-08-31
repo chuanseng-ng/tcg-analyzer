@@ -40,6 +40,7 @@ from tcg_domain.condition import (
     SurfaceAssessment,
 )
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
+from tcg_domain.errors import InvalidConditionAssessment
 from tcg_ml_centering import CENTERING_VERSION
 from tcg_ml_condition import CONDITION_VERSION, assess, compose
 from tcg_ml_corners import CORNERS_VERSION, DEFAULT_CORNER_THRESHOLDS
@@ -332,6 +333,32 @@ def test_everything_refused_is_the_composition_refusal() -> None:
 
     assert isinstance(result, InsufficientInformation)
     assert result.reason == "no_axis_measured"
+
+
+def test_a_mapping_missing_a_side_is_the_domain_refusal_not_a_key_error() -> None:
+    """`compose` reads the mappings before the constructor validates them, so
+    it guards totality itself — a partial replay through the public seam
+    (#188's) must get the domain's own error, never a bare `KeyError`."""
+    with pytest.raises(InvalidConditionAssessment, match="exactly the V1 sides"):
+        compose(
+            centering=_NO_FRAME,
+            corners={ImageSide.FRONT: corner_findings()},
+            edges={side: edge_findings() for side in V1_SIDES},
+            surface={side: SurfaceAssessment(findings=()) for side in V1_SIDES},
+        )
+
+
+def test_a_stray_side_is_refused_even_when_everything_else_is() -> None:
+    """The guard runs before the empty-confidences early return — an
+    all-refused input with a junk key is malformed, not `no_axis_measured`."""
+    refusal = InsufficientInformation("undecodable")
+    with pytest.raises(InvalidConditionAssessment, match="exactly the V1 sides"):
+        compose(
+            centering=refusal,
+            corners=dict.fromkeys(V1_SIDES, refusal),
+            edges=dict.fromkeys((*V1_SIDES, ImageSide.ANGLED_FRONT), refusal),
+            surface=dict.fromkeys(V1_SIDES, refusal),
+        )
 
 
 def test_a_found_surface_manufacturing_defect_is_collected() -> None:

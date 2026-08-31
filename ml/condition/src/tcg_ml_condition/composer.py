@@ -47,6 +47,7 @@ from tcg_domain.condition import (
     SurfaceAssessment,
 )
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
+from tcg_domain.errors import InvalidConditionAssessment
 from tcg_ml_centering import CENTERING_VERSION, centering_of, measure
 from tcg_ml_corners import CORNERS_VERSION
 from tcg_ml_corners import classify as classify_corners
@@ -100,6 +101,14 @@ def compose(
     reachable with inputs the v0.1.0 analyzers never emit, and #188's
     benchmark replays stored outputs.
     """
+    for axis, mapping in (("corners", corners), ("edges", edges), ("surface", surface)):
+        # The derivations subscript the mappings before the constructor's own
+        # totality check runs — a partial replay must get the domain's error,
+        # never a bare KeyError.
+        if set(mapping) != set(V1_SIDES):
+            raise InvalidConditionAssessment(
+                f"{axis} must carry exactly the V1 sides {sorted(side.value for side in V1_SIDES)}"
+            )
     confidences = list(_confidences(centering, corners, edges, surface))
     if not confidences:
         return InsufficientInformation("no_axis_measured")
@@ -188,6 +197,10 @@ def _manufacturing_defects(
     empty tuple only when every feeding class was actually assessed — a
     refused surface side, a feeding class in ``not_assessed`` or a refused
     edges side means "never looked", not "none there".
+
+    The tuple's order is per side (FRONT then BACK), surface findings before
+    edge conversions — deterministic, but observable and promised to nobody;
+    a reader wanting an order should sort.
 
     ponytail: edges gives no class-level refusal signal, so its v0.1.0
     rough_cut blindness is invisible here — moot while surface's refusals
