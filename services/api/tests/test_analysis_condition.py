@@ -281,6 +281,21 @@ def test_a_side_with_no_derivable_frame_is_recorded_as_the_refusal(
     assert recorder.documents[0]["insufficient_information"] == "no_card_frame_for_back"
 
 
+def test_both_sides_missing_names_the_back(
+    wired: tuple[_Recorder, list[dict[str, Any]]],
+) -> None:
+    """Sides are checked in sorted order (`quality.py`'s idiom), so a total
+    refusal names `back` — pinned because the reason string is a persisted
+    contract M8 may read, and it must not drift with an iteration order."""
+    recorder, _ = wired
+    recorder.rows[ImageSide.FRONT] = StoredArtifact(normalized_uri=None, normalization_details=None)
+    recorder.rows[ImageSide.BACK] = StoredArtifact(normalized_uri=None, normalization_details=None)
+
+    run(lambda: condition.assess_condition(None, uuid.uuid4()))
+
+    assert recorder.documents[0]["insufficient_information"] == "no_normalized_artifact_for_back"
+
+
 def test_the_composers_own_refusal_is_stored_as_itself(
     wired: tuple[_Recorder, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
 ) -> None:

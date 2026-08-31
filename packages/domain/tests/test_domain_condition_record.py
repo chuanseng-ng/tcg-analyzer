@@ -316,6 +316,11 @@ def test_no_record_or_no_dimensions_derives_no_frame() -> None:
     assert card_frame_of({}) is None
     assert card_frame_of({"width": 804}) is None
     assert card_frame_of({"width": "804", "height": "1104"}) is None
+    # A zero or negative dimension is a corrupt record, and the answer is the
+    # refusal path — never a ZeroDivisionError out of a worker job.
+    assert card_frame_of({"width": 0, "height": 1104}) is None
+    assert card_frame_of({"width": 804, "height": -1104}) is None
+    assert card_frame_of({"width": True, "height": 1104}) is None
 
 
 def test_a_margin_that_leaves_no_card_derives_no_frame() -> None:

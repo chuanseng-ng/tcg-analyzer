@@ -521,6 +521,10 @@ def _box_record(box: BoundingBox) -> dict[str, object]:
 
 
 def _defect_record(defect: Defect) -> dict[str, object]:
+    # ponytail: `metadata` passes through unvalidated — §17's open bag is typed
+    # `Mapping[str, object]`, so an analyzer putting a non-JSON value there
+    # fails at the database driver, far from the cause. No analyzer emits
+    # metadata today; validate here if one ever does.
     return {
         "type": str(defect.type),
         "confidence": defect.confidence.value,
@@ -739,7 +743,14 @@ def card_frame_of(details: Mapping[str, object] | None) -> BoundingBox | None:
         return None
     width = details.get("width")
     height = details.get("height")
+    # `bool` is an `int`, and a zero or negative dimension is a corrupt record
+    # — either would otherwise crash a worker job rather than take this
+    # function's documented refusal path.
+    if isinstance(width, bool) or isinstance(height, bool):
+        return None
     if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    if width <= 0 or height <= 0:
         return None
     thresholds = details.get("thresholds")
     margin_mm = 0.0

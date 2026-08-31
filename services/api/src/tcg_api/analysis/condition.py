@@ -80,6 +80,9 @@ async def assess_condition(db: AsyncSession, analysis_id: UUID) -> None:
 
     located: dict[ImageSide, tuple[str, BoundingBox]] = {}
     refusal: str | None = None
+    # Sorted order, `prepare_images`' idiom — so the side a total refusal names
+    # (`back` sorts first) is deterministic rather than an iteration accident;
+    # the reason string is part of the stored document.
     for side in sorted(V1_SIDES):
         row = rows.get(side)
         if row is None or row.normalized_uri is None:
