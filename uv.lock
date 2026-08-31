@@ -1596,6 +1596,18 @@ requires-dist = [
 name = "tcg-ml-surface"
 version = "0.0.0"
 source = { editable = "ml/surface" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "tcg-domain", editable = "packages/domain" },
+]
 
 [[package]]
 name = "tcg-shared"
