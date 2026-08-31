@@ -30,7 +30,7 @@ __all__ = ["DEFAULT_THRESHOLDS", "IMAGE_QUALITY_VERSION", "QualityThresholds"]
 
 #: What produced a verdict. Recorded on every image; never a pointer to
 #: "current", per the project's versioning invariant.
-IMAGE_QUALITY_VERSION: Final = "image-quality-heuristic-v0.2.0"
+IMAGE_QUALITY_VERSION: Final = "image-quality-heuristic-v0.3.0"
 
 
 @dataclass(frozen=True, slots=True)
