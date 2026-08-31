@@ -37,7 +37,9 @@ from tcg_api.datasets import versioning
 from tcg_api.datasets.splitting import CorpusImage, assign_splits, read_corpus, split_corpus
 from tcg_api.datasets.tables import (
     dataset_members,
+    centering_measurements,
     dataset_versions,
+    image_annotations,
     physical_copies,
     training_images,
 )
@@ -46,6 +48,8 @@ from tcg_api.datasets.versioning import (
     DatasetVersionRefused,
     Manifest,
     ManifestMember,
+    MemberAnnotation,
+    MemberCentering,
     create_version,
     manifest_path,
     read_manifest,
@@ -65,7 +69,13 @@ SEED = 20260828
 VERSION = "pokemon-condition-v0.1.0"
 
 
-def _member(identifier: str, split: DatasetSplit = DatasetSplit.TRAIN) -> ManifestMember:
+def _member(
+    identifier: str,
+    split: DatasetSplit = DatasetSplit.TRAIN,
+    *,
+    annotations: tuple[MemberAnnotation, ...] = (),
+    centering: tuple[MemberCentering, ...] = (),
+) -> ManifestMember:
     return ManifestMember(
         training_image_id=uuid.UUID(identifier),
         sha256=identifier.replace("-", "") * 2,
@@ -74,6 +84,42 @@ def _member(identifier: str, split: DatasetSplit = DatasetSplit.TRAIN) -> Manife
         source="first_party",
         acquisition_method="photographed_owned_slab",
         original_uri=f"training/{identifier}.png",
+        annotations=annotations,
+        centering=centering,
+    )
+
+
+def _annotation(
+    identifier: str,
+    *,
+    kind: str = "corner",
+    region: str | None = "top_left",
+    label: str = "whitening",
+    severity: str | None = "minor",
+    bbox: tuple[float, float, float, float] | None = None,
+    representation: str = "normalized",
+    minute: int = 0,
+) -> MemberAnnotation:
+    return MemberAnnotation(
+        id=uuid.UUID(identifier),
+        kind=kind,
+        region=region,
+        label=label,
+        severity=severity,
+        confidence=0.9,
+        bbox=bbox,
+        representation=representation,
+        created_at=datetime(2026, 8, 30, 9, minute, tzinfo=UTC),
+    )
+
+
+def _measurement(identifier: str, *, minute: int = 0) -> MemberCentering:
+    return MemberCentering(
+        id=uuid.UUID(identifier),
+        horizontal=0.55,
+        vertical=None,
+        confidence=0.9,
+        created_at=datetime(2026, 8, 30, 9, minute, tzinfo=UTC),
     )
 
 
@@ -171,7 +217,93 @@ def test_no_image_bytes_reach_the_manifest() -> None:
         "source",
         "acquisition_method",
         "original_uri",
+        "annotations",
+        "centering",
     }
+
+
+# ---------------------------------------------------------------------------
+# Annotations ride on the member — #157's pre-authorized shape, landed by #188
+# ---------------------------------------------------------------------------
+def test_an_unannotated_member_renders_empty_annotation_lists() -> None:
+    """Empty, never absent: a reader must not confuse "no rows" with an old file."""
+    entry = json.loads(render_manifest(_manifest(_member("00000000-0000-0000-0000-0000000000aa"))))[
+        "members"
+    ][0]
+
+    assert entry["annotations"] == []
+    assert entry["centering"] == []
+
+
+def test_a_rendered_annotation_carries_no_annotator_and_no_notes() -> None:
+    """§53's restraint over personal data covers the committed file too."""
+    member = _member(
+        "00000000-0000-0000-0000-0000000000aa",
+        annotations=(_annotation("00000000-0000-0000-0000-00000000a001"),),
+        centering=(_measurement("00000000-0000-0000-0000-00000000c001"),),
+    )
+
+    entry = json.loads(render_manifest(_manifest(member)))["members"][0]
+
+    marker = entry["annotations"][0]
+    assert set(marker) == {
+        "id",
+        "kind",
+        "region",
+        "label",
+        "severity",
+        "confidence",
+        "representation",
+        "created_at",
+    }
+    measurement = entry["centering"][0]
+    assert set(measurement) == {"id", "horizontal", "confidence", "created_at"}
+
+
+def test_annotation_optionals_are_absent_keys_rather_than_nulls() -> None:
+    """The `as_record()` convention: a bbox is four keys or no key at all."""
+    member = _member(
+        "00000000-0000-0000-0000-0000000000aa",
+        annotations=(
+            _annotation(
+                "00000000-0000-0000-0000-00000000a001",
+                kind="surface",
+                region=None,
+                label="stain",
+                bbox=(0.1, 0.2, 0.05, 0.05),
+            ),
+        ),
+    )
+
+    marker = json.loads(render_manifest(_manifest(member)))["members"][0]["annotations"][0]
+
+    assert "region" not in marker
+    assert marker["bbox"] == {"x": 0.1, "y": 0.2, "width": 0.05, "height": 0.05}
+
+
+def test_annotations_render_in_row_order_however_they_arrived() -> None:
+    """Ordered by (created_at, id), the append-only tables' own total order."""
+    first = _annotation("00000000-0000-0000-0000-00000000a001", minute=1)
+    second = _annotation("00000000-0000-0000-0000-00000000a002", minute=2)
+    one_way = _member("00000000-0000-0000-0000-0000000000aa", annotations=(first, second))
+    other_way = _member("00000000-0000-0000-0000-0000000000aa", annotations=(second, first))
+
+    assert render_manifest(_manifest(one_way)) == render_manifest(_manifest(other_way))
+
+    listed = json.loads(render_manifest(_manifest(one_way)))["members"][0]["annotations"]
+    assert [marker["id"] for marker in listed] == [str(first.id), str(second.id)]
+
+
+def test_a_measured_axis_renders_and_an_unmeasured_one_stays_absent() -> None:
+    member = _member(
+        "00000000-0000-0000-0000-0000000000aa",
+        centering=(_measurement("00000000-0000-0000-0000-00000000c001"),),
+    )
+
+    measurement = json.loads(render_manifest(_manifest(member)))["members"][0]["centering"][0]
+
+    assert measurement["horizontal"] == 0.55
+    assert "vertical" not in measurement
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +570,50 @@ def test_regenerating_a_manifest_reproduces_it_byte_for_byte(tmp_path: Path) -> 
     first = write_manifest(publish(VERSION), tmp_path).read_bytes()
     second = write_manifest(regenerate(VERSION), tmp_path).read_bytes()
 
+    assert first == second
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_annotated_member_carries_its_rows_and_regenerates_identically(
+    tmp_path: Path,
+) -> None:
+    """#188: the annotation rows ride on the member, straight from the tables."""
+    image_id = store(copy=copy_row())
+    execute(
+        sa.insert(image_annotations).values(
+            id=uuid.uuid4(),
+            training_image_id=image_id,
+            kind="corner",
+            region="top_left",
+            label="whitening",
+            severity="minor",
+            confidence=0.9,
+            representation="normalized",
+            annotator_id="annotator",
+        )
+    )
+    execute(
+        sa.insert(centering_measurements).values(
+            id=uuid.uuid4(),
+            training_image_id=image_id,
+            horizontal=0.55,
+            vertical=0.5,
+            confidence=0.9,
+            annotator_id="annotator",
+        )
+    )
+
+    manifest = publish(VERSION)
+
+    (member,) = manifest.members
+    (marker,) = member.annotations
+    assert (marker.kind, marker.region, marker.label) == ("corner", "top_left", "whitening")
+    assert marker.bbox is None
+    (measurement,) = member.centering
+    assert (measurement.horizontal, measurement.vertical) == (0.55, 0.5)
+    first = write_manifest(manifest, tmp_path).read_bytes()
+    second = write_manifest(regenerate(VERSION), tmp_path).read_bytes()
     assert first == second
 
 
