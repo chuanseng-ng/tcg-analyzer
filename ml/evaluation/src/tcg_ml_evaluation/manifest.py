@@ -18,6 +18,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from tcg_domain.annotation import AnnotationKind
 from tcg_domain.condition import BoundingBox, Representation
@@ -109,53 +110,44 @@ def load_manifest(text: str) -> EvaluationCorpus:
     )
 
 
-def _member(entry: dict[str, object]) -> CorpusMember:
+def _member(entry: dict[str, Any]) -> CorpusMember:
     return CorpusMember(
-        training_image_id=uuid.UUID(str(entry["training_image_id"])),
-        sha256=str(entry["sha256"]),
-        split=DatasetSplit(str(entry["split"])),
-        side=str(entry["side"]),
-        source=str(entry["source"]),
-        acquisition_method=str(entry["acquisition_method"]),
-        original_uri=str(entry["original_uri"]),
-        annotations=tuple(_annotation(marker) for marker in entry["annotations"]),  # type: ignore[union-attr]
-        centering=tuple(_centering(measurement) for measurement in entry["centering"]),  # type: ignore[union-attr]
+        training_image_id=uuid.UUID(entry["training_image_id"]),
+        sha256=entry["sha256"],
+        split=DatasetSplit(entry["split"]),
+        side=entry["side"],
+        source=entry["source"],
+        acquisition_method=entry["acquisition_method"],
+        original_uri=entry["original_uri"],
+        annotations=tuple(_annotation(marker) for marker in entry["annotations"]),
+        centering=tuple(_centering(measurement) for measurement in entry["centering"]),
     )
 
 
-def _annotation(marker: dict[str, object]) -> CorpusAnnotation:
+def _annotation(marker: dict[str, Any]) -> CorpusAnnotation:
     bbox = marker.get("bbox")
     return CorpusAnnotation(
-        id=uuid.UUID(str(marker["id"])),
-        kind=AnnotationKind(str(marker["kind"])),
-        region=str(marker["region"]) if "region" in marker else None,
-        label=str(marker["label"]),
-        severity=str(marker["severity"]) if "severity" in marker else None,
-        confidence=float(marker["confidence"]),  # type: ignore[arg-type]
+        id=uuid.UUID(marker["id"]),
+        kind=AnnotationKind(marker["kind"]),
+        region=marker.get("region"),
+        label=marker["label"],
+        severity=marker.get("severity"),
+        confidence=marker["confidence"],
         bbox=(
-            BoundingBox(
-                x=float(bbox["x"]),  # type: ignore[index]
-                y=float(bbox["y"]),  # type: ignore[index]
-                width=float(bbox["width"]),  # type: ignore[index]
-                height=float(bbox["height"]),  # type: ignore[index]
-            )
+            BoundingBox(x=bbox["x"], y=bbox["y"], width=bbox["width"], height=bbox["height"])
             if bbox is not None
             else None
         ),
-        representation=Representation(str(marker["representation"])),
-        created_at=datetime.fromisoformat(str(marker["created_at"])),
+        representation=Representation(marker["representation"]),
+        created_at=datetime.fromisoformat(marker["created_at"]),
     )
 
 
-def _centering(measurement: dict[str, object]) -> CorpusCentering:
+def _centering(measurement: dict[str, Any]) -> CorpusCentering:
     return CorpusCentering(
-        id=uuid.UUID(str(measurement["id"])),
-        horizontal=(
-            float(measurement["horizontal"]) if "horizontal" in measurement else None  # type: ignore[arg-type]
-        ),
-        vertical=(
-            float(measurement["vertical"]) if "vertical" in measurement else None  # type: ignore[arg-type]
-        ),
-        confidence=float(measurement["confidence"]),  # type: ignore[arg-type]
-        created_at=datetime.fromisoformat(str(measurement["created_at"])),
+        id=uuid.UUID(measurement["id"]),
+        horizontal=measurement.get("horizontal"),
+        vertical=measurement.get("vertical"),
+        confidence=measurement["confidence"],
+        created_at=datetime.fromisoformat(measurement["created_at"]),
     )

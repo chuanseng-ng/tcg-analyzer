@@ -79,10 +79,13 @@ def calibration_summary(events: Sequence[Event]) -> Uncertain[CalibrationSummary
 
     total = len(events)
     brier = sum((confidence - float(outcome)) ** 2 for confidence, outcome in events) / total
-    log_loss = -sum(
-        math.log(max(confidence if outcome else 1.0 - confidence, LOG_LOSS_EPSILON))
-        for confidence, outcome in events
-    ) / total
+    log_loss = (
+        -sum(
+            math.log(max(confidence if outcome else 1.0 - confidence, LOG_LOSS_EPSILON))
+            for confidence, outcome in events
+        )
+        / total
+    )
 
     binned: list[list[Event]] = [[] for _ in range(CALIBRATION_BINS)]
     for confidence, outcome in events:

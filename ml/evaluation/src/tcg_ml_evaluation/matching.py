@@ -60,9 +60,7 @@ def iou(a: BoundingBox, b: BoundingBox) -> float:
     return intersection / union
 
 
-def match_findings(
-    *, predicted: Sequence[LabelledBox], truth: Sequence[LabelledBox]
-) -> Matching:
+def match_findings(*, predicted: Sequence[LabelledBox], truth: Sequence[LabelledBox]) -> Matching:
     """Greedily pair findings, best overlap first, labels always agreeing.
 
     Boxed-vs-boxed pairs qualify at `IOU_THRESHOLD` or better; a pair where
