@@ -25,6 +25,16 @@ stored, because it is the only one derivable from nothing. Nothing is stamped at
 render time either — no generated-at, no application version — since either would
 make the first regeneration differ from the file it replaced.
 
+**Each member also carries its annotation rows** (#188): every
+`image_annotations` and `centering_measurements` row for the image, ordered by
+`(created_at, id)` and never collapsed — the newest row per `(kind, region)`
+being the current view is the *reader's* rule, applied by `ml/evaluation`.
+`annotator_id` and `notes` stay out of the committed file. Because those tables
+are append-only rather than frozen, the byte-identity invariant is
+same-database-state → same-bytes: annotating an image after its version was
+published changes the next render, which is a regeneration to re-commit, not
+drift.
+
 **This is what a dataset version may leave behind, and all of it.** ADR 0008
 makes `redistribution_allowed` false on every approved source, including the
 photographs this project took itself, so no dataset produced under it is ever

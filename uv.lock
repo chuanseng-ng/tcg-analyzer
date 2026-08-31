@@ -1352,6 +1352,7 @@ worker = [
     { name = "tcg-ml-condition" },
     { name = "tcg-ml-corners" },
     { name = "tcg-ml-edges" },
+    { name = "tcg-ml-evaluation" },
     { name = "tcg-ml-image-quality" },
     { name = "tcg-ml-normalization" },
     { name = "tcg-ml-surface" },
@@ -1379,6 +1380,7 @@ requires-dist = [
     { name = "tcg-ml-condition", marker = "extra == 'worker'", editable = "ml/condition" },
     { name = "tcg-ml-corners", marker = "extra == 'worker'", editable = "ml/corners" },
     { name = "tcg-ml-edges", marker = "extra == 'worker'", editable = "ml/edges" },
+    { name = "tcg-ml-evaluation", marker = "extra == 'worker'", editable = "ml/evaluation" },
     { name = "tcg-ml-image-quality", marker = "extra == 'worker'", editable = "ml/image-quality" },
     { name = "tcg-ml-normalization", marker = "extra == 'worker'", editable = "ml/normalization" },
     { name = "tcg-ml-surface", marker = "extra == 'worker'", editable = "ml/surface" },
@@ -1568,6 +1570,12 @@ requires-dist = [
 name = "tcg-ml-evaluation"
 version = "0.0.0"
 source = { editable = "ml/evaluation" }
+dependencies = [
+    { name = "tcg-domain" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tcg-domain", editable = "packages/domain" }]
 
 [[package]]
 name = "tcg-ml-grading-bgs"

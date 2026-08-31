@@ -56,7 +56,13 @@ from tcg_domain.dataset import DatasetSplit
 from tcg_api.config import get_settings
 from tcg_api.database import create_engine
 from tcg_api.datasets.splitting import SplitAssignment, split_corpus
-from tcg_api.datasets.tables import dataset_members, dataset_versions, training_images
+from tcg_api.datasets.tables import (
+    centering_measurements,
+    dataset_members,
+    dataset_versions,
+    image_annotations,
+    training_images,
+)
 from tcg_api.logging import configure_logging
 
 __all__ = [
@@ -65,6 +71,8 @@ __all__ = [
     "DatasetVersionRefused",
     "Manifest",
     "ManifestMember",
+    "MemberAnnotation",
+    "MemberCentering",
     "create_version",
     "main",
     "manifest_path",
@@ -118,6 +126,45 @@ class DatasetVersion:
 
 
 @dataclass(frozen=True, slots=True)
+class MemberAnnotation:
+    """One `image_annotations` row, as the manifest carries it — #188.
+
+    Everything a scorer needs and nothing else: `annotator_id` stays out of
+    the committed file (§53's restraint, and there is one annotator), and so
+    does `metadata`. `created_at` and `id` ride along because the tables are
+    append-only — a correction is a new row, the newest row per
+    `(kind, region)` is the current view, and the *reader* applies that rule;
+    the manifest renders every row rather than choosing a collapse.
+    """
+
+    id: uuid.UUID
+    kind: str
+    region: str | None
+    label: str
+    severity: str | None
+    confidence: float
+    bbox: tuple[float, float, float, float] | None
+    representation: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MemberCentering:
+    """One `centering_measurements` row, as the manifest carries it — #188.
+
+    `notes` stays out of the committed file: it is free text. An unmeasured
+    axis is `None` — §21's full-art and borderless layouts have no ratio on
+    an axis, and inventing `0.5` is the confidently-wrong output §2.7 forbids.
+    """
+
+    id: uuid.UUID
+    horizontal: float | None
+    vertical: float | None
+    confidence: float
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ManifestMember:
     """One image's line in a manifest.
 
@@ -125,6 +172,14 @@ class ManifestMember:
     provenance pair rides along so the class mix stays recomputable from the file
     itself, and `original_uri` so a training run can resolve the bytes without
     reading the database, which is what ADR 0009 requires of `ml/*`.
+
+    Since #188 the annotation rows ride along too — #157's pre-authorized
+    shape ("a field on `ManifestMember` and a regeneration, never a second
+    file"), because `ml/evaluation` scores against them and `ml/*` reads a
+    manifest, not the database. The rows render as they stand: annotating an
+    image after its version was published changes the next render, so the
+    byte-identity invariant is same-database-state → same-bytes, and a
+    post-publication annotation earns a regenerated, re-committed file.
     """
 
     training_image_id: uuid.UUID
@@ -134,6 +189,8 @@ class ManifestMember:
     source: str
     acquisition_method: str
     original_uri: str
+    annotations: tuple[MemberAnnotation, ...] = ()
+    centering: tuple[MemberCentering, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +351,72 @@ async def read_manifest(connection: AsyncConnection, *, version: str) -> Manifes
         .order_by(dataset_members.c.training_image_id)
     )
 
+    member_of = sa.select(dataset_members.c.training_image_id).where(
+        dataset_members.c.dataset_version_id == row.id
+    )
+    markers = await connection.execute(
+        sa.select(
+            image_annotations.c.training_image_id,
+            image_annotations.c.id,
+            image_annotations.c.kind,
+            image_annotations.c.region,
+            image_annotations.c.label,
+            image_annotations.c.severity,
+            image_annotations.c.confidence,
+            image_annotations.c.bbox_x,
+            image_annotations.c.bbox_y,
+            image_annotations.c.bbox_width,
+            image_annotations.c.bbox_height,
+            image_annotations.c.representation,
+            image_annotations.c.created_at,
+        )
+        .where(image_annotations.c.training_image_id.in_(member_of))
+        .order_by(image_annotations.c.created_at, image_annotations.c.id)
+    )
+    annotations_by_image: dict[uuid.UUID, list[MemberAnnotation]] = collections.defaultdict(list)
+    for marker in markers:
+        annotations_by_image[marker.training_image_id].append(
+            MemberAnnotation(
+                id=marker.id,
+                kind=marker.kind,
+                region=marker.region,
+                label=marker.label,
+                severity=marker.severity,
+                confidence=marker.confidence,
+                bbox=(
+                    None
+                    if marker.bbox_x is None
+                    else (marker.bbox_x, marker.bbox_y, marker.bbox_width, marker.bbox_height)
+                ),
+                representation=marker.representation,
+                created_at=marker.created_at,
+            )
+        )
+
+    measurements = await connection.execute(
+        sa.select(
+            centering_measurements.c.training_image_id,
+            centering_measurements.c.id,
+            centering_measurements.c.horizontal,
+            centering_measurements.c.vertical,
+            centering_measurements.c.confidence,
+            centering_measurements.c.created_at,
+        )
+        .where(centering_measurements.c.training_image_id.in_(member_of))
+        .order_by(centering_measurements.c.created_at, centering_measurements.c.id)
+    )
+    centering_by_image: dict[uuid.UUID, list[MemberCentering]] = collections.defaultdict(list)
+    for measurement in measurements:
+        centering_by_image[measurement.training_image_id].append(
+            MemberCentering(
+                id=measurement.id,
+                horizontal=measurement.horizontal,
+                vertical=measurement.vertical,
+                confidence=measurement.confidence,
+                created_at=measurement.created_at,
+            )
+        )
+
     return Manifest(
         version=DatasetVersion(
             id=row.id,
@@ -311,6 +434,8 @@ async def read_manifest(connection: AsyncConnection, *, version: str) -> Manifes
                 source=member.source,
                 acquisition_method=member.acquisition_method,
                 original_uri=member.original_uri,
+                annotations=tuple(annotations_by_image.get(member.training_image_id, ())),
+                centering=tuple(centering_by_image.get(member.training_image_id, ())),
             )
             for member in members
         ),
@@ -349,11 +474,60 @@ def render_manifest(manifest: Manifest) -> str:
                 "source": member.source,
                 "acquisition_method": member.acquisition_method,
                 "original_uri": member.original_uri,
+                # Empty lists rather than absent keys, so a reader can tell "no
+                # rows" from a file rendered before #188 added the fields.
+                "annotations": [
+                    _annotation_entry(marker)
+                    for marker in sorted(
+                        member.annotations, key=lambda marker: (marker.created_at, str(marker.id))
+                    )
+                ],
+                "centering": [
+                    _centering_entry(measurement)
+                    for measurement in sorted(
+                        member.centering,
+                        key=lambda measurement: (measurement.created_at, str(measurement.id)),
+                    )
+                ],
             }
             for member in sorted(manifest.members, key=lambda member: str(member.training_image_id))
         ],
     }
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def _annotation_entry(marker: MemberAnnotation) -> dict[str, object]:
+    """One marker as JSON — absent optionals are absent keys, `as_record()`'s rule."""
+    entry: dict[str, object] = {
+        "id": str(marker.id),
+        "kind": marker.kind,
+        "label": marker.label,
+        "confidence": marker.confidence,
+        "representation": marker.representation,
+        "created_at": marker.created_at.isoformat(),
+    }
+    if marker.region is not None:
+        entry["region"] = marker.region
+    if marker.severity is not None:
+        entry["severity"] = marker.severity
+    if marker.bbox is not None:
+        x, y, width, height = marker.bbox
+        entry["bbox"] = {"x": x, "y": y, "width": width, "height": height}
+    return entry
+
+
+def _centering_entry(measurement: MemberCentering) -> dict[str, object]:
+    """One measurement as JSON — an unmeasured axis is an absent key."""
+    entry: dict[str, object] = {
+        "id": str(measurement.id),
+        "confidence": measurement.confidence,
+        "created_at": measurement.created_at.isoformat(),
+    }
+    if measurement.horizontal is not None:
+        entry["horizontal"] = measurement.horizontal
+    if measurement.vertical is not None:
+        entry["vertical"] = measurement.vertical
+    return entry
 
 
 def manifest_path(version: str, directory: Path = MANIFESTS_DIR) -> Path:
