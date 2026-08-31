@@ -10,16 +10,248 @@ refuse.
 
 from __future__ import annotations
 
+import json
+import uuid
+from datetime import UTC, datetime
+
 import pytest
 from tcg_domain import InsufficientInformation
-from tcg_domain.condition import BoundingBox
+from tcg_domain.annotation import AnnotationKind
+from tcg_domain.condition import BoundingBox, Representation
+from tcg_domain.dataset import DatasetSplit
 from tcg_ml_evaluation.calibration import (
     CALIBRATION_BINS,
     CalibrationSummary,
     calibration_summary,
 )
+from tcg_ml_evaluation.manifest import (
+    CorpusAnnotation,
+    CorpusCentering,
+    CorpusMember,
+    EvaluationCorpus,
+    load_manifest,
+)
 from tcg_ml_evaluation.matching import IOU_THRESHOLD, iou, match_findings
 from tcg_ml_evaluation.metrics import class_metrics, error_summary
+from tcg_ml_evaluation.truth import current_view, is_worked_on, newest_centering, surface_truth
+
+
+def _manifest_payload() -> dict[str, object]:
+    """A two-member manifest in the committed file's own shape."""
+    return {
+        "dataset_version": "pokemon-condition-v0.1.0",
+        "split_seed": 1,
+        "members": [
+            {
+                "training_image_id": "00000000-0000-0000-0000-0000000000aa",
+                "sha256": "aa" * 32,
+                "split": "test",
+                "side": "front",
+                "source": "first_party",
+                "acquisition_method": "photographed_before_submission",
+                "original_uri": "training/aa.png",
+                "annotations": [
+                    {
+                        "id": "00000000-0000-0000-0000-00000000a001",
+                        "kind": "corner",
+                        "region": "top_left",
+                        "label": "whitening",
+                        "severity": "minor",
+                        "confidence": 0.9,
+                        "representation": "normalized",
+                        "created_at": "2026-08-30T09:00:00+00:00",
+                        "bbox": {"x": 0.0, "y": 0.0, "width": 0.1, "height": 0.1},
+                    }
+                ],
+                "centering": [
+                    {
+                        "id": "00000000-0000-0000-0000-00000000c001",
+                        "horizontal": 0.55,
+                        "confidence": 0.9,
+                        "created_at": "2026-08-30T09:00:00+00:00",
+                    }
+                ],
+            },
+            {
+                "training_image_id": "00000000-0000-0000-0000-0000000000ab",
+                "sha256": "ab" * 32,
+                "split": "train",
+                "side": "back",
+                "source": "first_party",
+                "acquisition_method": "photographed_before_submission",
+                "original_uri": "training/ab.png",
+                "annotations": [],
+                "centering": [],
+            },
+        ],
+    }
+
+
+def _annotation(
+    *,
+    kind: AnnotationKind = AnnotationKind.CORNER,
+    region: str | None = "top_left",
+    label: str = "whitening",
+    representation: Representation = Representation.NORMALIZED,
+    minute: int = 0,
+    identifier: str = "00000000-0000-0000-0000-00000000a001",
+) -> CorpusAnnotation:
+    return CorpusAnnotation(
+        id=uuid.UUID(identifier),
+        kind=kind,
+        region=region,
+        label=label,
+        severity="minor",
+        confidence=0.9,
+        bbox=None,
+        representation=representation,
+        created_at=datetime(2026, 8, 30, 9, minute, tzinfo=UTC),
+    )
+
+
+def _corpus_member(
+    *,
+    annotations: tuple[CorpusAnnotation, ...] = (),
+    centering: tuple[CorpusCentering, ...] = (),
+) -> CorpusMember:
+    return CorpusMember(
+        training_image_id=uuid.UUID("00000000-0000-0000-0000-0000000000aa"),
+        sha256="aa" * 32,
+        split=DatasetSplit.TEST,
+        side="front",
+        source="first_party",
+        acquisition_method="photographed_before_submission",
+        original_uri="training/aa.png",
+        annotations=annotations,
+        centering=centering,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The manifest is the seam — ml/* reads the file, never the database
+# ---------------------------------------------------------------------------
+def test_a_manifest_round_trips_into_typed_members() -> None:
+    corpus = load_manifest(json.dumps(_manifest_payload()))
+
+    assert isinstance(corpus, EvaluationCorpus)
+    assert corpus.dataset_version == "pokemon-condition-v0.1.0"
+    assert corpus.split_seed == 1
+    annotated, bare = corpus.members
+    assert annotated.split is DatasetSplit.TEST
+    (marker,) = annotated.annotations
+    assert marker.kind is AnnotationKind.CORNER
+    assert marker.representation is Representation.NORMALIZED
+    assert marker.bbox == BoundingBox(x=0.0, y=0.0, width=0.1, height=0.1)
+    (measurement,) = annotated.centering
+    assert measurement.horizontal == 0.55
+    assert measurement.vertical is None
+    assert bare.annotations == ()
+
+
+def test_a_manifest_with_no_members_is_refused() -> None:
+    payload = _manifest_payload()
+    payload["members"] = []
+
+    with pytest.raises(ValueError, match="no members"):
+        load_manifest(json.dumps(payload))
+
+
+def test_a_manifest_rendered_before_the_annotation_fields_is_refused() -> None:
+    """An old file silently read as 'no annotations' would score everything clean."""
+    payload = _manifest_payload()
+    for member in payload["members"]:  # type: ignore[union-attr]
+        del member["annotations"]
+        del member["centering"]
+
+    with pytest.raises(ValueError, match="regenerate"):
+        load_manifest(json.dumps(payload))
+
+
+# ---------------------------------------------------------------------------
+# The truth protocol: newest row wins, absence is clean only when worked on
+# ---------------------------------------------------------------------------
+def test_an_image_with_any_row_is_worked_on_and_one_with_none_is_not() -> None:
+    assert not is_worked_on(_corpus_member())
+    assert is_worked_on(_corpus_member(annotations=(_annotation(),)))
+    assert is_worked_on(
+        _corpus_member(
+            centering=(
+                CorpusCentering(
+                    id=uuid.UUID("00000000-0000-0000-0000-00000000c001"),
+                    horizontal=0.55,
+                    vertical=None,
+                    confidence=0.9,
+                    created_at=datetime(2026, 8, 30, 9, 0, tzinfo=UTC),
+                ),
+            )
+        )
+    )
+
+
+def test_the_newest_row_per_region_is_the_current_view() -> None:
+    """A correction is a new row; the older one must not double-count."""
+    older = _annotation(label="whitening", minute=0)
+    newer = _annotation(
+        label="clean", minute=1, identifier="00000000-0000-0000-0000-00000000a002"
+    )
+
+    view = current_view(_corpus_member(annotations=(newer, older)))
+
+    assert view[(AnnotationKind.CORNER, "top_left")].label == "clean"
+
+
+def test_surface_rows_are_never_collapsed_into_a_current_view() -> None:
+    """A surface has as many defects as it has rows; two stains are two truths."""
+    first = _annotation(
+        kind=AnnotationKind.SURFACE, region=None, label="stain", minute=0
+    )
+    second = _annotation(
+        kind=AnnotationKind.SURFACE,
+        region=None,
+        label="stain",
+        minute=1,
+        identifier="00000000-0000-0000-0000-00000000a002",
+    )
+    member = _corpus_member(annotations=(first, second))
+
+    assert current_view(member) == {}
+    assert surface_truth(member, representation=Representation.NORMALIZED) == (first, second)
+
+
+def test_surface_truth_filters_by_declared_frame_and_never_converts() -> None:
+    """#175: the frames relate by a projective warp; a reader filters, never projects."""
+    artifact_row = _annotation(kind=AnnotationKind.SURFACE, region=None, label="stain")
+    original_row = _annotation(
+        kind=AnnotationKind.SURFACE,
+        region=None,
+        label="scratch",
+        representation=Representation.ORIGINAL,
+        identifier="00000000-0000-0000-0000-00000000a002",
+    )
+    member = _corpus_member(annotations=(artifact_row, original_row))
+
+    assert surface_truth(member, representation=Representation.NORMALIZED) == (artifact_row,)
+    assert surface_truth(member, representation=Representation.ORIGINAL) == (original_row,)
+
+
+def test_the_newest_centering_measurement_is_the_current_reading() -> None:
+    older = CorpusCentering(
+        id=uuid.UUID("00000000-0000-0000-0000-00000000c001"),
+        horizontal=0.5,
+        vertical=0.5,
+        confidence=0.9,
+        created_at=datetime(2026, 8, 30, 9, 0, tzinfo=UTC),
+    )
+    newer = CorpusCentering(
+        id=uuid.UUID("00000000-0000-0000-0000-00000000c002"),
+        horizontal=0.6,
+        vertical=None,
+        confidence=0.9,
+        created_at=datetime(2026, 8, 30, 9, 1, tzinfo=UTC),
+    )
+
+    assert newest_centering(_corpus_member(centering=(newer, older))) == newer
+    assert newest_centering(_corpus_member()) is None
 
 
 # ---------------------------------------------------------------------------
