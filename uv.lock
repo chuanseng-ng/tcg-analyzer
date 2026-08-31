@@ -1348,8 +1348,13 @@ dependencies = [
 [package.optional-dependencies]
 worker = [
     { name = "tcg-ml-card-detection" },
+    { name = "tcg-ml-centering" },
+    { name = "tcg-ml-condition" },
+    { name = "tcg-ml-corners" },
+    { name = "tcg-ml-edges" },
     { name = "tcg-ml-image-quality" },
     { name = "tcg-ml-normalization" },
+    { name = "tcg-ml-surface" },
 ]
 
 [package.metadata]
@@ -1370,8 +1375,13 @@ requires-dist = [
     { name = "tcg-grading-companies", editable = "packages/grading-companies" },
     { name = "tcg-market-data", editable = "packages/market-data" },
     { name = "tcg-ml-card-detection", marker = "extra == 'worker'", editable = "ml/card-detection" },
+    { name = "tcg-ml-centering", marker = "extra == 'worker'", editable = "ml/centering" },
+    { name = "tcg-ml-condition", marker = "extra == 'worker'", editable = "ml/condition" },
+    { name = "tcg-ml-corners", marker = "extra == 'worker'", editable = "ml/corners" },
+    { name = "tcg-ml-edges", marker = "extra == 'worker'", editable = "ml/edges" },
     { name = "tcg-ml-image-quality", marker = "extra == 'worker'", editable = "ml/image-quality" },
     { name = "tcg-ml-normalization", marker = "extra == 'worker'", editable = "ml/normalization" },
+    { name = "tcg-ml-surface", marker = "extra == 'worker'", editable = "ml/surface" },
     { name = "tcg-shared", editable = "packages/shared" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.3" },
 ]

@@ -19,7 +19,8 @@
 # cannot drift from the API that enqueued to it.
 #
 # What holds the split up at runtime is that `tcg_api.analysis.jobs` imports the
-# gate's wiring inside `_advance` rather than at module scope. The API imports
+# gate's and the condition step's wiring inside `_advance` rather than at module
+# scope. The API imports
 # `jobs` merely to enqueue, so a module-level import would drag OpenCV into an
 # image that does not have it and the container would fail to start.
 # `services/api/tests/test_import_purity.py` asserts it.
