@@ -533,9 +533,7 @@ def _defect_record(defect: Defect) -> dict[str, object]:
             else {"bounding_box": _box_record(defect.bounding_box)}
         ),
         **(
-            {}
-            if defect.polygon is None
-            else {"polygon": [list(point) for point in defect.polygon]}
+            {} if defect.polygon is None else {"polygon": [list(point) for point in defect.polygon]}
         ),
         **({} if not defect.metadata else {"metadata": dict(defect.metadata)}),
     }
@@ -558,7 +556,9 @@ def _centering_record(centering: Centering) -> dict[str, object]:
     record: dict[str, object] = {}
     for name in _RATIO_FIELDS:
         ratio = getattr(centering, name)
-        record[name] = _refusal_record(ratio) if isinstance(ratio, InsufficientInformation) else ratio
+        record[name] = (
+            _refusal_record(ratio) if isinstance(ratio, InsufficientInformation) else ratio
+        )
     record["confidence"] = centering.confidence.value
     return record
 

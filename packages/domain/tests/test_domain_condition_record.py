@@ -243,9 +243,7 @@ def test_a_class_level_refusal_travels_under_its_label() -> None:
 
     surface = record["surface"]
     assert isinstance(surface, dict)
-    assert surface["front"]["not_assessed"] == {
-        "scratch": {"insufficient_information": "adr_0010"}
-    }
+    assert surface["front"]["not_assessed"] == {"scratch": {"insufficient_information": "adr_0010"}}
 
 
 def test_a_finding_with_a_severity_and_a_box_carries_both() -> None:
@@ -258,9 +256,7 @@ def test_a_finding_with_a_severity_and_a_box_carries_both() -> None:
     )
     edges = dict(sound_edges())
     edges[EdgeRegion.TOP] = worn
-    record = assessment(
-        edges={ImageSide.FRONT: edges, ImageSide.BACK: sound_edges()}
-    ).as_record()
+    record = assessment(edges={ImageSide.FRONT: edges, ImageSide.BACK: sound_edges()}).as_record()
 
     top = record["edges"]["front"]["top"]
     assert top == {
@@ -305,9 +301,7 @@ def test_the_card_frame_comes_from_the_stored_record() -> None:
         }
     )
 
-    assert frame == BoundingBox(
-        x=24 / 804, y=24 / 1104, width=756 / 804, height=1056 / 1104
-    )
+    assert frame == BoundingBox(x=24 / 804, y=24 / 1104, width=756 / 804, height=1056 / 1104)
 
 
 def test_a_record_with_no_margin_keys_is_a_pre_194_artifact() -> None:
