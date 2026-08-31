@@ -242,6 +242,28 @@ def test_the_normalization_pass_is_the_module_that_binds_to_opencv() -> None:
     assert {"tcg_ml_card_detection", "tcg_ml_normalization"} <= set(stages), stages
 
 
+def test_the_evaluation_runner_is_the_module_that_binds_the_benchmark() -> None:
+    """Guard the guard for #188's runner, on the normalization test's terms.
+
+    `tcg_api.datasets.evaluation` runs the four analyzers over a corpus, so it
+    is a module that *may* reach OpenCV — and it must actually reach
+    `tcg_ml_evaluation` too, or the worker-image CI assertion about that
+    package would be asserting an installation nothing exercises.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.evaluation")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.evaluation")
+
+    assert "cv2" in cv
+    assert {
+        "tcg_ml_centering",
+        "tcg_ml_condition",
+        "tcg_ml_corners",
+        "tcg_ml_edges",
+        "tcg_ml_evaluation",
+        "tcg_ml_surface",
+    } <= set(stages), stages
+
+
 def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
     """#159's read layer serves stored columns and a stored object, and nothing else.
 

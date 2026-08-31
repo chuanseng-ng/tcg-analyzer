@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Types
-        run: uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src packages/economic-engine/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src ml/centering/src ml/corners/src ml/edges/src ml/surface/src ml/condition/src
+        run: uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src packages/economic-engine/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src ml/centering/src ml/corners/src ml/edges/src ml/surface/src ml/condition/src ml/evaluation/src
 
       # Tests needing a live service are deselected here and covered by the jobs
       # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
@@ -322,6 +322,7 @@ jobs:
           $COMPOSE exec -T worker python -c "
           import cv2, tcg_ml_card_detection, tcg_ml_image_quality, tcg_ml_normalization
           import tcg_ml_centering, tcg_ml_condition, tcg_ml_corners, tcg_ml_edges, tcg_ml_surface
+          import tcg_ml_evaluation
           print(cv2.__version__)"
 
           # Deliberately not `! $COMPOSE exec ... python -c "import cv2"`.
@@ -330,11 +331,12 @@ jobs:
           # whichever way the import went — which is the failure mode this step
           # exists to catch. Assert on what the interpreter said instead.
           #
-          # All eight, because the split is one `--extra worker` and a package
+          # All nine, because the split is one `--extra worker` and a package
           # left out of it is an ImportError the API container only finds at
           # startup.
           for module in cv2 tcg_ml_image_quality tcg_ml_card_detection tcg_ml_normalization \
-              tcg_ml_centering tcg_ml_condition tcg_ml_corners tcg_ml_edges tcg_ml_surface; do
+              tcg_ml_centering tcg_ml_condition tcg_ml_corners tcg_ml_edges tcg_ml_surface \
+              tcg_ml_evaluation; do
             present=$($COMPOSE exec -T api python -c "
           try:
               import $module

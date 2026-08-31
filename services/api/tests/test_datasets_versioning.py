@@ -36,8 +36,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.datasets import versioning
 from tcg_api.datasets.splitting import CorpusImage, assign_splits, read_corpus, split_corpus
 from tcg_api.datasets.tables import (
-    dataset_members,
     centering_measurements,
+    dataset_members,
     dataset_versions,
     image_annotations,
     physical_copies,
