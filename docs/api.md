@@ -11,7 +11,13 @@ Run it against a local database and object store:
 uv run uvicorn tcg_api.main:app --reload   # API on http://localhost:8000
 ```
 
-`GET /health` reports the service status and the application version,
+`GET /health` reports the service status and the application version. It is
+**dependency-free by design** and must stay that way: it answers whether the
+process is alive, so acquiring a database or network dependency there would make
+a liveness probe fail for a reason liveness is not about. Dependency checks belong
+to `GET /readiness`, which answers 200 when the service can serve traffic and 503
+with `checks.database = "unavailable"` when it cannot.
+
 `GET /catalog/version` reports which card catalog the deployment is serving,
 `GET /cards/search` finds cards in it, and
 `GET /cards/{id}` returns the canonical detail for one card — its name, set, card
@@ -110,6 +116,55 @@ states move forwards only, so there is no second confirmation and no changing
 the card afterwards — both are a 409, and a card chosen in error is corrected by
 starting a new analysis.
 
+`POST /analyses/{id}/economic-configuration` records the economics of the
+decision (spec §45, §46, §43): the six cost line items, the optional acquisition
+cost, the companies to compare and the optimization mode. **Every cost field is
+optional and the endpoint fills it from the engine's own defaults**, so no
+frontend carries a second copy of them — and the amounts that were actually used
+come back on the 201, which is where a screen reads them from.
+
+**An absent acquisition cost is not zero.** Omitting it is reported later as
+`acquisition_cost_not_supplied`, while `"0.00"` is a real acquisition cost
+somebody typed; collapsing the two would answer spec §45's second question with a
+figure nobody supplied. Amounts are decimal **strings** in both directions and a
+JSON number is refused, because binary floating point cannot represent money the
+domain quantises to the cent.
+
+A configuration is accepted **only while the analysis is `analyzing`** — spec
+§5's position for this step, which `confirm-card` is what reaches — and **exactly
+once**. A second submission is a 409, and the arbiter is a conditional `UPDATE`
+rather than the state read before it, so two concurrent submissions cannot both
+win. Spec §44's five recommendation thresholds are **stored and reported but
+never accepted**: no client gets to gate its own recommendation. A malformed
+request — a negative amount, a selling-fee rate outside `[0, 1]`, an unknown
+company, an unknown mode — is FastAPI's own 422, validated by the economic engine
+itself; spec §66 has no code for a malformed request and a ninth is not invented
+for one.
+
+`GET /analyses/{id}/results` returns the economics and the recommendation (spec
+§41, §44, §49). **The two spec §41 figures are separately named and share no
+field name**: `incremental_grading_decision` answers "should I grade the card I
+own?" and `investment_return` answers "did buying it to grade make money?", with
+`incremental_roi` and `investment_roi` beside them. **Nothing is called `roi`
+alone and nothing is a cost total** — the two questions have different
+denominators ([ADR 0007](adr/0007-roi-and-the-capital-at-risk-basis.md)), and a
+shared field name is the conflation §41 forbids. Each figure is present-and-null
+beside its own reason string rather than absent, so a client cannot mistake "we
+could not compute this" for "we did not try".
+
+The **full** grade distribution travels (spec §2.1), never only an expected
+grade, and `reason` is `code`/`figure`/`value`/`threshold` with no message
+field — spec §50 forbids an explanation unrelated to the evidence, so the copy is
+the frontend's to write from those four fields. The response echoes the analysis's
+own spec §57 record, including the market snapshot it was computed against, which
+is what ADR 0006 requires the UI to date-stamp. `Cache-Control: no-store`, for
+the same reason `GET /cards/{id}/market` is.
+
+**Today `companies` is `[]` and `recommendation` is `null` in every
+deployment**, because nothing predicts a grade yet. That `null` is deliberately
+not spec §44's `insufficient_information`: the engine has not declined to
+recommend, it has not been asked.
+
 The four writes — `POST /analyses`, `POST /analyses/{id}/images`,
 `POST /analyses/{id}/confirm-card` and
 `POST /analyses/{id}/run` — are rate-limited
@@ -124,6 +179,34 @@ see [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). Polling
 through rather than refusing them. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
 from `.env` — see [Configuration](../README.md#configuration).
+
+## Which store failed
+
+Spec §66's taxonomy is closed at eight codes, and `provider_error` is the one a
+store's unavailability raises. Eight codes cannot say *which* store was down, so
+`details.reason` does — and each one is deliberately distinct, because the whole
+point of the field is that an operator reading a log can tell a Redis outage from
+a Postgres outage without correlating timestamps.
+
+| `details.reason` | Raised when |
+| --- | --- |
+| `catalog_unreachable` | the catalog reads (`/catalog/version`, `/cards/*`, and `confirm-card`, which resolves against it) |
+| `no_catalog_version_registered` | `/catalog/version` with an empty `card_database_versions` |
+| `grading_rules_unreachable` | `/grading-companies` — the 503 carries no cache header |
+| `analysis_store_unreachable` | any analysis read or write |
+| `image_store_unreachable` | the object store, on upload and on the annotation bytes route |
+| `job_queue_unreachable` | `POST /analyses/{id}/run` with Redis down or unset — deliberately not the analysis store's reason |
+| `market_store_unreachable` | `/cards/{id}/market` — deliberately not `market_data_unreachable`, since the same route also raises §66's `market_data_unavailable`, and the two must stay unmistakable in a log |
+| `economic_configuration_store_unreachable` | `POST /analyses/{id}/economic-configuration` |
+| `dataset_store_unreachable` | the `/internal/annotation` routes |
+| `stored_object_missing` | an annotation row naming bytes the store does not hold — a **500** `internal_error`, not a 503, because two stores disagreeing will not come right on a retry |
+
+Caching follows from what a body claims rather than from how expensive it was to
+build. `GET /grading-companies` is `public, max-age=3600` — slow-moving reference
+data. `GET /cards/{id}/market` and `GET /analyses/{id}/results` are `no-store`,
+because both report a freshness figure computed at the moment of asking, and a
+cached body would report an age frozen when it was built. The annotation bytes
+are `private, no-store`. Everything else sends no cache header at all.
 
 `/internal/annotation` is **not part of spec §64**. §64's endpoints are the
 consumer product; this is the internal surface `apps/annotation` reads — a work
