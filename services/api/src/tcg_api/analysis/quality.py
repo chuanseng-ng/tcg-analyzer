@@ -47,6 +47,7 @@ from tcg_domain.analysis import ImageSide, QualityStatus
 from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.image_quality import QualityReport, worst_status
 from tcg_ml_card_detection import CARD_DETECTION_VERSION, detect
+from tcg_ml_condition import CONDITION_VERSION
 from tcg_ml_image_quality import IMAGE_QUALITY_VERSION, assess
 from tcg_ml_normalization import (
     MEDIA_TYPE,
@@ -89,8 +90,13 @@ NORMALIZED_NAMESPACE = "normalized"
 #: `cv2.__version__` in here would make that automatic and would also discard
 #: every cached artifact on any dependency refresh, patch releases included —
 #: which is most of what a cache is for. The lockfile diff is the review gate.
+#: The condition step joined the composition with #187, so a condition-package
+#: bump invalidates cached verdicts exactly as detection and quality bumps do.
+#: The cache replays per-image rows and the condition document is
+#: per-analysis, so the join buys invalidation consistency, not condition
+#: reuse — `assess_condition` always runs.
 PIPELINE_VERSION: Final = "+".join(
-    (IMAGE_QUALITY_VERSION, CARD_DETECTION_VERSION, NORMALIZATION_VERSION)
+    (IMAGE_QUALITY_VERSION, CARD_DETECTION_VERSION, NORMALIZATION_VERSION, CONDITION_VERSION)
 )
 
 

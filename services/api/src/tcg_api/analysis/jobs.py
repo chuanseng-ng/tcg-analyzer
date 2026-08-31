@@ -259,6 +259,12 @@ async def _advance(analysis_id: UUID) -> bool:
             # a subscription that is not yet active, so nothing has ingested and
             # there is no snapshot. Never a fabricated one.
             snapshot = await current_snapshot(db)
+            # Imported *here*, not at the top of the module, exactly like the
+            # gate below: `tcg_ml_condition` pulls the four axis analyzers and
+            # with them OpenCV, and `routers/analyses.py` imports this file to
+            # enqueue. See `tcg_api.analysis.condition`.
+            from tcg_api.analysis.condition import CONDITION_VERSION, assess_condition
+
             await record_reproducibility(
                 db,
                 analysis_id,
@@ -268,6 +274,12 @@ async def _advance(analysis_id: UUID) -> bool:
                 application_version=application_version(),
                 card_database_version=None if current_catalog is None else current_catalog.version,
                 market_snapshot_id=None if snapshot is None else snapshot.id,
+                # A compile-time constant of the condition packages, so it is
+                # resolvable at the claim like every other §57 field — and
+                # recorded whether or not the run reaches the condition step,
+                # because the record says which versions were in force, not
+                # which stages completed (#187).
+                model_bundle_version=CONDITION_VERSION,
             )
 
             # Spec §18 puts the quality gate here, before anything looks for a
@@ -294,6 +306,15 @@ async def _advance(analysis_id: UUID) -> bool:
                     quality_status=str(verdict),
                 )
                 return True
+
+            # The condition step — M7's acceptance criterion (#187): both sides'
+            # artifacts in, one recorded assessment out, uncertainty included. It
+            # runs for every analysis the gate lets through (`poor` continues,
+            # per §19) and inside the claim, so the document lands in the same
+            # transaction as the transition below. It never consults the card's
+            # identity — the representation is neutral by the master
+            # architectural rule — which is why it can run before confirmation.
+            await assess_condition(db, analysis_id)
 
             # Where identification would run. It does not exist in any decomposed
             # milestone yet, so the analysis reaches the confirmation gate with no

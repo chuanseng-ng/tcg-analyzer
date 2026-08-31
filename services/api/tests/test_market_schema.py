@@ -780,6 +780,7 @@ def test_an_analysis_records_and_re_resolves_its_snapshot(catalog_and_provider: 
             application_version="0.1.0",
             card_database_version=None,
             market_snapshot_id=snapshot.id,
+            model_bundle_version="condition-compose-test-v0",
         )
     )
 
