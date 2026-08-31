@@ -17,14 +17,17 @@ continues but the user must be told. The M2 implementation is OpenCV heuristics
 in `ml/image-quality`, and M7 replaces it with a model behind the same
 signature.
 
-Six of §19's eleven conditions are measured from the pixels alone — blur, low
-resolution, glare, poor exposure, excessive darkness, excessive brightness. The
-other five all reduce to "where is the card", and are answered from the card
-boundary the detector below supplies. Without one they are reported
-**undetermined with a reason** rather than guessed, and a photograph with five
-conditions unchecked cannot be `good` however sharp it is: the best available
-verdict is `acceptable`, which here means "nothing wrong found, and something
-not looked at".
+Five of §19's eleven conditions are measured from the frame alone — blur, low
+resolution, poor exposure, excessive darkness, excessive brightness. The other
+six need the card boundary the detector below supplies. Five of those are
+questions about the boundary itself; **glare is the sixth**, and it is a
+measurement of pixels like the five above it, but of the card's pixels —
+reflection is a property of the card's surface, and measured over the whole
+frame it is diluted by whatever the card is lying on. Without a boundary all six
+are reported **undetermined with a reason** rather than guessed, and a
+photograph with six conditions unchecked cannot be `good` however sharp it is:
+the best available verdict is `acceptable`, which here means "nothing wrong
+found, and something not looked at".
 
 Every verdict is persisted on `images` — the status, a `[0, 1]` score and all
 eleven findings — and served by `GET /analyses/{id}`, which is what lets

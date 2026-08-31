@@ -74,12 +74,16 @@ def jpeg(image: NDArray[np.uint8]) -> bytes:
     return bytes(buffer)
 
 
-def verdict(data: bytes, condition: QualityCondition) -> ConditionVerdict:
-    return assess(data).of(condition).verdict
+def verdict(
+    data: bytes, condition: QualityCondition, geometry: CardGeometry | None = None
+) -> ConditionVerdict:
+    return assess(data, geometry=geometry).of(condition).verdict
 
 
-def severity(data: bytes, condition: QualityCondition) -> QualityStatus | None:
-    return assess(data).of(condition).severity
+def severity(
+    data: bytes, condition: QualityCondition, geometry: CardGeometry | None = None
+) -> QualityStatus | None:
+    return assess(data, geometry=geometry).of(condition).severity
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +91,7 @@ def severity(data: bytes, condition: QualityCondition) -> QualityStatus | None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_ordinary_photograph_trips_none_of_the_six() -> None:
+def test_an_ordinary_photograph_trips_none_of_the_five() -> None:
     report = assess(png(a_photograph()))
     tripped = [
         str(finding.condition)
@@ -112,7 +116,7 @@ def test_bytes_that_do_not_decode_are_a_job_failure_rather_than_a_verdict() -> N
 
 
 # ---------------------------------------------------------------------------
-# The six conditions this gate decides
+# The five conditions the frame alone decides
 # ---------------------------------------------------------------------------
 
 
@@ -169,37 +173,8 @@ def test_a_flat_histogram_is_poor_exposure() -> None:
     assert verdict(png(flat), QualityCondition.POOR_EXPOSURE) is ConditionVerdict.DETECTED
 
 
-def test_one_specular_blob_is_glare() -> None:
-    glared = a_photograph()
-    cv2.circle(glared, (600, 800), 110, (255, 255, 255), thickness=-1)
-
-    assert verdict(png(glared), QualityCondition.GLARE) is ConditionVerdict.DETECTED
-
-
-def test_scattered_saturated_pixels_are_not_glare() -> None:
-    """The measure is the largest *connected* region, not the saturated fraction.
-
-    A card with a white border on a white desk saturates a great deal of the
-    frame and has no glare at all; measuring the total would refuse it.
-    """
-    speckled = a_photograph()
-    rng = np.random.default_rng(2)
-    ys = rng.integers(0, SIZE[0], size=40_000)
-    xs = rng.integers(0, SIZE[1], size=40_000)
-    speckled[ys, xs] = 255
-
-    assert verdict(png(speckled), QualityCondition.GLARE) is ConditionVerdict.CLEAR
-
-
-def test_a_large_specular_blob_is_unusable() -> None:
-    glared = a_photograph()
-    cv2.circle(glared, (600, 800), 300, (255, 255, 255), thickness=-1)
-
-    assert severity(png(glared), QualityCondition.GLARE) is QualityStatus.UNUSABLE
-
-
 # ---------------------------------------------------------------------------
-# The five that need the card located — issue #37
+# The six that need the card located — issues #37 and #208
 #
 # The geometries here are built by hand rather than detected, because what is
 # under test is the *judging*: `ml/card-detection` owns whether a quadrilateral
@@ -228,7 +203,189 @@ def a_card(**overrides: object) -> CardGeometry:
     return CardGeometry(**fields)  # type: ignore[arg-type]
 
 
-def test_without_a_geometry_the_five_are_reported_undetermined() -> None:
+# ---------------------------------------------------------------------------
+# Glare — issue #208
+#
+# Sized against the region glare is actually measured over, which is neither
+# the frame nor the whole card: the quadrilateral above, scaled into the
+# working copy and eroded on every side. A fixture sized against the frame
+# lands in the wrong band the moment a threshold moves, which is #176's rule
+# — a fixture whose proportions are not the real ones asserts nothing.
+# ---------------------------------------------------------------------------
+
+
+def measured_card_area() -> float:
+    """The card region glare is measured over, in the working copy's pixels."""
+    scale = DEFAULT_THRESHOLDS.work_long_edge / max(SIZE)
+    long_edge = 0.70 * SIZE[0] * scale
+    short_edge = 0.60 * SIZE[1] * scale
+    inset = 2 * round(DEFAULT_THRESHOLDS.glare_card_inset_fraction * long_edge)
+    return (long_edge - inset) * (short_edge - inset)
+
+
+def radius_for(fraction: float) -> int:
+    """The radius, in `SIZE`'s pixels, of a disc covering `fraction` of that region."""
+    scale = DEFAULT_THRESHOLDS.work_long_edge / max(SIZE)
+    return round(float(np.sqrt(fraction * measured_card_area() / np.pi)) / scale)
+
+
+def a_colour_photograph(rng_seed: int = 0) -> NDArray[np.uint8]:
+    """`a_photograph`, printed in colour.
+
+    Glare is measured off the chroma, and `a_photograph` has none: it is a
+    grayscale picture widened to three channels, so both of its CIELAB chroma
+    channels are flat and any chroma statistic taken against it is a statistic
+    about nothing. A card is printed in colour, and the fixtures that exercise
+    glare have to be. The luminance is `a_photograph`'s unchanged, so the other
+    four conditions read exactly what they read there.
+    """
+    gray = cv2.cvtColor(a_photograph(rng_seed), cv2.COLOR_BGR2GRAY)
+    rows, columns = np.mgrid[0 : SIZE[0], 0 : SIZE[1]]
+    hue = (((rows // 64) * 5 + (columns // 64) * 11) % 180).astype(np.uint8)
+    hsv = np.stack([hue, np.full(SIZE, 170, dtype=np.uint8), gray], axis=-1)
+    coloured: NDArray[np.uint8] = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return coloured
+
+
+#: A sheened card, in two parts, because real ones arrive in two parts — see
+#: `with_sheen`. `VEIL` is how much of the print's colour the wash takes away
+#: across the whole face; `BAND_THICKNESS` is how much of the frame's height the
+#: dispersed band covers, and `BAND_CYCLES` how many times its hue goes round.
+#: Together they put the fixture where the corpus's reflecting photographs
+#: measured: a chroma-gradient median of 1.9 against their 1.3-1.6, and a
+#: reflecting fraction of 0.022 against their 0.010-0.042.
+VEIL = 0.55
+BAND_THICKNESS = 0.10
+BAND_CYCLES = 2
+
+
+def with_sheen(picture: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    """Holo sheen laid over `picture`: a washed face and a dispersed band.
+
+    Not a disc of white, and not one thing. Light returned off a foil layer
+    arrives two ways at once, and the corpus shows both: the whole face is
+    partly washed, which takes the colour out of the print underneath, and a
+    band where the grating disperses the return into spectral orders lands as a
+    smooth ramp of hue running *across* the card rather than with the artwork.
+    Feathered rather than hard-edged, because a hard bright edge is the thing
+    the old measurement could already see.
+
+    The washed face is not decoration. It is what makes a reflecting card
+    measurably different from a busy one: it lowers the card's own median
+    colour-change while the band raises the peak, and the measurement is the
+    ratio between them.
+    """
+    rows, columns = np.mgrid[0 : SIZE[0], 0 : SIZE[1]]
+    band = np.exp(-(((rows - 0.38 * SIZE[0]) / (0.5 * BAND_THICKNESS * SIZE[0])) ** 2))
+    hsv = cv2.cvtColor(picture, cv2.COLOR_BGR2HSV).astype(np.float32)
+
+    hsv[:, :, 1] *= 1.0 - VEIL
+    hsv[:, :, 2] = np.minimum(hsv[:, :, 2] + VEIL * 40.0, 235.0)
+
+    ramp = (columns / SIZE[1]) * 179.0 * BAND_CYCLES % 180.0
+    hsv[:, :, 0] = (1.0 - band) * hsv[:, :, 0] + band * ramp
+    hsv[:, :, 1] = (1.0 - band) * hsv[:, :, 1] + band * 95.0
+    hsv[:, :, 2] = np.minimum((1.0 - band) * hsv[:, :, 2] + band * 235.0, 235.0)
+
+    sheened: NDArray[np.uint8] = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return sheened
+
+
+def test_a_band_of_diffuse_sheen_is_glare() -> None:
+    """The measurement #208 exists for, and the one v0.2.0 could not make.
+
+    The assertion on the maximum is the point of the fixture: nothing in it
+    comes near the blown-out level, so a gate counting only saturated pixels
+    reports this photograph perfectly clean — which is what #190 measured it
+    doing on all 28 real ones.
+
+    `poor` and not `unusable`, deliberately: the annotator worked with every
+    reflecting photograph in the corpus, so this is a warning.
+    """
+    sheened = with_sheen(a_colour_photograph())
+
+    assert sheened.max() < DEFAULT_THRESHOLDS.glare_level
+    assert severity(png(sheened), QualityCondition.GLARE, a_card()) is QualityStatus.POOR
+
+
+def test_an_ordinary_colour_photograph_has_no_glare() -> None:
+    """The same fixture without the band, so the band is what was detected."""
+    assert (
+        verdict(png(a_colour_photograph()), QualityCondition.GLARE, a_card())
+        is ConditionVerdict.CLEAR
+    )
+
+
+def test_a_photograph_with_no_colour_in_it_has_no_glare() -> None:
+    """The measure is a ratio, so it needs no floor under a colourless picture.
+
+    `a_photograph` is grayscale widened to three channels. Through a lossy
+    encoder its chroma is noise, and noise raises the card's median exactly as
+    much as it raises everything else — which is the property that lets the
+    threshold be relative at all.
+    """
+    assert verdict(jpeg(a_photograph()), QualityCondition.GLARE, a_card()) is ConditionVerdict.CLEAR
+
+
+def test_a_large_flat_bright_panel_is_not_glare() -> None:
+    """A card's own text box is bright, flat and large, and is printed there.
+
+    The obvious false positive, and the one the corpus warned about: measured
+    over the whole card, the photographs that scored highest on brightness and
+    on flatness were the *backs* — a big even printed field. What separates a
+    reflection from print is that the reflection changes the card's colour and
+    print does not, which is why the measurement is made on the chroma.
+    """
+    panelled = a_colour_photograph()
+    panelled[500:1100, 350:850] = (238, 238, 238)
+
+    assert verdict(png(panelled), QualityCondition.GLARE, a_card()) is ConditionVerdict.CLEAR
+
+
+def test_one_specular_blob_is_glare() -> None:
+    """A highlight bright enough to clip is glare too, and still measured here."""
+    glared = a_colour_photograph()
+    cv2.circle(glared, (600, 800), radius_for(0.02), (255, 255, 255), thickness=-1)
+
+    assert severity(png(glared), QualityCondition.GLARE, a_card()) is QualityStatus.POOR
+
+
+def test_a_large_specular_blob_is_unusable() -> None:
+    glared = a_colour_photograph()
+    cv2.circle(glared, (600, 800), radius_for(0.12), (255, 255, 255), thickness=-1)
+
+    assert severity(png(glared), QualityCondition.GLARE, a_card()) is QualityStatus.UNUSABLE
+
+
+def test_scattered_saturated_pixels_are_not_glare() -> None:
+    """The measure is the largest *connected* region, not the reflecting fraction.
+
+    A card with white text all over it has bright flat pixels everywhere and no
+    glare at all; measuring the total would refuse it.
+    """
+    speckled = a_colour_photograph()
+    rng = np.random.default_rng(2)
+    ys = rng.integers(0, SIZE[0], size=40_000)
+    xs = rng.integers(0, SIZE[1], size=40_000)
+    speckled[ys, xs] = 255
+
+    assert verdict(png(speckled), QualityCondition.GLARE, a_card()) is ConditionVerdict.CLEAR
+
+
+def test_glare_is_measured_on_the_card_and_not_on_what_it_is_lying_on() -> None:
+    """#190's mechanism, as a test: the same reflection off the frame is nothing.
+
+    A desk lamp burning a hole in the tablecloth beside the card is not a
+    defect in the card, and before #208 it was the only kind of glare the gate
+    could see at all.
+    """
+    beside = a_colour_photograph()
+    cv2.circle(beside, (80, 120), radius_for(0.12), (255, 255, 255), thickness=-1)
+
+    assert verdict(png(beside), QualityCondition.GLARE, a_card()) is ConditionVerdict.CLEAR
+
+
+def test_without_a_geometry_the_six_are_reported_undetermined() -> None:
     """The acceptance criterion's other half, and the degradation path."""
     report = assess(png(a_photograph()))
 

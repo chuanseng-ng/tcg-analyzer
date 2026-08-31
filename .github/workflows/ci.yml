@@ -455,11 +455,13 @@ jobs:
 
           # Every condition is answered for. There is no card in a 64x48 flat
           # rectangle, so the detector reports that rather than guessing a
-          # quadrilateral, and the five conditions that need one say so rather
+          # quadrilateral, and the six conditions that need one say so rather
           # than being left out — which is #37's degradation path, end to end.
+          # Six and not five since #208: glare is measured on the card, so
+          # without one there is nothing to measure it on.
           test "$(echo "$analysis" | jq -r '.images[0].findings | length')" = 11
           test "$(echo "$analysis" | jq -r \
-            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
+            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 6
 
           # And the refusal is what the confirmation endpoint reports, rather
           # than the "not ready for this yet" 409 that invites a retry §65
@@ -511,11 +513,11 @@ jobs:
           echo "$analysis"
           test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
           # `acceptable`, never `good`: a checkerboard has no card in it, so
-          # five conditions were not checked and saying so is the whole point.
+          # six conditions were not checked and saying so is the whole point.
           # The step below is the one that reaches `good`.
           test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = acceptable
           test "$(echo "$analysis" | jq -r \
-            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 5
+            '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 6
 
       # #37's acceptance criterion against the real stack: a photograph with a
       # card in it, where the boundary is found and all eleven of spec §19's
