@@ -82,6 +82,15 @@ class DetectionThresholds:
     #: which the gate calls `multiple_cards` and refuses the photograph for.
     duplicate_centre_fraction: float = 0.06
 
+    #: How far a corner may sit outside an enclosing quadrilateral, in pixels
+    #: **at :attr:`work_long_edge`**, and still count as inside it (#206). A
+    #: phantom that shares the card's own edges — the corpus's text panel —
+    #: fits its corners a couple of pixels either side of the winning
+    #: quadrilateral's (2.8 px, measured); a pixel count rather than a fraction
+    #: because the jitter is the edge ribbon's wall thickness plus the fit's
+    #: error, which does not scale with the card.
+    containment_slack_px: float = 6.0
+
     #: How far outside the card a quadrilateral must sit, in pixels **at
     #: :attr:`work_long_edge`**, before it is a sleeve rather than an artifact.
     #: A pixel floor rather than an area ratio because the artifact it excludes
@@ -116,6 +125,10 @@ class DetectionThresholds:
             raise ValueError(f"approx_epsilon must lie in (0, 1), got {self.approx_epsilon!r}")
         if self.sleeve_min_margin <= 0.0:
             raise ValueError(f"sleeve_min_margin must be positive, got {self.sleeve_min_margin!r}")
+        if self.containment_slack_px < 0.0:
+            raise ValueError(
+                f"containment_slack_px must not be negative, got {self.containment_slack_px!r}"
+            )
         if not 0.0 < self.frame_margin_fraction < 1.0:
             raise ValueError(
                 f"frame_margin_fraction must lie in (0, 1), got {self.frame_margin_fraction!r}"

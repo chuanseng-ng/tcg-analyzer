@@ -280,6 +280,7 @@ def test_a_light_bordered_card_on_a_light_table_is_found_by_its_shadow() -> None
     corners = found.corners
     assert corners[0] == pytest.approx((left - 6, top - 6), abs=14)
     assert corners[2] == pytest.approx((left + width + 6, top + height + 6), abs=14)
+    assert found.candidates == 1
 
 
 def test_a_jpeg_is_read_as_readily_as_a_png() -> None:
@@ -382,6 +383,53 @@ def test_two_cards_are_counted_as_two() -> None:
     assert located(png(picture)).candidates == 2
 
 
+def test_an_artwork_window_inside_the_card_is_not_a_second_card() -> None:
+    """#206's first failure shape: the artwork window survives as a phantom.
+
+    On four of the corpus's 28 fronts the artwork window — convex, card-aspect,
+    well filled — passed every candidate filter, and its centre sits far enough
+    from the card's at close range to escape the concentric grouping. The count
+    said two cards and the gate refused the photograph for `multiple_cards`,
+    with one card in the frame, always. A quadrilateral wholly inside another
+    card-like quadrilateral is that card's own structure, never a second card.
+    """
+    picture = photograph()
+    left, top, _width, _height = CARD
+    art_left, art_top = left + 60, top + 70
+    picture[art_top : art_top + 480, art_left : art_left + 510] = (90, 110, 60)
+    found = located(png(picture))
+
+    assert found.candidates == 1
+    assert found.enclosing_ratio == 1.0
+    assert found.area_fraction == pytest.approx(0.288, abs=0.02)
+
+
+def test_a_panel_sharing_the_cards_own_edges_is_not_a_second_card_either() -> None:
+    """#206's second failure shape: the phantom pokes a few pixels outside.
+
+    The corpus's fourth phantom was the card's lower text panel, spanning the
+    card's full width — a contour that partly reuses the card's own boundary,
+    which fitting jitter then places a couple of pixels *outside* the winning
+    quadrilateral (2.8 px at the working scale, measured). Containment must
+    tolerate that, or exactly the shape that shares the card's edges — the one
+    most obviously not a second card — is the one still counted as two.
+    """
+    picture = background()
+    left, top, width, height = CARD
+    place(picture, CARD, 210)
+    # The panel: flush with the card's own left, right and bottom edges, and
+    # saturated where card and surface are not, so the saturation pass yields
+    # its quadrilateral alone — while a bright enough tone keeps the whole
+    # card one Otsu region, so the winning quadrilateral stays the card's.
+    # Where panel edge and card edge coincide, the fitted walls land a pixel
+    # or two either side of the winner's.
+    picture[top + height // 2 : top + height, left : left + width] = (60, 90, 230)
+    found = located(png(picture))
+
+    assert found.candidates == 1
+    assert found.area_fraction == pytest.approx(0.288, abs=0.02)
+
+
 def test_a_card_found_by_more_than_one_pass_is_still_one_card() -> None:
     """Three extraction passes and a closed edge ribbon each yield a contour.
 
@@ -469,6 +517,7 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("min_rectangularity", 1.5, "min_rectangularity"),
         ("approx_epsilon", 0.0, "approx_epsilon"),
         ("sleeve_min_margin", 0.0, "sleeve_min_margin"),
+        ("containment_slack_px", -1.0, "containment_slack_px"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
