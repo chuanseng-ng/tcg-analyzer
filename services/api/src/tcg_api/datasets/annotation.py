@@ -29,6 +29,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from tcg_domain.condition import card_frame_of as domain_card_frame_of
 from tcg_shared.storage import StorageKey
 from tcg_shared.storage.port import ObjectStorage
 
@@ -128,29 +129,16 @@ class CardFrame:
 
 
 def card_frame_of(details: Mapping[str, object] | None) -> CardFrame | None:
-    """The card's inner rectangle, from one artifact's stored record."""
-    if details is None:
+    """The card's inner rectangle, from one artifact's stored record.
+
+    The derivation is the domain's (#187 lifted it for the condition step, its
+    second consumer); this keeps the wire shape and gains the validation — a
+    record whose margins leave no card derives no frame at all.
+    """
+    box = domain_card_frame_of(details)
+    if box is None:
         return None
-    width = details.get("width")
-    height = details.get("height")
-    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
-        return None
-    thresholds = details.get("thresholds")
-    margin_mm = 0.0
-    pixels_per_mm = 0.0
-    if isinstance(thresholds, Mapping):
-        raw_margin = thresholds.get("normalization_margin_mm")
-        raw_ppm = thresholds.get("normalization_pixels_per_mm")
-        if isinstance(raw_margin, (int, float)) and isinstance(raw_ppm, (int, float)):
-            margin_mm = float(raw_margin)
-            pixels_per_mm = float(raw_ppm)
-    margin = margin_mm * pixels_per_mm
-    return CardFrame(
-        x=margin / float(width),
-        y=margin / float(height),
-        width=(float(width) - 2 * margin) / float(width),
-        height=(float(height) - 2 * margin) / float(height),
-    )
+    return CardFrame(x=box.x, y=box.y, width=box.width, height=box.height)
 
 
 @dataclass(frozen=True, slots=True)

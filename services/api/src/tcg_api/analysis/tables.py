@@ -251,9 +251,11 @@ analyses = sa.Table(
         PRINTED,
         nullable=True,
         comment=(
-            "The model bundle that produced the result — 'pokemon-condition-v0.3.0'. "
-            "An explicit identifier, never '/latest/' (spec §31). NULL in V1 because "
-            "no model exists yet: a documented absence rather than a gap."
+            "The model bundle the condition output was produced under — the composed "
+            "condition version, e.g. 'condition-compose-v0.1.0+centering-opencv-v0.1.0+…'. "
+            "An explicit identifier, never '/latest/' (spec §31), resolved when the run "
+            "claimed the analysis (#187). NULL on analyses that predate the condition "
+            "step: a documented absence rather than a gap."
         ),
     ),
     sa.Column(
@@ -327,6 +329,20 @@ analyses = sa.Table(
             "Always NULL in V1: no grading rules exist yet, and the column is here so "
             "the absence is documented rather than indistinguishable from a bug when "
             "they do. The milestone that introduces them fills it at run time."
+        ),
+    ),
+    sa.Column(
+        "condition_details",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "The neutral condition assessment the worker produced — spec §13's tree "
+            "as a document, the composed condition version and the analyzers' "
+            "thresholds beside it so a row explains itself, or a top-level "
+            "insufficient_information with its reason where nothing could be "
+            "assessed (#187). NULL means the condition step never ran — never that "
+            "the card is clean. JSONB rather than a table on `quality_details`' "
+            "reasoning: nothing joins it, and M8 reads the whole document."
         ),
     ),
     sa.CheckConstraint(

@@ -321,6 +321,7 @@ jobs:
         run: |
           $COMPOSE exec -T worker python -c "
           import cv2, tcg_ml_card_detection, tcg_ml_image_quality, tcg_ml_normalization
+          import tcg_ml_centering, tcg_ml_condition, tcg_ml_corners, tcg_ml_edges, tcg_ml_surface
           print(cv2.__version__)"
 
           # Deliberately not `! $COMPOSE exec ... python -c "import cv2"`.
@@ -329,10 +330,11 @@ jobs:
           # whichever way the import went — which is the failure mode this step
           # exists to catch. Assert on what the interpreter said instead.
           #
-          # All three, because the split is one `--extra worker` and a package
+          # All eight, because the split is one `--extra worker` and a package
           # left out of it is an ImportError the API container only finds at
           # startup.
-          for module in cv2 tcg_ml_image_quality tcg_ml_card_detection tcg_ml_normalization; do
+          for module in cv2 tcg_ml_image_quality tcg_ml_card_detection tcg_ml_normalization \
+              tcg_ml_centering tcg_ml_condition tcg_ml_corners tcg_ml_edges tcg_ml_surface; do
             present=$($COMPOSE exec -T api python -c "
           try:
               import $module

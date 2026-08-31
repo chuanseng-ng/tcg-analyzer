@@ -19,6 +19,7 @@ started, and nothing is kept beyond that.**
 | The quality verdict and the transform | 7 days | `images.quality_details`, `images.normalization_details` |
 | The preprocessing cache entry | 7 days | it *is* the `images` row |
 | The analysis, including spec §57's reproducibility record | 7 days | `analyses` |
+| The condition assessment (#187) | 7 days | `analyses.condition_details` — a column on the row above, listed so the omission cannot read as an exemption |
 | The anonymous session | 7 days | `analysis_sessions` |
 | The economic configuration, including what the user said they paid | 7 days | `economic_configurations` |
 

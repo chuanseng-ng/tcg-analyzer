@@ -66,6 +66,7 @@ __all__ = [
     "RegionFinding",
     "Representation",
     "SurfaceAssessment",
+    "card_frame_of",
 ]
 
 
@@ -499,6 +500,103 @@ def _validated_manufacturing_defects(value: object) -> Uncertain[tuple[Defect, .
     return derived
 
 
+# ----------------------------------------------------------------
+# The persisted form — #187, `QualityReport.as_record()`'s sibling
+# ----------------------------------------------------------------
+
+
+def _refusal_record(refusal: InsufficientInformation) -> dict[str, object]:
+    """Every refusal in the tree serializes as this same one-key object.
+
+    A reader discriminates an answer from a refusal by the key's presence and
+    nothing else, so the shape is identical at the axis, the ratio and the
+    class level — and the reasonless case carries ``None`` rather than
+    dropping the key.
+    """
+    return {"insufficient_information": refusal.reason}
+
+
+def _box_record(box: BoundingBox) -> dict[str, object]:
+    return {"x": box.x, "y": box.y, "width": box.width, "height": box.height}
+
+
+def _defect_record(defect: Defect) -> dict[str, object]:
+    # ponytail: `metadata` passes through unvalidated — §17's open bag is typed
+    # `Mapping[str, object]`, so an analyzer putting a non-JSON value there
+    # fails at the database driver, far from the cause. No analyzer emits
+    # metadata today; validate here if one ever does.
+    return {
+        "type": str(defect.type),
+        "confidence": defect.confidence.value,
+        **({} if defect.severity is None else {"severity": str(defect.severity)}),
+        "side": str(defect.side),
+        "representation": str(defect.representation),
+        **(
+            {}
+            if defect.bounding_box is None
+            else {"bounding_box": _box_record(defect.bounding_box)}
+        ),
+        **(
+            {} if defect.polygon is None else {"polygon": [list(point) for point in defect.polygon]}
+        ),
+        **({} if not defect.metadata else {"metadata": dict(defect.metadata)}),
+    }
+
+
+def _finding_record(finding: RegionFinding) -> dict[str, object]:
+    return {
+        "label": str(finding.label),
+        "confidence": finding.confidence.value,
+        **({} if finding.severity is None else {"severity": str(finding.severity)}),
+        **(
+            {}
+            if finding.bounding_box is None
+            else {"bounding_box": _box_record(finding.bounding_box)}
+        ),
+    }
+
+
+def _centering_record(centering: Centering) -> dict[str, object]:
+    record: dict[str, object] = {}
+    for name in _RATIO_FIELDS:
+        ratio = getattr(centering, name)
+        record[name] = (
+            _refusal_record(ratio) if isinstance(ratio, InsufficientInformation) else ratio
+        )
+    record["confidence"] = centering.confidence.value
+    return record
+
+
+def _axis_record[RegionT: StrEnum](
+    axis: Mapping[ImageSide, Uncertain[Mapping[RegionT, RegionFinding]]],
+) -> dict[str, object]:
+    return {
+        str(side): (
+            _refusal_record(answer)
+            if isinstance(answer, InsufficientInformation)
+            else {str(region): _finding_record(finding) for region, finding in answer.items()}
+        )
+        for side, answer in axis.items()
+    }
+
+
+def _surface_record(surface: Mapping[ImageSide, Uncertain[SurfaceAssessment]]) -> dict[str, object]:
+    return {
+        str(side): (
+            _refusal_record(answer)
+            if isinstance(answer, InsufficientInformation)
+            else {
+                "findings": [_defect_record(finding) for finding in answer.findings],
+                "not_assessed": {
+                    str(label): _refusal_record(verdict)
+                    for label, verdict in answer.not_assessed.items()
+                },
+            }
+        )
+        for side, answer in surface.items()
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ConditionAssessment:
     """Spec §13's tree — the one neutral condition representation.
@@ -596,3 +694,80 @@ class ConditionAssessment:
                 f"it, so nothing may claim to have — got {type(self.eye_appeal).__name__}"
             )
         _validated_confidence(self.confidence, owner="the assessment's")
+
+    def as_record(self) -> dict[str, object]:
+        """The form persisted to `analyses.condition_details` (#187).
+
+        Plain JSON-compatible types, so the caller writes it to a JSONB column
+        without a serializer knowing anything about this package —
+        `QualityReport.as_record()`'s rule. Vocabulary is ``str(member)``,
+        confidences are floats, absent optionals are absent keys, and every
+        refusal — an axis, a ratio, a class — is the same one-key
+        ``{"insufficient_information": <reason or None>}`` object. The record
+        deliberately carries **no version and no thresholds**: those are the
+        composer's and the analyzers', recorded by the caller beside the
+        document (#186's rule that an assessment carries none of them).
+        """
+        manufacturing = self.manufacturing_defects
+        return {
+            "centering": (
+                _refusal_record(self.centering)
+                if isinstance(self.centering, InsufficientInformation)
+                else _centering_record(self.centering)
+            ),
+            "corners": _axis_record(self.corners),
+            "edges": _axis_record(self.edges),
+            "surface": _surface_record(self.surface),
+            "manufacturing_defects": (
+                _refusal_record(manufacturing)
+                if isinstance(manufacturing, InsufficientInformation)
+                else [_defect_record(defect) for defect in manufacturing]
+            ),
+            "eye_appeal": _refusal_record(self.eye_appeal),
+            "confidence": self.confidence.value,
+        }
+
+
+def card_frame_of(details: Mapping[str, object] | None) -> BoundingBox | None:
+    """The card's inner rectangle, from one artifact's stored record.
+
+    #182's rule made a shared function: the frame is derived from the
+    artifact's **stored** `normalization_details` — never from the
+    normalization package's current thresholds — so it is right for whatever
+    version produced that artifact. A record with no margin keys is a
+    pre-#194 artifact whose card really does reach the edges (the whole unit
+    square); a record with no dimensions, or one whose margins leave no card,
+    derives no frame at all — the caller's refusal path.
+    """
+    if details is None:
+        return None
+    width = details.get("width")
+    height = details.get("height")
+    # `bool` is an `int`, and a zero or negative dimension is a corrupt record
+    # — either would otherwise crash a worker job rather than take this
+    # function's documented refusal path.
+    if isinstance(width, bool) or isinstance(height, bool):
+        return None
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    thresholds = details.get("thresholds")
+    margin_mm = 0.0
+    pixels_per_mm = 0.0
+    if isinstance(thresholds, Mapping):
+        raw_margin = thresholds.get("normalization_margin_mm")
+        raw_ppm = thresholds.get("normalization_pixels_per_mm")
+        if isinstance(raw_margin, (int, float)) and isinstance(raw_ppm, (int, float)):
+            margin_mm = float(raw_margin)
+            pixels_per_mm = float(raw_ppm)
+    margin = margin_mm * pixels_per_mm
+    try:
+        return BoundingBox(
+            x=margin / float(width),
+            y=margin / float(height),
+            width=(float(width) - 2 * margin) / float(width),
+            height=(float(height) - 2 * margin) / float(height),
+        )
+    except InvalidConditionAssessment:
+        return None

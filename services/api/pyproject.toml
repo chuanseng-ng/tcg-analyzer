@@ -72,22 +72,37 @@ dependencies = [
 
 # The analysis worker's extras, and nothing the HTTP surface needs.
 #
-# `tcg-ml-image-quality`, `tcg-ml-card-detection` and `tcg-ml-normalization`
-# all bring OpenCV, and
+# Every member here brings OpenCV — the three pipeline stages directly, and
+# `tcg-ml-condition` through the four axis analyzers it composes — and
 # OpenCV has no business in an internet-facing web server:
 # `infrastructure/docker/api.Dockerfile` syncs `--package tcg-api` and gets
 # none of it, while `worker.Dockerfile` adds `--extra worker` and gets all of
 # it. What makes that split hold at runtime is
-# that `tcg_api.analysis.jobs` imports the gate's wiring inside the function
+# that `tcg_api.analysis.jobs` imports the gate's and the condition step's
+# wiring inside the function
 # that runs a job rather than at module scope — `tests/test_import_purity.py`
 # asserts it, because the symptom of getting it wrong is an API container that
 # will not start.
+#
+# `tcg-ml-condition` alone would pull the four analyzers transitively; all
+# five are named so the worker's contract is readable at the extra rather
+# than inferred through that package's manifest, matching the per-module
+# assertions in `.github/workflows/ci.yml`.
 #
 # A developer running `uv sync --all-packages` still gets everything: each ml
 # member declares OpenCV itself, and extras are only about what *this* package
 # pulls in.
 [project.optional-dependencies]
-worker = ["tcg-ml-card-detection", "tcg-ml-image-quality", "tcg-ml-normalization"]
+worker = [
+    "tcg-ml-card-detection",
+    "tcg-ml-centering",
+    "tcg-ml-condition",
+    "tcg-ml-corners",
+    "tcg-ml-edges",
+    "tcg-ml-image-quality",
+    "tcg-ml-normalization",
+    "tcg-ml-surface",
+]
 
 [tool.uv.sources]
 tcg-domain = { workspace = true }
@@ -95,8 +110,13 @@ tcg-economic-engine = { workspace = true }
 tcg-grading-companies = { workspace = true }
 tcg-market-data = { workspace = true }
 tcg-ml-card-detection = { workspace = true }
+tcg-ml-centering = { workspace = true }
+tcg-ml-condition = { workspace = true }
+tcg-ml-corners = { workspace = true }
+tcg-ml-edges = { workspace = true }
 tcg-ml-image-quality = { workspace = true }
 tcg-ml-normalization = { workspace = true }
+tcg-ml-surface = { workspace = true }
 tcg-shared = { workspace = true }
 
 # `apps/web` generates its API types from this schema (ADR 0001), so producing

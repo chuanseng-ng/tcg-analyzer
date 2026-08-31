@@ -49,10 +49,12 @@ __all__ = [
     "CachedPipelineResult",
     "ImageQuality",
     "ImageRecord",
+    "StoredArtifact",
     "apply_cached_pipeline_result",
     "read_cached_pipeline_result",
     "read_image_objects",
     "read_quality",
+    "read_v1_artifacts",
     "read_v1_image_keys",
     "record_normalization",
     "record_quality",
@@ -212,6 +214,46 @@ async def read_v1_image_keys(db: AsyncSession, analysis_id: UUID) -> dict[ImageS
     )
     result = await execute(db, statement)
     return {ImageSide(row.side): row.original_uri for row in result}
+
+
+@dataclass(frozen=True, slots=True)
+class StoredArtifact:
+    """What normalization left on one side — the artifact's key and its record.
+
+    Both `None` for a photograph no card was located in: there was nothing to
+    straighten, so there is no artifact and no transform.
+    :func:`record_normalization` writes the columns together, so the two cannot
+    disagree — but the pair is still read defensively, because the condition
+    step must refuse a half-written row rather than measure against it.
+    """
+
+    normalized_uri: str | None
+    normalization_details: dict[str, Any] | None
+
+
+async def read_v1_artifacts(db: AsyncSession, analysis_id: UUID) -> dict[ImageSide, StoredArtifact]:
+    """Each V1 side's normalized artifact key and stored record, in one round trip.
+
+    :func:`read_v1_image_keys`' sibling, for the condition step (#187): that
+    reads what the user sent, this reads what normalization made of it. The
+    record travels with the key because the caller derives each side's card
+    frame from the **stored** `normalization_details` — #182's rule — and two
+    queries would invite reading one side's frame against the other's artifact.
+    """
+    statement = sa.select(
+        images.c.side, images.c.normalized_uri, images.c.normalization_details
+    ).where(
+        images.c.analysis_id == analysis_id,
+        images.c.side.in_([side.value for side in V1_SIDES]),
+    )
+    result = await execute(db, statement)
+    return {
+        ImageSide(row.side): StoredArtifact(
+            normalized_uri=row.normalized_uri,
+            normalization_details=row.normalization_details,
+        )
+        for row in result
+    }
 
 
 async def record_quality(

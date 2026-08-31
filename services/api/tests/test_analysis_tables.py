@@ -107,6 +107,10 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 "application_version",
                 "card_database_version",
                 "grading_rules_version",
+                # Beyond §12's list, on `quality_details`'s precedent: M7's
+                # acceptance criterion is structured condition output with
+                # uncertainty, and it needs somewhere to live (#187).
+                "condition_details",
             },
         ),
         (
@@ -157,6 +161,36 @@ def test_every_field_of_the_reproducibility_record_is_a_column(column: str) -> N
     """
     assert column in analyses.columns
     assert analyses.columns[column].nullable
+
+
+def test_condition_output_is_a_nullable_document_outside_the_record() -> None:
+    """#187's storage decision: JSONB on `analyses`, `quality_details`' family.
+
+    Nullable with no default so NULL keeps meaning "the step never ran" — an
+    empty object would claim an assessment happened. Deliberately **not** in
+    `REPRODUCIBILITY_COLUMNS`: the document is not §57's record, and its one
+    writer inside the claim is the guarantee a trigger would duplicate.
+    """
+    column = analyses.columns["condition_details"]
+
+    assert isinstance(column.type, postgresql.JSONB)
+    assert column.nullable
+    assert column.server_default is None
+    assert column.comment
+    assert "condition_details" not in REPRODUCIBILITY_COLUMNS
+
+
+def test_the_model_bundle_comment_no_longer_claims_no_model_exists() -> None:
+    """#187 writes `CONDITION_VERSION` into the column at every claim.
+
+    The column comment travels through autogenerate's drift guard, so a stale
+    "NULL in V1 because no model exists yet" would either mislead or force a
+    pointless migration later — the comment changed with the writer.
+    """
+    comment = analyses.columns["model_bundle_version"].comment or ""
+
+    assert "no model exists yet" not in comment
+    assert "condition" in comment
 
 
 def test_the_reproducibility_record_is_declared_immutable() -> None:

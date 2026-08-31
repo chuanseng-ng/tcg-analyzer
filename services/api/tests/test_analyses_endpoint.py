@@ -571,9 +571,15 @@ def test_a_run_records_what_it_was_computed_against(
 
     `application_version` is the running application's, resolved by the process
     that did the work; `card_database_version` is the published identifier that
-    was current at that moment. The four that name components no milestone has
-    built yet are null, and null here means "does not exist", not "not sent".
+    was current at that moment; `model_bundle_version` is the composed
+    condition version the run resolved at its claim (#187). The three that
+    name components no milestone has built yet are null, and null here means
+    "does not exist", not "not sent".
     """
+    # Imported here rather than at the top: the constant lives beside the CV
+    # stack, and only this test needs it.
+    from tcg_ml_condition import CONDITION_VERSION
+
     publish_catalog_version()
     created = client.post("/analyses").json()
     uploaded(created["id"])
@@ -588,7 +594,7 @@ def test_a_run_records_what_it_was_computed_against(
     assert record["card_database_version"] == querying(
         "SELECT version FROM card_database_versions ORDER BY ordinal DESC LIMIT 1"
     )
-    assert record["model_bundle_version"] is None
+    assert record["model_bundle_version"] == CONDITION_VERSION
     assert record["grading_rules_version"] is None
     assert record["market_snapshot_id"] is None
     assert record["economic_configuration_id"] is None

@@ -369,11 +369,18 @@ class _FakeCatalogVersions:
         return types.SimpleNamespace(version=self.published)
 
 
+#: What the stubbed condition module reports as its composed version — a fixed
+#: string rather than the real constant, `A_PIPELINE`'s rule: a package bump
+#: must not silently rewrite what these tests mean.
+A_CONDITION_VERSION = "condition-compose-test-v0"
+
+
 def _run_with_gate(
     monkeypatch: pytest.MonkeyPatch,
     verdict: QualityStatus,
     *,
     recorded: list[dict[str, Any]] | None = None,
+    condition_calls: list[dict[str, Any]] | None = None,
     catalog_version: str | None = "pokemon-catalog-v0.3.0",
     snapshot_id: uuid.UUID | None = None,
 ) -> tuple[list[AnalysisStatus], _FakeEngine]:
@@ -382,12 +389,18 @@ def _run_with_gate(
     Returns the transitions it attempted, in order, and the engine it built —
     the second so that a test can assert the connection is always released. A
     caller that cares about spec §57's record passes `recorded`, which collects
-    the keyword arguments each write was made with; most callers do not.
+    the keyword arguments each write was made with; one that cares about the
+    condition step passes `condition_calls`; most callers pass neither.
+
+    Both lazily imported worker modules are stubbed through `sys.modules` —
+    the real ones bind the CV stack, and `_advance` must be drivable on a
+    machine without it.
     """
     engine = _FakeEngine()
     session = _FakeSession()
     moves: list[AnalysisStatus] = []
     writes = recorded if recorded is not None else []
+    assessed = condition_calls if condition_calls is not None else []
 
     async def transition(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
         moves.append(to)
@@ -395,6 +408,11 @@ def _run_with_gate(
 
     async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
         return verdict
+
+    async def assess_condition(_db: Any, analysis_id: Any) -> None:
+        # The moves so far travel with the call, `record_reproducibility`'s
+        # trick, so a test can assert *where* in the run the step happened.
+        assessed.append({"analysis_id": analysis_id, "after": list(moves)})
 
     async def current_snapshot(_db: Any) -> Any:
         if snapshot_id is None:
@@ -410,9 +428,14 @@ def _run_with_gate(
     gate = types.ModuleType("tcg_api.analysis.quality")
     gate.prepare_images = prepare_images  # type: ignore[attr-defined]
 
+    stage = types.ModuleType("tcg_api.analysis.condition")
+    stage.CONDITION_VERSION = A_CONDITION_VERSION  # type: ignore[attr-defined]
+    stage.assess_condition = assess_condition  # type: ignore[attr-defined]
+
     versions = type("_Versions", (_FakeCatalogVersions,), {"published": catalog_version})
 
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
+    monkeypatch.setitem(sys.modules, "tcg_api.analysis.condition", stage)
     monkeypatch.setattr(jobs, "create_engine", lambda: engine)
     monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: lambda: session)
     monkeypatch.setattr(jobs, "transition", transition)
@@ -576,6 +599,73 @@ def test_no_snapshot_is_recorded_as_none_rather_than_invented(
     _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
 
     assert recorded[0]["market_snapshot_id"] is None
+
+
+def test_the_model_bundle_version_is_recorded_at_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#187: the composed condition version is a §57 field like the others.
+
+    A compile-time constant of the condition packages, so it is resolvable at
+    the claim — and recorded there whether or not the run later reaches the
+    condition step, because the record says which versions were in force, not
+    which stages completed.
+    """
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
+
+    assert recorded[0]["model_bundle_version"] == A_CONDITION_VERSION
+    assert recorded[0]["after"] == [AnalysisStatus.IDENTIFYING]
+
+
+def test_a_gate_refusal_still_records_the_model_bundle_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record is written before the gate runs, so a refused analysis still
+    says which condition version was in force — `card_database_version`'s
+    rule applied to the new field."""
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, recorded=recorded)
+
+    assert recorded[0]["model_bundle_version"] == A_CONDITION_VERSION
+
+
+# ---------------------------------------------------------------------------
+# The condition step — issue #187
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [QualityStatus.GOOD, QualityStatus.ACCEPTABLE, QualityStatus.POOR],
+    ids=["good", "acceptable", "poor"],
+)
+def test_the_condition_step_runs_after_the_gate_and_before_the_confirmation_gate(
+    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus
+) -> None:
+    """M7's acceptance criterion lives here: every analysis the gate lets
+    through gets condition output, `poor` included (§19 says continue), and it
+    is produced inside the claim — before the analysis is handed back to the
+    user at `awaiting_confirmation`, so the transition and the document land
+    in one transaction."""
+    calls: list[dict[str, Any]] = []
+    moves, _ = _run_with_gate(monkeypatch, verdict, condition_calls=calls)
+
+    assert len(calls) == 1
+    assert calls[0]["after"] == [AnalysisStatus.IDENTIFYING]
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.AWAITING_CONFIRMATION]
+
+
+def test_unusable_photographs_never_reach_the_condition_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§19 stops the analysis at the gate, and the condition step is after the
+    gate — a failed analysis keeps `condition_details` NULL, which is the
+    honest "never ran"."""
+    calls: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, condition_calls=calls)
+
+    assert calls == []
 
 
 def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch) -> None:

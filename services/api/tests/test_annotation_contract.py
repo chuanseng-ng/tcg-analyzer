@@ -124,6 +124,32 @@ def test_the_representation_reaches_the_openapi_schema_where_it_belongs() -> Non
     assert "representation" in schemas["StoredMarkerResponse"]["properties"]
 
 
+def test_the_card_frame_is_the_domain_derivation_in_the_wire_shape() -> None:
+    """One deriver, two consumers — #187 lifted the arithmetic to the domain.
+
+    The datasets function keeps its `CardFrame` wire shape but delegates the
+    derivation, which is what buys it the domain's validation: a record whose
+    margins leave no card now derives no frame at all, where the unvalidated
+    wire shape would have carried a zero-width one to the viewer.
+    """
+    from tcg_api.datasets.annotation import CardFrame, card_frame_of
+
+    details = {
+        "width": 804,
+        "height": 1104,
+        "thresholds": {"normalization_margin_mm": 2.0, "normalization_pixels_per_mm": 12.0},
+    }
+    frame = card_frame_of(details)
+    assert frame == CardFrame(x=24 / 804, y=24 / 1104, width=756 / 804, height=1056 / 1104)
+
+    degenerate = {
+        "width": 100,
+        "height": 100,
+        "thresholds": {"normalization_margin_mm": 50.0, "normalization_pixels_per_mm": 1.0},
+    }
+    assert card_frame_of(degenerate) is None
+
+
 def test_nothing_in_the_write_module_updates_or_deletes_a_row() -> None:
     """There is no edit path, and a source-level assertion keeps it that way.
 

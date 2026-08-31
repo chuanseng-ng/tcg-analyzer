@@ -291,6 +291,7 @@ async def record_reproducibility(
     application_version: str,
     card_database_version: str | None,
     market_snapshot_id: UUID | None,
+    model_bundle_version: str,
 ) -> None:
     """Write spec §57's reproducibility record onto `analysis_id`.
 
@@ -311,6 +312,12 @@ async def record_reproducibility(
     argument rather than one defaulting to `None` — a default is how a caller
     that ought to record a snapshot silently stops.
 
+    `model_bundle_version` is the composed condition version (#187) — a
+    compile-time constant of the condition packages, so it is resolvable at
+    the claim like every other field, and recorded whether or not the run
+    later reaches the condition step: the record says which versions were in
+    force, not which stages completed.
+
     `grading_rules_version` is deliberately not a parameter. Nothing in an
     analysis consults grading rules until per-company grade prediction arrives,
     so recording a rules version on a run that never applied one would be a
@@ -329,6 +336,34 @@ async def record_reproducibility(
             application_version=application_version,
             card_database_version=card_database_version,
             market_snapshot_id=market_snapshot_id,
+            model_bundle_version=model_bundle_version,
         )
+    )
+    await execute(db, statement)
+
+
+async def record_condition(
+    db: AsyncSession,
+    analysis_id: UUID,
+    *,
+    details: dict[str, object],
+) -> None:
+    """Write the condition step's document onto `analysis_id` — #187.
+
+    `details` is either the assessment's record or a top-level
+    `insufficient_information` with its reason, each beside the composed
+    version and the analyzers' thresholds — the step always writes one, so a
+    NULL keeps meaning "the step never ran". A plain document rather than a
+    domain type, on :func:`record_reproducibility`'s reasoning: the caller has
+    already rendered it, and a signature naming `ConditionAssessment` would be
+    harmless here but would invite rendering in two places.
+
+    Does not commit; the caller owns the transaction, so the document lands
+    with the transition it precedes or not at all. Deliberately no trigger and
+    no second-write guard: the single writer inside the claim is the
+    guarantee, and the document is not §57's record.
+    """
+    statement = (
+        sa.update(analyses).where(analyses.c.id == analysis_id).values(condition_details=details)
     )
     await execute(db, statement)

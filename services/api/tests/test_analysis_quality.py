@@ -56,6 +56,7 @@ from tcg_domain.image_quality import (
     QualityReport,
 )
 from tcg_ml_card_detection import CARD_DETECTION_VERSION
+from tcg_ml_condition import CONDITION_VERSION
 from tcg_ml_image_quality import IMAGE_QUALITY_VERSION
 from tcg_ml_normalization import NORMALIZATION_VERSION, Normalized
 from tcg_shared.storage.keys import StorageKey
@@ -454,11 +455,18 @@ def test_the_lookup_asks_for_the_running_pipeline_version(
     assert set(recorder.looked_up.values()) == {quality.PIPELINE_VERSION}
 
 
-def test_the_pipeline_version_names_all_three_stages() -> None:
-    """A stage bump that did not reach the key would serve its predecessor's work."""
+def test_the_pipeline_version_names_every_stage() -> None:
+    """A stage bump that did not reach the key would serve its predecessor's work.
+
+    The condition step joined the composition with #187: a condition version
+    bump invalidates cached verdicts exactly as detection and quality bumps
+    do. (The cache replays per-image rows, so the join buys invalidation
+    consistency, not condition reuse — the step itself always runs.)
+    """
     assert IMAGE_QUALITY_VERSION in quality.PIPELINE_VERSION
     assert CARD_DETECTION_VERSION in quality.PIPELINE_VERSION
     assert NORMALIZATION_VERSION in quality.PIPELINE_VERSION
+    assert CONDITION_VERSION in quality.PIPELINE_VERSION
 
 
 def test_a_photograph_already_processed_is_not_processed_again(
