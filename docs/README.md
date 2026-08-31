@@ -12,6 +12,7 @@ Project documentation.
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
 | [`training-image-provenance-research.md`](training-image-provenance-research.md) | The rubric training-image sources are judged against, and what each one's licence actually permits |
+| [`image-quality-gate-research.md`](image-quality-gate-research.md) | Spec §19's gate measured against the corpus's real photographs, and the issues the disagreements became |
 | [`adr/`](adr) | Architecture decision records, one numbered file per decision |
 | [`adr/template.md`](adr/template.md) | Starting point for a new ADR |
 
