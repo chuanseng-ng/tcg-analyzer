@@ -565,6 +565,31 @@ def test_an_excluded_image_is_a_counted_reason() -> None:
     assert split["scored"] == 0
 
 
+def test_an_original_frame_prediction_is_refused_rather_than_scored() -> None:
+    """The scorer compares artifact-frame boxes; handing it an original-frame
+    defect is a programming error, not a scorable finding (#175's rule,
+    applied to the prediction side as well as the truth side)."""
+    member = _corpus_member(
+        annotations=(_annotation(kind=AnnotationKind.SURFACE, region=None, label="stain"),)
+    )
+    predicted = _predictions(
+        surface=SurfaceAssessment(
+            findings=(
+                Defect(
+                    type=SurfaceLabel.STAIN,
+                    confidence=Confidence.of(0.9),
+                    severity=DefectSeverity.MINOR,
+                    side=ImageSide.FRONT,
+                    representation=Representation.ORIGINAL,
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="original"):
+        evaluate(_corpus(member), predictions={member.training_image_id: predicted})
+
+
 def test_the_composition_ledger_prices_the_flat_unknown_drag() -> None:
     """#188 owns pricing the min rule: a flat-0.5 unknown drags the whole assessment."""
     dragged = ConditionAssessment(

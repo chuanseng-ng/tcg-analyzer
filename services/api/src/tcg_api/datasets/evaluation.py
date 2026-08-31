@@ -40,14 +40,15 @@ import subprocess
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 from tcg_domain.analysis import ImageSide
-from tcg_domain.condition import BoundingBox, card_frame_of
-from tcg_domain.confidence import InsufficientInformation
-from tcg_ml_centering import DEFAULT_CENTERING_THRESHOLDS, centering_of, measure
+from tcg_domain.annotation import CornerRegion, EdgeRegion
+from tcg_domain.condition import BoundingBox, RegionFinding, SurfaceAssessment, card_frame_of
+from tcg_domain.confidence import InsufficientInformation, Uncertain
+from tcg_ml_centering import DEFAULT_CENTERING_THRESHOLDS, SideCentering, centering_of, measure
 from tcg_ml_condition import CONDITION_VERSION, compose
 from tcg_ml_corners import DEFAULT_CORNER_THRESHOLDS
 from tcg_ml_corners import classify as classify_corners
@@ -74,9 +75,11 @@ from tcg_api.storage import create_object_storage
 
 __all__ = [
     "EXPERIMENTS_DIR",
+    "AnalyzerOutputs",
     "experiment_path",
     "main",
     "pair_copies",
+    "predict_or_exclude",
     "render_experiment",
     "run",
     "write_experiment",
@@ -113,7 +116,10 @@ def pair_copies(
     by_copy: dict[uuid.UUID, dict[str, uuid.UUID]] = {}
     for image_id, (side, copy_id) in sides.items():
         if copy_id is not None:
-            by_copy.setdefault(copy_id, {})[side] = image_id
+            # First-seen wins: the caller feeds this in id order, so a copy
+            # with two images of one side composes the same pair on every run
+            # rather than whichever row a query plan produced last.
+            by_copy.setdefault(copy_id, {}).setdefault(side, image_id)
     return [
         (images["front"], images["back"])
         for _, images in sorted(by_copy.items(), key=lambda item: str(item[0]))
@@ -167,11 +173,16 @@ async def score_version(
                     training_images.c.physical_copy_id,
                     training_images.c.normalized_uri,
                     training_images.c.normalization_details,
-                ).where(
+                )
+                .where(
                     training_images.c.id.in_(
                         [member.training_image_id for member in manifest.members]
                     )
                 )
+                # `pair_copies` keeps the first image it sees per side, so this
+                # order is what makes a duplicate-side copy compose the same
+                # pair on every run.
+                .order_by(training_images.c.id)
             )
         ).all()
 
@@ -180,7 +191,7 @@ async def score_version(
     predictions: dict[uuid.UUID, ImagePredictions] = {}
     excluded: dict[uuid.UUID, str] = {}
     ran: dict[uuid.UUID, tuple[str, uuid.UUID | None]] = {}
-    outputs: dict[uuid.UUID, tuple[object, object, object, object]] = {}
+    outputs: dict[uuid.UUID, AnalyzerOutputs] = {}
     for row in rows:
         if row.normalized_uri is None:
             excluded[row.id] = "no_normalized_artifact"
@@ -196,36 +207,72 @@ async def score_version(
             excluded[row.id] = "stored_artifact_unreadable"
             continue
 
-        raw, scored = _predict(data, frame, side=ImageSide(row.side))
+        answered = predict_or_exclude(
+            row.id, data, frame, side=ImageSide(row.side), excluded=excluded
+        )
+        if answered is None:
+            continue
+        raw, scored = answered
         predictions[row.id] = scored
         outputs[row.id] = raw
         ran[row.id] = (row.side, row.physical_copy_id)
 
     composed = []
     for front_id, back_id in pair_copies(ran):
-        front_centering, front_corners, front_edges, front_surface = outputs[front_id]
-        back_centering, back_corners, back_edges, back_surface = outputs[back_id]
+        front, back = outputs[front_id], outputs[back_id]
         composed.append(
             compose(
-                centering=centering_of(front_centering, back_centering),  # type: ignore[arg-type]
-                corners={ImageSide.FRONT: front_corners, ImageSide.BACK: back_corners},  # type: ignore[dict-item]
-                edges={ImageSide.FRONT: front_edges, ImageSide.BACK: back_edges},  # type: ignore[dict-item]
-                surface={ImageSide.FRONT: front_surface, ImageSide.BACK: back_surface},  # type: ignore[dict-item]
+                centering=centering_of(front.centering, back.centering),
+                corners={ImageSide.FRONT: front.corners, ImageSide.BACK: back.corners},
+                edges={ImageSide.FRONT: front.edges, ImageSide.BACK: back.edges},
+                surface={ImageSide.FRONT: front.surface, ImageSide.BACK: back.surface},
             )
         )
 
     return evaluate(corpus, predictions=predictions, composed=composed, excluded=excluded)
 
 
+class AnalyzerOutputs(NamedTuple):
+    """One artifact's four analyzer answers, in their own shapes.
+
+    Kept beside the scorer's `ImagePredictions` view of the same run so the
+    `compose` replay takes exactly what the analyzers said and nothing
+    decodes the artifact twice.
+    """
+
+    centering: Uncertain[SideCentering]
+    corners: Uncertain[Mapping[CornerRegion, RegionFinding]]
+    edges: Uncertain[Mapping[EdgeRegion, RegionFinding]]
+    surface: Uncertain[SurfaceAssessment]
+
+
+def predict_or_exclude(
+    image_id: uuid.UUID,
+    data: bytes,
+    frame: BoundingBox,
+    *,
+    side: ImageSide,
+    excluded: dict[uuid.UUID, str],
+) -> tuple[AnalyzerOutputs, ImagePredictions] | None:
+    """Run the analyzers, containing a raise to the one image it came from.
+
+    One bad artifact must cost one image, never the whole record — the
+    analyzers answer their known failure modes as refusals, but this path
+    decodes stored bytes and a surprise from the CV stack should land in the
+    exclusion ledger beside the other per-image reasons.
+    """
+    try:
+        return _predict(data, frame, side=side)
+    except Exception:
+        logger.exception("training image %s: an analyzer raised; excluded from the run", image_id)
+        excluded[image_id] = "analyzer_error"
+        return None
+
+
 def _predict(
     data: bytes, frame: BoundingBox, *, side: ImageSide
-) -> tuple[tuple[object, object, object, object], ImagePredictions]:
-    """Run the four analyzers over one artifact at default thresholds.
-
-    Returns the raw analyzer outputs (for the `compose` replay, which takes
-    them in their own shapes) beside the scorer's view of the same run, so
-    nothing decodes the artifact twice.
-    """
+) -> tuple[AnalyzerOutputs, ImagePredictions]:
+    """Run the four analyzers over one artifact at default thresholds."""
     centering = measure(data, card_frame=frame)
     corners = classify_corners(data, card_frame=frame)
     edges = classify_edges(data, card_frame=frame)
@@ -244,7 +291,7 @@ def _predict(
         edges=edges,
         surface=surface,
     )
-    return (centering, corners, edges, surface), scored
+    return AnalyzerOutputs(centering, corners, edges, surface), scored
 
 
 def _git_commit(fallback: str | None) -> str:

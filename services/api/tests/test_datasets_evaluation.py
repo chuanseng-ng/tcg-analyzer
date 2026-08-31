@@ -43,6 +43,45 @@ def test_a_copy_with_one_side_does_not_pair() -> None:
     assert pair_copies({FRONT: ("front", COPY)}) == []
 
 
+def test_a_duplicate_side_on_one_copy_keeps_the_first_image_seen() -> None:
+    """A re-photographed side must not make the compose replay nondeterministic.
+
+    The runner's select is ordered by image id, so first-seen is a stable
+    choice rather than a query-plan accident.
+    """
+    second_front = uuid.UUID("00000000-0000-0000-0000-0000000000ac")
+
+    pairs = pair_copies(
+        {FRONT: ("front", COPY), second_front: ("front", COPY), BACK: ("back", COPY)}
+    )
+
+    assert pairs == [(FRONT, BACK)]
+
+
+def test_an_analyzer_exception_excludes_the_image_rather_than_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One bad artifact must cost one image, never the whole record."""
+    from tcg_api.datasets import evaluation
+
+    def explode(data: bytes, frame: object, *, side: object) -> object:
+        raise ValueError("cv2 surprise")
+
+    monkeypatch.setattr(evaluation, "_predict", explode)
+    excluded: dict[uuid.UUID, str] = {}
+
+    result = evaluation.predict_or_exclude(
+        FRONT,
+        b"bytes",
+        None,
+        side=None,
+        excluded=excluded,  # type: ignore[arg-type]
+    )
+
+    assert result is None
+    assert excluded == {FRONT: "analyzer_error"}
+
+
 def test_the_experiment_file_is_named_by_dataset_and_harness_version() -> None:
     path = experiment_path("pokemon-condition-v0.1.0")
 

@@ -23,5 +23,11 @@ Every refusal in a record is the one-key
 `{"insufficient_information": <reason>}` object. A metric over zero samples
 is such a refusal, never a number.
 
+The per-axis `refused` maps are keyed on the analyzers' own reason strings,
+some of which are prose sentences — so rewording a reason in an analyzer
+changes the keys in later records. That is a behavior-adjacent change even
+when nothing numeric moved; treat it like any other analyzer edit (it bumps
+that axis's version, and the new record lands under the new filename).
+
 Committing a run is its own commit, the manifests' convention:
 `chore(ml/evaluation): record <dataset version> at <condition version>`.

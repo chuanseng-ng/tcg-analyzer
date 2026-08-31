@@ -168,7 +168,9 @@ def evaluate(
         composed: The `compose` replays, one per card whose sides both ran —
             the ledger that prices the min-confidence rule.
         excluded: Images the caller could not run the analyzers on, each with
-            its reason (no stored artifact, no derivable card frame, …).
+            its reason (no stored artifact, no derivable card frame, …). Keys
+            are consulted per corpus member: an id that is not in the corpus
+            counts nowhere, so exclude corpus members only.
     """
     exclusions = dict(excluded or {})
     tallies = {split: _SplitTally() for split in DatasetSplit}
@@ -267,6 +269,16 @@ def _score_surface(
             tally.truth_unknown += 1
         elif row.label not in abstained:
             truth_rows.append((row.label, row.bbox))
+    for defect in answer.findings:
+        # #175's filter-by-frame rule, applied to the prediction side too: the
+        # truth above is artifact-frame, so a prediction declaring the original
+        # photograph cannot be matched here and reaching this scorer with one
+        # is a caller bug, not a scorable finding.
+        if defect.representation is not Representation.NORMALIZED:
+            raise ValueError(
+                f"a {defect.type} prediction declares the original-photograph frame; "
+                f"this scorer matches against artifact-frame truth and never projects"
+            )
     predicted_rows: list[LabelledBox] = [
         (str(defect.type), defect.bounding_box) for defect in answer.findings
     ]
