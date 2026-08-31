@@ -43,6 +43,20 @@ are therefore grouped by centre, a group is one card, and the *spread* within
 the winning group is what :attr:`CardGeometry.enclosing_ratio` reports — which
 is how sleeve obstruction gets answered at all.
 
+**A quadrilateral wholly inside another is that card's structure, not a second
+card.** #206: a front's artwork window is convex, card-aspect and well filled,
+so it survives every candidate filter, and at close range its centre sits far
+enough from the card's to escape the concentric grouping — on 4 of the corpus's
+28 real photographs it was counted as a second card and the gate refused a
+one-card scene for `multiple_cards`. A group whose outermost quadrilateral lies
+inside another group's is therefore dropped before counting, with a few pixels
+of slack, because the corpus's fourth phantom was the card's own text panel:
+a contour that shares the card's edges, whose fitted corners landed 2.8 px
+*outside* the winning quadrilateral. Group-level and not candidate-level on
+purpose — a card is contained by its sleeve too, but concentrically, so it is
+already in the sleeve's group, and dropping contained candidates before
+grouping would take the sleeve's answer apart.
+
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
@@ -188,6 +202,14 @@ def detect(
     groups = _group_by_centre(
         grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
+    # A group wholly inside another group's outermost quadrilateral is that
+    # card's own structure — an artwork window, a text panel — never a second
+    # card (#206). Dropped before counting and selection alike.
+    groups = [
+        group
+        for group in groups
+        if not _inside_another(group, groups, slack=thresholds.containment_slack_px)
+    ]
     card_group = max(groups, key=lambda group: max(member.area for member in group))
     # The outermost member clear of the frame boundary, and the outermost of
     # all only when every member touches it (#192) — a clipped card is still
@@ -467,6 +489,33 @@ def _group_by_centre(candidates: list[_Candidate], *, tolerance: float) -> list[
 
 def _gap(first: Corner, second: Corner) -> float:
     return math.hypot(first[0] - second[0], first[1] - second[1])
+
+
+def _inside_another(
+    group: list[_Candidate], groups: list[list[_Candidate]], *, slack: float
+) -> bool:
+    """Whether this group's outermost member sits inside another group's.
+
+    Strictly larger by area, so two groups cannot drop each other. The slack is
+    for a phantom whose contour shares the card's own boundary: where the two
+    edges coincide, the fitted corners land a couple of pixels either side of
+    the winning quadrilateral's, and a strict test would keep exactly the shape
+    that is most obviously not a second card.
+    """
+    inner = max(group, key=lambda member: member.area)
+    for other in groups:
+        if other is group:
+            continue
+        outer = max(other, key=lambda member: member.area)
+        if outer.area <= inner.area:
+            continue
+        boundary = np.array(outer.quad, dtype=np.float32)
+        if all(
+            cv2.pointPolygonTest(boundary, corner, measureDist=True) >= -slack
+            for corner in inner.quad
+        ):
+            return True
+    return False
 
 
 def _enclosing_ratio(group: list[_Candidate], *, thresholds: DetectionThresholds) -> float:
