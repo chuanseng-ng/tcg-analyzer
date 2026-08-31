@@ -3,7 +3,20 @@ name = "tcg-ml-condition"
 version = "0.0.0"
 description = "Neutral, company-agnostic condition representation"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "tcg-domain",
+    "tcg-ml-centering",
+    "tcg-ml-corners",
+    "tcg-ml-edges",
+    "tcg-ml-surface",
+]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
+tcg-ml-centering = { workspace = true }
+tcg-ml-corners = { workspace = true }
+tcg-ml-edges = { workspace = true }
+tcg-ml-surface = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
