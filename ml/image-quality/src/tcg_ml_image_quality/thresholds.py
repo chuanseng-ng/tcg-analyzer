@@ -141,11 +141,20 @@ class QualityThresholds:
     card_count_ideal: float = 1.0
 
     # -- sleeve obstruction: the enclosing quadrilateral's area ratio --------
-    #: 1.0 is a bare card. A penny sleeve sits near 1.05 and a top-loader near
-    #: 1.4; the detector reports nothing above 1.5, so **this condition is a
-    #: `poor` finding by construction** — the unusable line sits where a
-    #: "sleeve" would no longer be a sleeve, and exists so that the triple
-    #: declares its direction the way every other one does.
+    #: 1.0 is a bare card, and a top-loader sits near 1.3; the detector reports
+    #: nothing above 1.5, so **this condition is a `poor` finding by
+    #: construction** — the unusable line sits where a "sleeve" would no longer
+    #: be a sleeve, and exists so that the triple declares its direction the way
+    #: every other one does.
+    #:
+    #: **A sleeve thinner than a rigid holder never reaches this line at all**,
+    #: and that is the detector's limit rather than this one's (#207): a penny
+    #: sleeve stands off ~1.6 mm, and on real photographs `ml/card-detection`'s
+    #: six extraction passes disagree about where the card's own edge is by up
+    #: to 3.0 mm. So the number arriving here is a rigid holder or it is 1.0.
+    #: This line stayed at 1.02 through that fix on purpose: the measurement was
+    #: wrong, not the line, and moving it would have traded one wrong warning
+    #: for another.
     sleeve_ratio_unusable: float = 2.0
     sleeve_ratio_poor: float = 1.02
     sleeve_ratio_ideal: float = 1.0

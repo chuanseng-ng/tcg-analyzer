@@ -79,8 +79,9 @@ class CenteringThresholds:
     #: artifact pixels — roughly 0.17 mm at 12 px/mm. At or below it the frame
     #: touches the card edge on that axis and there is no border to ratio:
     #: #160's zero-denominator refusal, kept and widened a hair. Denominated
-    #: in pixels, like the detector's `sleeve_min_margin`, because the
-    #: artifact's scale is fixed by construction.
+    #: in pixels — which the detector's own standoff floor deliberately is
+    #: *not* (#207) — because the artifact's scale is fixed by construction
+    #: where a photograph's is not.
     min_axis_border_px: float = 2.0
 
     def __post_init__(self) -> None:
