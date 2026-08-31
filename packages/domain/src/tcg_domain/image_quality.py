@@ -99,13 +99,12 @@ class ConditionVerdict(StrEnum):
     UNDETERMINED = "undetermined"
 
 
-#: The conditions a photograph alone answers: they are photometric, measurable
-#: from the pixels without knowing where the card is.
+#: The conditions the frame alone answers: whatever the photograph is of, these
+#: are measurable from every pixel of it at once.
 DECIDABLE_WITHOUT_GEOMETRY: Final = frozenset(
     {
         QualityCondition.BLUR,
         QualityCondition.LOW_RESOLUTION,
-        QualityCondition.GLARE,
         QualityCondition.POOR_EXPOSURE,
         QualityCondition.EXCESSIVE_DARKNESS,
         QualityCondition.EXCESSIVE_BRIGHTNESS,
@@ -117,6 +116,13 @@ DECIDABLE_WITHOUT_GEOMETRY: Final = frozenset(
 #: Without a :class:`~tcg_domain.card_geometry.CardGeometry` these are reported
 #: :data:`ConditionVerdict.UNDETERMINED`, never guessed and never quietly
 #: omitted.
+#:
+#: :attr:`QualityCondition.GLARE` is here and the other five are here for
+#: different reasons. The five are questions *about* the boundary. Glare is a
+#: measurement of pixels, like the set above — but of the card's pixels, because
+#: reflection is a property of the card's surface and measuring it over the
+#: whole frame dilutes it with whatever the card is lying on. #190 measured that
+#: dilution as blindness and #208 moved the condition here.
 NEEDS_CARD_GEOMETRY: Final = frozenset(QualityCondition) - DECIDABLE_WITHOUT_GEOMETRY
 
 #: How bad each status is. `good` is the absence of a finding, so a fold over an

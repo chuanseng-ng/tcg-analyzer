@@ -78,9 +78,16 @@ def test_every_condition_is_either_decidable_now_or_waiting_on_card_geometry() -
     assert not DECIDABLE_WITHOUT_GEOMETRY & NEEDS_CARD_GEOMETRY
 
 
-def test_the_five_that_need_geometry_are_the_ones_card_detection_supplies() -> None:
-    """#37 flips these on; naming them keeps that hand-off explicit."""
+def test_the_six_that_need_geometry_are_the_ones_card_detection_supplies() -> None:
+    """#37 flips these on; naming them keeps that hand-off explicit.
+
+    `glare` is the odd one and joined them at #208: it is measured from the
+    pixels like the five above it, but only the pixels *of the card* — over the
+    whole frame the reflection is diluted by whatever the card is lying on,
+    which is what #190 measured as blindness.
+    """
     assert {str(condition) for condition in NEEDS_CARD_GEOMETRY} == {
+        "glare",
         "severe_perspective_distortion",
         "card_partly_outside_frame",
         "multiple_cards",

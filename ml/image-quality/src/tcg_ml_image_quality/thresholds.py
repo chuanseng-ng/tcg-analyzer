@@ -44,13 +44,13 @@ class QualityThresholds:
     the heuristic happens to work in.
 
     Their order is the direction. `blur_variance` runs 40 → 120 → 500 because
-    more Laplacian energy is sharper; `glare_area` runs 0.03 → 0.005 → 0.0
+    more Laplacian energy is sharper; `glare_area` runs 0.08 → 0.0055 → 0.0
     because less reflection is better. Nothing declares which way is better —
     reading it off the numbers means the two cannot contradict each other.
 
-    The first six are measured from the pixels alone. The last five are measured
-    from the card boundary #37's detector supplies, and are simply not judged
-    when no boundary was found — see :func:`~tcg_ml_image_quality.assess`.
+    The first five are measured from the frame alone. The last six need the card
+    boundary #37's detector supplies, and are simply not judged when no boundary
+    was found — see :func:`~tcg_ml_image_quality.assess`.
 
     Raises:
         ValueError: If a triple is not strictly ordered, or a positive value is
@@ -98,15 +98,38 @@ class QualityThresholds:
     exposure_range_poor: float = 60.0
     exposure_range_ideal: float = 200.0
 
-    # -- glare: the largest blob of near-saturated pixels --------------------
-    #: What counts as blown out, 0-255.
+    # -- glare: the largest reflecting region of the card --------------------
+    #: How far inside the detected quadrilateral the measurement begins, as a
+    #: fraction of the card's long edge. **Load-bearing, and measured** (#208):
+    #: the card's own printed border carries a chroma gradient of its own, and
+    #: #207 measured the detector's extraction passes disagreeing about where
+    #: the card edge is by up to 3.0 mm. Below ~0.04 (3.5 mm) the separation
+    #: between reflecting and clean photographs collapses; it holds across
+    #: 0.04-0.12, and this sits in the middle of that plateau at about 5.3 mm.
+    glare_card_inset_fraction: float = 0.06
+    #: What counts as blown out, 0-255. A specular highlight bright enough to
+    #: clip is glare too, and folding it into the same mask is what keeps one
+    #: number able to say so.
     glare_level: int = 250
-    #: The largest *connected* saturated region, as a fraction of the frame.
-    #: A fraction of all saturated pixels would be the wrong measure: a white
-    #: card border is saturated and is not glare, while one specular blob on the
-    #: holo layer is.
-    glare_area_unusable: float = 0.03
-    glare_area_poor: float = 0.005
+    #: How many times the card's *own* median chroma gradient a region must
+    #: carry to count as reflecting. Relative rather than absolute because the
+    #: quantity being detected is a reflection off this card, and an absolute
+    #: level separates nothing: measured, it ranks foil finishes rather than
+    #: reflections.
+    glare_sweep_multiple: float = 5.0
+    #: The largest *connected* reflecting region, as a fraction of the measured
+    #: card region. Connected rather than total, and the distinction is the
+    #: whole heuristic: scattered white ink is not glare, one sheet of returned
+    #: light across the artwork is.
+    #:
+    #: Both lines come from #208's measurement over the corpus's 28 real
+    #: photographs. `poor` is the geometric mean of the closest reflecting
+    #: photograph (0.0102) and the worst clean one (0.0030) — a 3.4x gap.
+    #: `unusable` is twice the largest value any real photograph produced, so
+    #: **no photograph the annotator was willing to use can be refused**; a
+    #: reflection has to cover an eighth of the card to reach it.
+    glare_area_unusable: float = 0.08
+    glare_area_poor: float = 0.0055
     #: No reflection at all, which is both the ideal and the floor.
     glare_area_ideal: float = 0.0
 
@@ -174,6 +197,16 @@ class QualityThresholds:
             raise ValueError(f"work_long_edge must be positive, got {self.work_long_edge!r}")
         if not 0 < self.glare_level <= 255:
             raise ValueError(f"glare_level must lie in (0, 255], got {self.glare_level!r}")
+        if not 0.0 <= self.glare_card_inset_fraction < 0.5:
+            raise ValueError(
+                "glare_card_inset_fraction must lie in [0, 0.5), got "
+                f"{self.glare_card_inset_fraction!r}"
+            )
+        if self.glare_sweep_multiple <= 1.0:
+            raise ValueError(
+                "glare_sweep_multiple must exceed 1, or every card is reflecting, got "
+                f"{self.glare_sweep_multiple!r}"
+            )
 
         for name, unusable, poor, ideal in self.limits():
             ascending = unusable < poor < ideal
