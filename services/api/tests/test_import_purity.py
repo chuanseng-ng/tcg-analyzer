@@ -227,6 +227,25 @@ def test_versioning_a_dataset_pulls_in_neither_opencv_nor_the_analysis_stages() 
     assert stages == [], stages
 
 
+def test_registering_a_model_bundle_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#189 registers a bundle from the API image, not the worker one.
+
+    The registry stores a reference — a name, a version and an object-storage
+    key — and never opens the artifact it names. A CV stack on this path would
+    make `tcg-register-model-bundle` a worker-image command for a step that
+    decodes no photograph, which is the claim the pyproject comment and
+    `docs/database.md` both make and this test holds.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.models.registration")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.models.registration")
+
+    assert cv == [], (
+        f"importing tcg_api.models.registration pulled in {cv}. Registering a bundle "
+        "writes one row; it never reads the artifact's bytes, let alone decodes them."
+    )
+    assert stages == [], stages
+
+
 def test_the_normalization_pass_is_the_module_that_binds_to_opencv() -> None:
     """Guard the guard for #159's pass, on the deduplication test's terms.
 

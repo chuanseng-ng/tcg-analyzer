@@ -21,6 +21,7 @@ Table modules import `metadata` from here and attach to it:
   provenance, §32's `physical_copies` and `training_image_fingerprints`, §31's
   `dataset_versions` with their `dataset_members`, and §30's `image_annotations`
   and `centering_measurements`.
+* `tcg_api.models.tables` — spec §58's `model_bundles`.
 
 This module imports nothing from `tcg_api`, and must not: the table modules
 import *it*, so anything here that reached back for them would be a cycle. What

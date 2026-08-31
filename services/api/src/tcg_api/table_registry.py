@@ -26,6 +26,7 @@ from tcg_api.datasets.tables import TABLES as DATASETS_TABLES
 from tcg_api.economics.tables import TABLES as ECONOMICS_TABLES
 from tcg_api.grading.tables import TABLES as GRADING_TABLES
 from tcg_api.market.tables import TABLES as MARKET_TABLES
+from tcg_api.models.tables import TABLES as MODELS_TABLES
 from tcg_api.tables import metadata
 
 __all__ = ["DECLARED_TABLES", "metadata"]
@@ -42,4 +43,5 @@ DECLARED_TABLES: Final = (
     *MARKET_TABLES,
     *ECONOMICS_TABLES,
     *DATASETS_TABLES,
+    *MODELS_TABLES,
 )
