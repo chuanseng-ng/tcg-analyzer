@@ -748,3 +748,20 @@ jobs:
           # Copyleft licences are the concern for a product that may ship
           # commercially. Flagged for a human rather than merged silently.
           deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-3.0
+          # sharp's prebuilt libvips binaries are LGPL-3.0-or-later. They are
+          # unmodified shared libraries linked dynamically, they arrive only as
+          # next's optional next/image dependency, and neither app uses
+          # next/image — so nothing here ever loads them. Named one by one on
+          # purpose: a new sharp platform package fails the gate again, which
+          # is the flag-a-human behaviour the deny list is for.
+          allow-dependencies-licenses: >-
+            pkg:npm/%40img/sharp-libvips-darwin-arm64,
+            pkg:npm/%40img/sharp-libvips-darwin-x64,
+            pkg:npm/%40img/sharp-libvips-linux-arm,
+            pkg:npm/%40img/sharp-libvips-linux-arm64,
+            pkg:npm/%40img/sharp-libvips-linux-ppc64,
+            pkg:npm/%40img/sharp-libvips-linux-riscv64,
+            pkg:npm/%40img/sharp-libvips-linux-s390x,
+            pkg:npm/%40img/sharp-libvips-linux-x64,
+            pkg:npm/%40img/sharp-libvips-linuxmusl-arm64,
+            pkg:npm/%40img/sharp-libvips-linuxmusl-x64
