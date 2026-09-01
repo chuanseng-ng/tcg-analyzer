@@ -48,10 +48,18 @@ DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = (
 # because ADR 0009 is what stops that directory reading as though it were the
 # store: each of them now points at the record, and a link that stops resolving
 # puts the contradiction back.
+#
+# The two `docs/adr/` entries are the first ADRs covered here, and they are
+# covered for the same reason: ADR 0011 answers six questions that #221-#228
+# each quote instead of re-deciding, and it reaches them through links — to the
+# records it declines to reopen, and from the index that now lists every ADR.
+# A link that stops resolving there sends the next reader back to guessing.
 LINKED_DOCUMENTS: tuple[str, ...] = (
     *DOCUMENTED_COMMAND_SOURCES,
     "docs/README.md",
     "docs/architecture.md",
+    "docs/adr/README.md",
+    "docs/adr/0011-the-v1-grade-predictor-basis.md",
     "docs/market-provider-research.md",
     "docs/training-image-provenance-research.md",
     "docs/image-quality-gate-research.md",
