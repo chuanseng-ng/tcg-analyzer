@@ -349,6 +349,38 @@ schema because that is the only way `apps/annotation` can learn a shape
 ([ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md)). What keeps it
 internal is the `/internal` prefix, which is what an ingress rule matches.
 
+## Recording a grading submission's outcome
+
+ADR 0008's primary approved source is photographs of raw cards this project owns
+and then submits for grading, and the label arrives weeks after the photographs
+do. This is where it goes — one row per submission, holding what one company
+issued for one physical card.
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+uv run tcg-record-grading-outcome --physical-copy <copy id> --company psa --certification-number 12345678 --grade 9 --returned-at 2026-09-30
+```
+
+The copy identifier is the one `tcg-ingest-training-images` printed. A grade is
+checked against the scale of the company that issued it — PSA and TAG issue no
+9.5 and BGS does — in Python rather than in a CHECK, so a fourth company costs
+no migration. A designation goes in its own column and never on the scale: PSA
+issues `authentic` *in place of* a grade, BGS `black_label` *on top of* a 10.
+
+**Recording an outcome writes the certification onto the copy.** That is the
+write `physical_copies` was left mutable for, and it is what makes
+`uq_physical_copies_certification` refuse one slab claimed by two cards. Where
+the copy already carries a different certification — a card cross-graded by a
+second company — the copy keeps it and the summary says so; the outcome is
+recorded against the copy either way, and both are retrievable.
+
+**A recorded outcome is correctable.** There is no immutability trigger, for the
+same reason `physical_copies` has none: an operator transcribes a grade off a
+slab by hand. Nothing here stores which published standard was in force either —
+that is `rules_in_force(company, returned_at)` over `grading_rules`, and storing
+it would freeze the reading this repository happened to have at the time.
+
 ## Registering a model bundle
 
 Spec §58's model registry is what lets an analysis record

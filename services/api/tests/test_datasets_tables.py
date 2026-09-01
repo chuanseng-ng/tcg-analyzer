@@ -34,10 +34,12 @@ from sqlalchemy.schema import CreateTable
 from tcg_api.analysis.tables import images
 from tcg_api.datasets.tables import (
     PROVENANCE_FIELDS,
+    SUBGRADE_COLUMNS,
     TABLES,
     centering_measurements,
     dataset_members,
     dataset_versions,
+    grading_outcomes,
     image_annotations,
     physical_copies,
     training_image_fingerprints,
@@ -46,6 +48,7 @@ from tcg_api.datasets.tables import (
 from tcg_api.table_registry import DECLARED_TABLES
 from tcg_domain import DatasetSplit, ImageSide
 from tcg_domain.annotation import LABELS_BY_KIND, REGIONS_BY_KIND
+from tcg_grading_companies import DESIGNATIONS, Designation, GradingCompany
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 VERSIONS = REPO_ROOT / "database" / "migrations" / "versions"
@@ -58,6 +61,10 @@ FINGERPRINTS_MIGRATION = VERSIONS / "20260829_add_the_training_image_fingerprint
 ANNOTATION_MIGRATION = VERSIONS / "20260829_add_the_annotation_schema.py"
 #: #175's representation discriminator landed in a fourth, likewise.
 REPRESENTATION_MIGRATION = VERSIONS / "20260829_name_the_representation_an_annotation_marks.py"
+#: #165's grading outcome landed in a fifth. Reading it here is what holds its
+#: CHECKs to the declaration below, which is the drift `compare_metadata` cannot
+#: see.
+OUTCOMES_MIGRATION = VERSIONS / "20260901_record_a_grading_submissions_outcome.py"
 
 #: Spec §29's list, verbatim apart from `source_url/reference`, which the
 #: specification spells with a slash and no column may.
@@ -89,6 +96,9 @@ COMPOSED_CHECKS = (
     "ck_image_annotations_annotator_id_is_opaque",
     "ck_centering_measurements_ratios_are_unit_intervals",
     "ck_centering_measurements_annotator_id_is_opaque",
+    "ck_grading_outcomes_designation_is_a_known_designation",
+    "ck_grading_outcomes_grade_is_an_issued_grade",
+    "ck_grading_outcomes_subgrades_are_issued_grades",
 )
 
 
@@ -101,6 +111,7 @@ def migration_source() -> str:
             FINGERPRINTS_MIGRATION,
             ANNOTATION_MIGRATION,
             REPRESENTATION_MIGRATION,
+            OUTCOMES_MIGRATION,
         )
     )
 
@@ -145,7 +156,7 @@ def test_the_domain_is_registered() -> None:
     assert set(TABLES) <= set(DECLARED_TABLES)
 
 
-def test_the_seven_tables_are_declared_on_the_shared_metadata() -> None:
+def test_the_eight_tables_are_declared_on_the_shared_metadata() -> None:
     assert {table.name for table in TABLES} == {
         "physical_copies",
         "training_images",
@@ -154,6 +165,7 @@ def test_the_seven_tables_are_declared_on_the_shared_metadata() -> None:
         "dataset_members",
         "image_annotations",
         "centering_measurements",
+        "grading_outcomes",
     }
 
 
@@ -876,3 +888,139 @@ def test_the_migration_spells_the_vocabulary_the_domain_spells() -> None:
             assert f"'{label}'" in clause
         for region in REGIONS_BY_KIND[kind]:
             assert f"'{region}'" in clause
+
+
+# ---------------------------------------------------------------------------
+# #165's label — the target the corpus was missing
+# ---------------------------------------------------------------------------
+def test_a_grade_is_stored_under_the_grammar_of_a_grade_and_not_a_scale() -> None:
+    """`market_observations`' split, and the reason it transfers.
+
+    PSA and TAG issue no 9.5 and BGS does. A CHECK that knew that would make a
+    fourth company, or a scale revision, cost a migration of this table — so the
+    constraint is the grammar and `tcg_api.datasets.outcomes` is the per-company
+    guard.
+    """
+    rule = one_check(grading_outcomes, "grade_is_an_issued_grade")
+
+    assert "9.5" not in rule
+    for company in GradingCompany:
+        assert company.value not in rule
+
+
+def test_an_issued_grade_is_never_a_collapsed_tail() -> None:
+    """The deliberate difference from `market_observations._GRADE_KEY_PATTERN`.
+
+    §24's `7_or_lower` is what a model emits when it will not commit to one
+    point. A slab prints one point, so a bucket here would be a distribution
+    wearing an outcome's clothes.
+    """
+    rule = one_check(grading_outcomes, "grade_is_an_issued_grade")
+
+    assert "_or_" not in rule
+
+
+def test_a_submission_carrying_neither_is_not_a_submission() -> None:
+    """PSA issues Authentic *in place of* a grade, so neither column can be NOT NULL."""
+    assert grading_outcomes.c.grade.nullable
+    assert grading_outcomes.c.designation.nullable
+    assert one_check(grading_outcomes, "outcome_is_a_grade_or_a_designation") == (
+        "grade IS NOT NULL OR designation IS NOT NULL"
+    )
+
+
+def test_the_designation_check_names_every_designation_and_nothing_else() -> None:
+    """A designation is a published label, so unlike a company slug it *is* a closed set."""
+    rule = one_check(grading_outcomes, "designation_is_a_known_designation")
+
+    for designation in Designation:
+        assert f"'{designation.value}'" in rule
+    assert rule.count("'") == 2 * len(Designation)
+
+
+def test_every_designation_belongs_to_a_company_that_issues_it() -> None:
+    """The vocabulary is the CHECK's; which company issues which is Python's.
+
+    Same split as the grade above, and for the same reason.
+    """
+    issued = {member for company in DESIGNATIONS.values() for member in company}
+
+    assert issued == set(Designation)
+
+
+def test_the_four_subgrades_travel_together() -> None:
+    """An unrecorded subgrade cannot be recovered; a half-recorded one lies."""
+    rule = one_check(grading_outcomes, "subgrades_are_four_or_none")
+
+    assert "num_nulls" in rule
+    assert "IN (0, 4)" in rule
+    for column in SUBGRADE_COLUMNS:
+        assert column in rule
+        assert grading_outcomes.c[column].nullable
+
+
+def test_a_subgrade_is_stored_under_the_same_grammar_as_a_grade() -> None:
+    grade_rule = one_check(grading_outcomes, "grade_is_an_issued_grade")
+    subgrade_rule = one_check(grading_outcomes, "subgrades_are_issued_grades")
+    pattern = grade_rule.split("~ ")[1]
+
+    for column in SUBGRADE_COLUMNS:
+        assert f"{column} ~ {pattern}" in subgrade_rule
+
+
+def test_an_outcome_is_a_row_and_never_a_column_pair_on_the_copy() -> None:
+    """A copy can be graded by more than one company, and a pair would pick a winner.
+
+    ADR 0008's approved class 2 is a slab this project did not submit and whose
+    outcome it still knows, so the two are not hypothetical alternatives.
+    """
+    assert grading_outcomes.c.physical_copy_id.nullable is False
+    assert not set(physical_copies.c.keys()) & {"grade", "designation"}
+
+
+def test_an_outcome_carries_no_grading_rules_version() -> None:
+    """Which standard was in force is `rules_in_force(company, returned_at)`.
+
+    Storing it would freeze today's reading of `grading_rules`, and a later
+    re-read that finds a change with an earlier `effective_from` improves the
+    derived answer while leaving a stored one wrong. Spec §57's reproducibility
+    record is a different question and is M8's. The inverse assertion is the
+    guard.
+    """
+    assert "grading_rules_version" not in grading_outcomes.c
+
+
+def test_an_outcome_never_blocks_the_removal_of_its_copy() -> None:
+    """CASCADE, where `training_images.physical_copy_id` restricts.
+
+    A copy cannot be deleted while any image references it, so by the time one
+    can be removed this row describes nothing — and RESTRICT would make a §54
+    disposal, or a contributor withdrawal, fail for a reason nobody chose.
+    """
+    assert [key.ondelete for key in grading_outcomes.foreign_keys] == ["CASCADE"]
+
+
+def test_the_migration_leaves_the_outcome_correctable() -> None:
+    """The absence of a trigger is a decision, so it is asserted rather than noticed.
+
+    An operator transcribes a grade and a certification number by hand off a
+    slab. The same argument `physical_copies` and `training_images` are mutable
+    for; adding a trigger later fails this test rather than quietly breaking the
+    correction path.
+    """
+    source = OUTCOMES_MIGRATION.read_text(encoding="utf-8")
+
+    assert "trg_grading_outcomes_immutable" not in source
+    assert "CREATE OR REPLACE FUNCTION" not in source
+
+
+def test_the_outcome_migration_drops_no_shared_trigger_function() -> None:
+    """The trap the fingerprints revision already documents.
+
+    Copying `DROP FUNCTION dataset_records_are_immutable()` in from a revision
+    underneath would leave `dataset_versions` and `dataset_members` standing and
+    no longer immutable.
+    """
+    source = OUTCOMES_MIGRATION.read_text(encoding="utf-8")
+
+    assert "DROP FUNCTION" not in source

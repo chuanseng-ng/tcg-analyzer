@@ -70,6 +70,11 @@ DATASETS_REVISION = "6f49252e81d4"
 # about: a `DROP FUNCTION` copied in from the revision underneath would unguard
 # `dataset_versions` and `dataset_members`.
 FINGERPRINTS_REVISION = "a809e54401d2"
+# #165's grading outcome — the label the corpus was missing. Pinned for the same
+# reason as the rest. Like the fingerprints it creates no trigger function, and
+# it is the second place a `DROP FUNCTION` copied in from a revision underneath
+# would unguard `dataset_versions` and `dataset_members`.
+GRADING_OUTCOMES_REVISION = "b7e40d2a6c15"
 
 ANALYSIS_TABLES = ("analysis_sessions", "analyses", "images")
 
@@ -387,6 +392,38 @@ def test_downgrading_the_fingerprints_revision_keeps_the_shared_trigger_function
     immutable — a silent loss of spec §31's guarantee.
     """
     alembic("upgrade", FINGERPRINTS_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert function_exists("dataset_records_are_immutable()")
+    assert function_exists("market_rows_are_immutable()")
+
+
+def test_downgrading_the_grading_outcomes_revision_leaves_the_corpus_standing() -> None:
+    """The label goes and the corpus it labels stays.
+
+    Reversing #165 must cost neither a photograph nor a published version — it
+    adds one table and nothing else.
+    """
+    alembic("upgrade", GRADING_OUTCOMES_REVISION)
+
+    alembic("downgrade", "-1")
+
+    assert not table_exists("grading_outcomes")
+    for table in ("physical_copies", "training_images", "dataset_versions", "dataset_members"):
+        assert table_exists(table), table
+    assert table_exists("model_bundles")
+
+
+def test_downgrading_the_grading_outcomes_revision_keeps_the_shared_trigger_function() -> None:
+    """This revision creates no function, so reversing it must drop none.
+
+    The fingerprints revision documents the same trap: a `DROP FUNCTION
+    dataset_records_are_immutable()` copied in from the dataset revision would
+    leave `dataset_versions` and `dataset_members` standing and no longer
+    immutable — a silent loss of spec §31's guarantee.
+    """
+    alembic("upgrade", GRADING_OUTCOMES_REVISION)
 
     alembic("downgrade", "-1")
 

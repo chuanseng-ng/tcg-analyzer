@@ -1,6 +1,6 @@
 # The dataset, provenance and membership schema
 
-Four tables, described here for a human. **The DDL is
+Six tables, described here for a human. **The DDL is
 [the migration](../../database/migrations/versions/20260828_add_the_dataset_and_provenance_schema.py)**
 and the declaration is
 [`services/api/src/tcg_api/datasets/tables.py`](../../services/api/src/tcg_api/datasets/tables.py);
@@ -45,7 +45,7 @@ object is this?" differently, and one of them cannot answer it at all.
 
 | Approved source | Identifier | How it is derived |
 | --- | --- | --- |
-| 1 — photographs we take of raw cards we own, then submit for grading | `physical_copies.id`, then the certification number | A copy row is created when the card is photographed. The submission's certification number is written back onto the same row when it returns, so the pre- and post-grading photographs group together. |
+| 1 — photographs we take of raw cards we own, then submit for grading | `physical_copies.id`, then the certification number | A copy row is created when the card is photographed. The submission's outcome is a `grading_outcomes` row when it returns, and its certification number is written back onto the same copy row, so the pre- and post-grading photographs group together. |
 | 2 — photographs we take of graded slabs we own | The certification number | Printed on the slab and visible in the photograph itself. The copy row carries it from the start. |
 | 3 — photographs contributed under a written grant | `physical_copies.id`, from the contributor's own copy reference | The [grant template](../documentation/) asks the contributor which photographs are of the same card; one copy row per distinct card they name. Where a contributed photograph is of a slab, its certification number goes on the row and takes over. |
 | 4 — this product's own user uploads, where the user consented | **None — the grouping falls back to `source`** | See below. |
@@ -316,10 +316,111 @@ one derivable from nothing.
 A version over an empty corpus is refused: §31's point is that the reference means
 something, and a version with no members resolves to nothing.
 
+## `grading_outcomes` — what a company actually issued
+
+Spec §27's target is "±80% of predicted grades within ±1 **actual grade** on a
+properly held-out evaluation set", and epic #9 repeats it. Everything above is
+the *input* side of that: which object a photograph is of, what rights came with
+it, what an annotator saw. This is the target, and without it the corpus has
+features and nothing to learn against.
+
+| Column | Meaning |
+| --- | --- |
+| `id` | A surrogate key; the identity is the pair below. |
+| `physical_copy_id` | The card. `ON DELETE CASCADE`. |
+| `grading_company` | `psa`, `tag` or `bgs`. |
+| `certification_number` | The number printed on the slab that came back. |
+| `grade` | `9`, `9.5`, `10` — as `tcg_domain.Grade` renders it. NULL where a designation replaced it. |
+| `designation` | `authentic`, `authentic_altered`, `black_label`, `pristine_10`, `gem_mint_10`. |
+| `subgrade_centering` / `_corners` / `_edges` / `_surface` | What a BGS slab prints. Four or none. |
+| `returned_at` | When the slab came back. NULL for a slab this project did not submit. |
+| `created_at` | |
+
+**One row per submission, and never a column pair on `physical_copies`.** One
+copy can be graded by more than one company over its life, and ADR 0008's
+approved class 2 is a slab this project did not submit and whose outcome it still
+knows. A pair of columns beside the certification would silently pick a winner
+between the two; a row per submission keeps both retrievable, which is also what
+keeps spec's excluded crack-and-resubmit workflow from being *unrepresentable* as
+data. Excluding a feature does not stop the data existing.
+
+**A designation is not a value on a grade scale, and this is where that rule
+finally costs a column.** PSA issues "Authentic" *in place of* a numeric grade,
+so `grade` is nullable and `designation` is its own column — exactly what
+`packages/grading-companies`' own `ponytail:` note said the answer would be.
+Widening `tcg_domain.grade.Grade` to hold one would destroy the property that
+makes a grade usable as a distribution key and a database key at all. BGS Black
+Label is the other shape: a label *on* grade 10, so both columns are filled. A
+submission carrying **neither** is not a submission:
+
+```sql
+CONSTRAINT ck_grading_outcomes_outcome_is_a_grade_or_a_designation CHECK (
+    grade IS NOT NULL OR designation IS NOT NULL
+)
+```
+
+**The grade CHECK is the grade *grammar*, and it is narrower than the market
+domain's.** `market_observations` established that a per-company scale is a
+Python guard rather than a constraint, because PSA and TAG issue no 9.5 and BGS
+does, and a CHECK that knew it would make a fourth company — or a scale revision
+— cost a migration of this table. The guard here is `verify_outcome` in
+[`tcg_api/datasets/outcomes.py`](../../services/api/src/tcg_api/datasets/outcomes.py),
+which reads `GradeScale.supports` off the issuing company's own adapter. What
+differs from `market_observations` is §24's collapsed tails: `7_or_lower` is
+storable there and not here, because a tail is what a *model* emits when it will
+not commit to one point and a slab prints one point.
+
+**The four subgrades are recorded and nothing reads them.** V1 predicts an
+overall grade only (§24), and the spec never mentions subgrades — so this is a
+deliberate cost, taken because BGS prints four and an unrecorded subgrade cannot
+be recovered once the card is sold. `num_nulls(...) IN (0, 4)` keeps a half-set
+out, and each is validated against the issuing company's scale by the same guard
+the overall grade uses.
+
+**No `grading_rules_version` column, and that is a decision rather than an
+oversight.** Which published standard was in force is part of what a grade means,
+and it is answered by `rules_in_force(company, returned_at)` over `grading_rules`
+(#47) rather than stored. Storing it would freeze this repository's *current*
+reading of a company's standard; a later re-read that finds a change with an
+earlier `effective_from` improves the derived answer while leaving a stored one
+permanently wrong. Spec §57's reproducibility record is the other question — an
+analysis records the version it *used* — and that is M8's, where
+`record_reproducibility` gains its sixth parameter.
+
+**Not write-once, for `physical_copies`' reason.** An operator transcribes a
+grade and a certification number by hand off a slab, so a typo has to be
+correctable and ADR 0009 anticipates correcting records by script. The absence of
+a trigger is asserted in both test files rather than left to be noticed.
+
+**Two unique constraints, two different mistakes.**
+`uq_grading_outcomes_certification` catches the command run twice;
+`uq_physical_copies_certification` — which #153 declared and nothing had written
+to until now — catches one slab claimed by two physical cards, which is precisely
+the leakage §32 is about. The write-back is what makes the second reachable, so
+the copy is certified *before* the outcome row is inserted; the other order
+collapses both onto the first constraint.
+
+### Recording one
+
+```bash
+uv run tcg-record-grading-outcome --physical-copy <id> --company psa \
+    --certification-number 12345678 --grade 9 --returned-at 2026-09-30
+```
+
+The copy identifier is the one `tcg-ingest-training-images` printed. The
+certification is written onto that copy where the copy carries none; where it
+already carries a *different* one — a card cross-graded by a second company —
+the copy keeps what it has and the summary says so. Overwriting would silently
+move §32's grouping key, and refusing would make the second submission
+unrecordable.
+
 ## What is not here
 
 Annotations are their own tables and their own migration — see
 [the annotation schema](annotation-schema.md).
+**No grade distribution.** A distribution is a model's output and belongs to
+M8; `grading_outcomes` records what one company issued, once.
+**No grading rules version**, for the reason that section gives.
 `datasets/manifests/` holds what a version leaves behind, generated from these
 rows by the command above.
 
