@@ -143,6 +143,12 @@ tcg-seed-grading-rules = "tcg_api.grading.seed:main"
 # stored. There is deliberately no HTTP route: nothing in the dataset domain is
 # a consumer surface.
 tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
+# Records what one grading company issued for one physical card — epic #9's
+# "actual grade", which the corpus otherwise has no source for. Writes the
+# certification back onto the `physical_copies` row where that row carries none,
+# which is the write #153 left the table mutable for. Runs from the API image:
+# recording an outcome decodes no photograph.
+tcg-record-grading-outcome = "tcg_api.datasets.outcomes:main"
 # Scores the condition analyzers against a dataset version (#188) and writes
 # the experiment record into ml/evaluation/experiments/. Worker image only:
 # it runs the analyzers, which bring OpenCV.

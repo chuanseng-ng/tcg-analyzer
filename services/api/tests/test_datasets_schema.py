@@ -35,10 +35,12 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.catalog.tables import cards, sets
+from tcg_api.datasets.outcomes import GradingOutcomeRefused, record_outcome
 from tcg_api.datasets.tables import (
     centering_measurements,
     dataset_members,
     dataset_versions,
+    grading_outcomes,
     image_annotations,
     physical_copies,
     training_image_fingerprints,
@@ -130,7 +132,8 @@ def empty_tables() -> Iterator[None]:
     """
     tables = (
         "image_annotations, centering_measurements, training_image_fingerprints, "
-        "dataset_members, dataset_versions, training_images, physical_copies, cards, sets"
+        "grading_outcomes, dataset_members, dataset_versions, training_images, "
+        "physical_copies, cards, sets"
     )
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
@@ -217,6 +220,34 @@ def insert_version(**overrides: Any) -> uuid.UUID:
         },
     )
     return identifier
+
+
+def record(copy: uuid.UUID, **overrides: Any) -> Any:
+    """`record_outcome` in its own transaction, as the CLI runs it.
+
+    Through the write path rather than a bare INSERT, deliberately: the
+    certification write-back is half of what #165 does, and a test that inserted
+    the row directly would prove the constraints and none of the behaviour.
+    """
+
+    async def scenario() -> Any:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.begin() as connection:
+                return await record_outcome(
+                    connection,
+                    physical_copy_id=copy,
+                    **{
+                        "company": "psa",
+                        "certification_number": "12345678",
+                        "grade": "9",
+                        **overrides,
+                    },
+                )
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------
@@ -970,3 +1001,241 @@ def test_an_image_may_carry_a_corrected_annotation_beside_the_original() -> None
     )
 
     assert [row.severity for row in rows] == ["minor", "severe"]
+
+
+# ---------------------------------------------------------------------------
+# #165's label — epic #9's "actual grade", against a real database
+# ---------------------------------------------------------------------------
+
+
+def test_a_grade_round_trips_against_the_copy_it_was_issued_for() -> None:
+    copy = insert_copy()
+
+    record(copy)
+
+    row = fetch(sa.select(grading_outcomes))[0]
+    assert (row.physical_copy_id, row.grading_company, row.grade) == (copy, "psa", "9")
+    assert row.designation is None
+
+
+def test_psa_does_not_issue_a_nine_and_a_half() -> None:
+    """The per-company scale is Python's, so the refusal is a sentence.
+
+    Paired with the test below, this is the one case that proves the scale
+    belongs to the company rather than being shared.
+    """
+    copy = insert_copy()
+
+    with pytest.raises(GradingOutcomeRefused, match=r"psa does not issue grade 9\.5"):
+        record(copy, grade="9.5")
+
+    assert fetch(sa.select(grading_outcomes)) == []
+
+
+def test_bgs_does_issue_a_nine_and_a_half() -> None:
+    copy = insert_copy()
+
+    record(copy, company="bgs", certification_number="87654321", grade="9.5")
+
+    assert fetch(sa.select(grading_outcomes.c.grade))[0].grade == "9.5"
+
+
+def test_a_submission_with_neither_a_grade_nor_a_designation_is_refused() -> None:
+    """One named constraint, reached by going around the Python guard.
+
+    The guard is the message and the CHECK is the guarantee — this asserts the
+    guarantee, which is what still holds when a future caller is not the CLI.
+    """
+    copy = insert_copy()
+
+    with pytest.raises(IntegrityError, match="outcome_is_a_grade_or_a_designation"):
+        execute(
+            sa.insert(grading_outcomes),
+            {
+                "id": uuid.uuid4(),
+                "physical_copy_id": copy,
+                "grading_company": "psa",
+                "certification_number": "12345678",
+            },
+        )
+
+
+def test_psa_authentic_is_stored_with_a_null_grade() -> None:
+    """V1 does not authenticate and must still record that PSA did.
+
+    Nothing here widens `tcg_domain.grade.Grade`: the designation is its own
+    column, which is what `tcg_grading_companies` anticipated in as many words.
+    """
+    copy = insert_copy()
+
+    record(copy, grade=None, designation="authentic")
+
+    row = fetch(sa.select(grading_outcomes))[0]
+    assert (row.grade, row.designation) == (None, "authentic")
+
+
+def test_a_designation_the_database_has_never_heard_of_is_refused() -> None:
+    copy = insert_copy()
+
+    with pytest.raises(IntegrityError, match="designation_is_a_known_designation"):
+        execute(
+            sa.insert(grading_outcomes),
+            {
+                "id": uuid.uuid4(),
+                "physical_copy_id": copy,
+                "grading_company": "psa",
+                "certification_number": "12345678",
+                "designation": "perfect",
+            },
+        )
+
+
+def test_half_a_set_of_subgrades_is_refused() -> None:
+    copy = insert_copy()
+
+    with pytest.raises(IntegrityError, match="subgrades_are_four_or_none"):
+        execute(
+            sa.insert(grading_outcomes),
+            {
+                "id": uuid.uuid4(),
+                "physical_copy_id": copy,
+                "grading_company": "bgs",
+                "certification_number": "87654321",
+                "grade": "10",
+                "subgrade_corners": "10",
+            },
+        )
+
+
+def test_four_subgrades_round_trip() -> None:
+    """Recorded and unread: an unrecorded subgrade is gone once the card is sold."""
+    copy = insert_copy()
+
+    record(
+        copy,
+        company="bgs",
+        certification_number="87654321",
+        grade="10",
+        subgrades=("10", "10", "9.5", "10"),
+    )
+
+    row = fetch(sa.select(grading_outcomes))[0]
+    assert (row.subgrade_centering, row.subgrade_surface) == ("10", "10")
+    assert row.subgrade_edges == "9.5"
+
+
+# ---------------------------------------------------------------------------
+# The certification write-back — the write #153 left `physical_copies` open for
+# ---------------------------------------------------------------------------
+
+
+def test_recording_an_outcome_certifies_the_copy() -> None:
+    copy = insert_copy()
+
+    recorded = record(copy)
+
+    row = fetch(sa.select(physical_copies))[0]
+    assert (row.certification_company, row.certification_number) == ("psa", "12345678")
+    assert recorded.certified_the_copy
+
+
+def test_the_same_slab_on_a_second_copy_is_refused_by_the_copy_constraint() -> None:
+    """One slab is one card, and two copies carrying it is §32's leakage.
+
+    The refusal is `uq_physical_copies_certification`, which #153 declared with
+    `NULLS NOT DISTINCT` deliberately unset and which nothing wrote to until now.
+    """
+    record(insert_copy())
+    other = insert_copy()
+
+    with pytest.raises(IntegrityError, match="uq_physical_copies_certification"):
+        record(other)
+
+
+def test_the_same_slab_recorded_twice_is_refused_by_the_outcome_constraint() -> None:
+    """The CLI run twice — a different mistake, and a different refusal."""
+    copy = insert_copy()
+    record(copy)
+
+    with pytest.raises(IntegrityError, match="uq_grading_outcomes_certification"):
+        record(copy)
+
+
+def test_one_copy_carries_outcomes_from_two_companies() -> None:
+    """A crack-and-resubmit is excluded as a feature and cannot be unrepresentable.
+
+    The copy keeps the first certification, because overwriting would silently
+    move §32's grouping key; both outcomes stay retrievable, which is the point.
+    """
+    copy = insert_copy()
+    record(copy)
+
+    second = record(copy, company="bgs", certification_number="87654321", grade="9.5")
+
+    rows = fetch(sa.select(grading_outcomes).order_by(grading_outcomes.c.grading_company))
+    assert [(row.grading_company, row.grade) for row in rows] == [("bgs", "9.5"), ("psa", "9")]
+    assert second.copy_keeps == ("psa", "12345678")
+    assert fetch(sa.select(physical_copies))[0].certification_number == "12345678"
+
+
+def test_recording_against_a_copy_that_does_not_exist_is_refused() -> None:
+    with pytest.raises(GradingOutcomeRefused, match="names no physical copy"):
+        record(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# The acceptance criterion, and the correction path
+# ---------------------------------------------------------------------------
+
+
+def test_an_ingested_photograph_joins_to_the_grade_its_card_came_back_with() -> None:
+    """#165's acceptance criterion, as one join.
+
+    A photograph ingested by #154 reaches the grade its physical card received,
+    for the company that issued it — which is what epic #9's "±1 actual grade"
+    needs and what the corpus had no source for.
+    """
+    copy = insert_copy()
+    image = insert_image(physical_copy_id=copy)
+    record(copy)
+
+    rows = fetch(
+        sa.select(
+            training_images.c.id, grading_outcomes.c.grading_company, grading_outcomes.c.grade
+        )
+        .select_from(training_images)
+        .join(
+            grading_outcomes,
+            grading_outcomes.c.physical_copy_id == training_images.c.physical_copy_id,
+        )
+    )
+
+    assert [(row.id, row.grading_company, row.grade) for row in rows] == [(image, "psa", "9")]
+
+
+def test_a_recorded_outcome_can_be_corrected() -> None:
+    """Deliberately the inverse assertion — this table carries no trigger.
+
+    An operator transcribes a grade and a certification number by hand off a
+    slab, and a typo has to be correctable; `physical_copies` and
+    `training_images` are mutable for the same reason. Adding a trigger later
+    fails this test rather than quietly breaking the correction path.
+    """
+    copy = insert_copy()
+    outcome = record(copy)
+
+    execute(
+        sa.update(grading_outcomes).where(grading_outcomes.c.id == outcome.id).values(grade="8.5")
+    )
+
+    assert fetch(sa.select(grading_outcomes.c.grade))[0].grade == "8.5"
+
+
+def test_removing_a_copy_takes_its_outcomes_with_it() -> None:
+    """CASCADE, so an outcome is never the reason a §54 disposal fails."""
+    copy = insert_copy()
+    record(copy)
+
+    execute(sa.delete(physical_copies).where(physical_copies.c.id == copy))
+
+    assert fetch(sa.select(grading_outcomes)) == []

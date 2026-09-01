@@ -246,6 +246,24 @@ def test_registering_a_model_bundle_pulls_in_neither_opencv_nor_the_analysis_sta
     assert stages == [], stages
 
 
+def test_recording_a_grading_outcome_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#165 records an outcome from the API image, not the worker one.
+
+    It writes what an operator read off a slab. No photograph is opened, let
+    alone decoded, so a CV stack on this path would make
+    `tcg-record-grading-outcome` a worker-image command for a step that has no
+    bytes — the claim the pyproject comment makes and this test holds.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.outcomes")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.outcomes")
+
+    assert cv == [], (
+        f"importing tcg_api.datasets.outcomes pulled in {cv}. Recording an outcome "
+        "writes two rows; the photographs it labels are never opened."
+    )
+    assert stages == [], stages
+
+
 def test_the_normalization_pass_is_the_module_that_binds_to_opencv() -> None:
     """Guard the guard for #159's pass, on the deduplication test's terms.
 

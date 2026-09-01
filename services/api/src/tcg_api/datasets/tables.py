@@ -1,9 +1,10 @@
 """Spec §29's provenance, §30's annotations, §31's versions and §32's grouping keys.
 
-Seven tables, as SQLAlchemy Core, and the constraint ADR 0008 exists to make
+Eight tables, as SQLAlchemy Core, and the constraint ADR 0008 exists to make
 unavoidable. Together they say which physical object a photograph is of, what
 rights came with it, which other photographs it is a near duplicate of, what is
-wrong with the card in it, and which frozen dataset version it was included in.
+wrong with the card in it, what grade the card itself came back with, and which
+frozen dataset version it was included in.
 **Core, not ORM**, on the same terms as every other domain here.
 
 The tables attach to the service-wide `MetaData` in `tcg_api.tables`, which
@@ -11,7 +12,7 @@ The tables attach to the service-wide `MetaData` in `tcg_api.tables`, which
 registered in `tcg_api.table_registry` — a domain the registry does not import
 is a domain `alembic revision --autogenerate` proposes dropping.
 
-Eight things about this schema are load-bearing:
+Nine things about this schema are load-bearing:
 
 * **The gate is a `CHECK`, and it is written with `IS TRUE`.** ADR 0009's whole
   argument for a database is that ADR 0008's rule — *a null, an empty string and
@@ -53,6 +54,13 @@ Eight things about this schema are load-bearing:
   but the annotator and the time: a marker carries a label, a severity and a
   bounding box, a measurement carries two ratios and none of those. One table
   with a `kind` would leave half of every row NULL by construction.
+* **A grade is stored under the *grammar* of a grade, and which grades a
+  company issues is checked in Python.** `market_observations` set that split
+  and the reason transfers unchanged: PSA and TAG issue no 9.5 and BGS does, so
+  a per-company `CHECK` would make a fourth company — or a scale revision —
+  cost a migration of `grading_outcomes`. See :data:`_ISSUED_GRADE_PATTERN`, and
+  `tcg_api.datasets.outcomes` for the guard that reads
+  `GradeScale.supports`.
 * **An annotation's coordinates are fractions of the representation the row
   names.** #38 warps every image to one 756x1056 artifact, so a coordinate in
   that space survives a retake and compares across cards; a raw-photograph
@@ -88,7 +96,7 @@ from tcg_domain.annotation import (
     AnnotationKind,
     DefectSeverity,
 )
-from tcg_grading_companies import GradingCompany
+from tcg_grading_companies import Designation, GradingCompany
 
 # `training_images.card_id` points into the catalog, so the catalog is a hard
 # dependency of this module rather than merely of the migration environment: a
@@ -103,10 +111,12 @@ from tcg_api.tables import NO_METADATA, PRINTED, metadata, one_of
 
 __all__ = [
     "PROVENANCE_FIELDS",
+    "SUBGRADE_COLUMNS",
     "TABLES",
     "centering_measurements",
     "dataset_members",
     "dataset_versions",
+    "grading_outcomes",
     "image_annotations",
     "physical_copies",
     "training_image_fingerprints",
@@ -159,6 +169,16 @@ _VERSION_PATTERN: Final = VERSION_PATTERN.pattern
 #: 64 lowercase hex characters, bare — the spelling `images.sha256` already
 #: uses, because the column already names the algorithm.
 _SHA256_PATTERN: Final = "^[0-9a-f]{64}$"
+
+#: One point on a grade scale, as `tcg_domain.Grade` renders it. `10` is spelled
+#: out because `10.5` is not a grade and `[0-9](\.5)?` cannot say so —
+#: `market_observations._GRADE_KEY_PATTERN`, minus §24's collapsed tails.
+#:
+#: **Dropping `_or_lower` / `_or_higher` is the difference and it is deliberate.**
+#: A collapsed tail is something a model emits when it will not commit to one
+#: point. A slab prints one point, so a bucket here would be a distribution
+#: wearing an outcome's clothes.
+_ISSUED_GRADE_PATTERN: Final = r"^(10|[0-9](\.5)?)$"
 
 
 physical_copies = sa.Table(
@@ -1149,6 +1169,172 @@ centering_measurements = sa.Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# The label the corpus is missing — spec §27, epic #9's "actual grade"
+# ---------------------------------------------------------------------------
+#: The four subgrades a slab can print, as column names. A tuple so the
+#: constraints below and `test_datasets_tables.py` are built from one list
+#: rather than four spellings of it.
+SUBGRADE_COLUMNS: Final = (
+    "subgrade_centering",
+    "subgrade_corners",
+    "subgrade_edges",
+    "subgrade_surface",
+)
+
+#: All four, or none. `image_annotations`' bounding-box idiom: `num_nulls` is
+#: what says "this group travels together" without four paired implications.
+_SUBGRADES_ARE_A_SET: Final = f"num_nulls({', '.join(SUBGRADE_COLUMNS)}) IN (0, 4)"
+
+#: The same grammar as `grade`, over each subgrade. One constraint rather than
+#: four, so a failure names the rule rather than an arbitrary one of them.
+_SUBGRADES_ARE_GRADES: Final = " AND ".join(
+    f"({column} IS NULL OR {column} ~ '{_ISSUED_GRADE_PATTERN}')" for column in SUBGRADE_COLUMNS
+)
+
+
+grading_outcomes = sa.Table(
+    "grading_outcomes",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "physical_copy_id",
+        sa.Uuid(),
+        sa.ForeignKey(physical_copies.c.id, ondelete="CASCADE"),
+        nullable=False,
+        comment=(
+            "The card this outcome is about. **CASCADE, where `training_images` "
+            "restricts**: a copy cannot be deleted while any image references it, so by "
+            "the time one can be removed this row describes nothing — and RESTRICT here "
+            "would make a spec §54 disposal, or a contributor withdrawal, fail for a "
+            "reason nobody chose. `training_image_fingerprints`' argument."
+        ),
+    ),
+    sa.Column(
+        "grading_company",
+        sa.Text(),
+        nullable=False,
+        comment=(
+            "Which company issued this outcome. NOT NULL and CHECKed against the "
+            "vocabulary, unlike `grading_rules.company`: this is data *about* a company, "
+            "the `market_observations.grading_company` precedent."
+        ),
+    ),
+    sa.Column(
+        "certification_number",
+        PRINTED,
+        nullable=False,
+        comment=(
+            "The number printed on the slab that came back. Written onto the "
+            "`physical_copies` row as well, where that row carries none, so §32's "
+            "grouping key and the slab agree — the write `physical_copies` was left "
+            "mutable for."
+        ),
+    ),
+    sa.Column(
+        "grade",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "What was issued, as `tcg_domain.Grade` renders it. NULL where a designation "
+            "was issued **in place of** a numeric grade, which is exactly PSA Authentic. "
+            "Which grades a company can issue is checked in Python, never here."
+        ),
+    ),
+    sa.Column(
+        "designation",
+        sa.Text(),
+        nullable=True,
+        comment=(
+            "A label that is not a point on the scale — PSA Authentic, BGS Black Label, "
+            "TAG Pristine 10. Its own column rather than a sixth value on the scale, "
+            "which is what `tcg_grading_companies.companies`' ponytail note anticipated. "
+            "BGS Black Label accompanies grade 10; PSA Authentic replaces a grade."
+        ),
+    ),
+    *(
+        sa.Column(
+            column,
+            PRINTED,
+            nullable=True,
+            comment=(
+                f"BGS's {column.removeprefix('subgrade_')} subgrade, where the slab "
+                "prints one. Recorded rather than read: V1 predicts an overall grade "
+                "only (§24), and an unrecorded subgrade cannot be recovered once the "
+                "card is sold. All four or none."
+            ),
+        )
+        for column in SUBGRADE_COLUMNS
+    ),
+    sa.Column(
+        "returned_at",
+        sa.Date(),
+        nullable=True,
+        comment=(
+            "When the slab came back. **NULL is meaningful**: ADR 0008's approved class 2 "
+            "is a slab this project did not submit and whose outcome it still knows, and "
+            "there is no return date to invent for one."
+        ),
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.func.now(),
+    ),
+    # A submission carrying neither is not a submission. PSA issues Authentic in
+    # place of a grade, so neither column can be NOT NULL on its own.
+    sa.CheckConstraint(
+        "grade IS NOT NULL OR designation IS NOT NULL",
+        name="outcome_is_a_grade_or_a_designation",
+    ),
+    sa.CheckConstraint(
+        one_of("grading_company", GradingCompany), name="grading_company_is_supported"
+    ),
+    sa.CheckConstraint(
+        f"grade IS NULL OR grade ~ '{_ISSUED_GRADE_PATTERN}'", name="grade_is_an_issued_grade"
+    ),
+    sa.CheckConstraint(
+        f"designation IS NULL OR {one_of('designation', Designation)}",
+        name="designation_is_a_known_designation",
+    ),
+    sa.CheckConstraint(_SUBGRADES_ARE_A_SET, name="subgrades_are_four_or_none"),
+    sa.CheckConstraint(_SUBGRADES_ARE_GRADES, name="subgrades_are_issued_grades"),
+    sa.CheckConstraint(
+        "btrim(certification_number) <> ''", name="certification_number_is_not_blank"
+    ),
+    # One slab is one outcome. This catches the CLI run twice; the *cross-copy*
+    # case — one certification claimed by two physical cards — is caught by
+    # `uq_physical_copies_certification`, through the write-back. Two
+    # constraints, two different mistakes, two different refusals.
+    sa.UniqueConstraint(
+        "grading_company", "certification_number", name="uq_grading_outcomes_certification"
+    ),
+    sa.Index("ix_grading_outcomes_physical_copy_id", "physical_copy_id"),
+    # **No immutability trigger, and that is a decision rather than an omission.**
+    # An operator transcribes a grade and a certification number by hand off a
+    # slab, and a typo has to be correctable — the same argument `physical_copies`
+    # and `training_images` are mutable for, and ADR 0009 anticipates correcting
+    # records by script. `test_datasets_tables.py` asserts the absence.
+    #
+    # **No `grading_rules_version` either.** Which published standard was in
+    # force is `rules_in_force(company, returned_at)` over `grading_rules`, and
+    # storing it would freeze today's reading: when a re-read reveals a standard
+    # change with an earlier `effective_from`, the derived answer improves and a
+    # stored one stays wrong. Spec §57's reproducibility record is a different
+    # question and is M8's.
+    comment=(
+        "**One grading submission's outcome** — what one company issued for one physical "
+        "card, once. Epic #9's acceptance criterion is ±1 *actual grade* and never "
+        "says where the actual grade comes from; this is where. **One row per submission, "
+        "never a column pair on `physical_copies`**: a copy can be graded by more than "
+        "one company over its life, and a column pair would silently pick a winner. "
+        "Deliberately not write-once, and it carries no grading rules version — see "
+        "the comments above."
+    ),
+)
+
+
 #: Every table this module contributes to the shared `MetaData`, in creation
 #: order — `dataset_members` references two of the others, and
 #: `training_image_fingerprints`, `image_annotations` and `centering_measurements` one
@@ -1161,6 +1347,7 @@ TABLES: Final = (
     dataset_members,
     image_annotations,
     centering_measurements,
+    grading_outcomes,
 )
 
 

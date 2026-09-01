@@ -34,24 +34,35 @@ page. The claim is uncontroversial and consistent everywhere it appears, and it
 is still second-hand. Confirm it by hand from a machine Beckett will serve
 before anything downstream treats a BGS price as authoritative.
 
-What V1 deliberately does not model
------------------------------------
-Three designations exist and are **not** grades on a scale:
+Designations, which are not grades
+----------------------------------
+Five designations exist and are **not** grades on a scale:
 
 * **PSA "Authentic" and "Authentic Altered"** — issued in place of a numeric
   grade. V1 does not authenticate cards at all, so the product has nothing to
-  say about a card that receives one.
+  say about a card that receives one — but it must still be able to *record*
+  that one was issued.
 * **BGS Black Label** — a BGS 10 whose four subgrades are each 10. A label on
   grade 10.
 * **TAG Pristine 10 and Gem Mint 10** — two designations for grade 10.
 
 Each would have to widen :class:`tcg_domain.grade.Grade` beyond "a `Decimal`
 multiple of 0.5 in [0, 10]", which is the property that makes a grade usable as
-a distribution key and a database key at all.
+a distribution key and a database key at all. So :class:`Designation` names them
+as their own vocabulary, and :data:`DESIGNATIONS` says which company issues
+which — because a designation is as company-specific as a scale is, and PSA
+cannot issue a Black Label.
 
-``ponytail: designations are not grades. If M4's market data ever prices a
-Black Label separately from an ordinary BGS 10, that is a designation column
-beside the grade in `market_observations` — never a new value on the scale.``
+**The prediction side does not read them and must not start.** Spec §24's
+output is a distribution over grades; a designation is something a slab already
+carries. The one consumer today is #165's ``grading_outcomes``, which records
+what one company actually issued, once.
+
+``ponytail: designations are not grades. #165 took the designation column beside
+the grade in `grading_outcomes`, which is what this note anticipated. If M4's
+market data ever prices a Black Label separately from an ordinary BGS 10, that
+is a second such column in `market_observations` — never a new value on the
+scale.``
 
 Versions
 --------
@@ -72,6 +83,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
 from types import MappingProxyType
 from typing import ClassVar, Final
 
@@ -88,11 +100,13 @@ __all__ = [
     "ADAPTERS",
     "BGS_RULES",
     "BGS_SCALE",
+    "DESIGNATIONS",
     "PSA_RULES",
     "PSA_SCALE",
     "TAG_RULES",
     "TAG_SCALE",
     "BGSAdapter",
+    "Designation",
     "PSAAdapter",
     "TAGAdapter",
 ]
@@ -265,5 +279,50 @@ ADAPTERS: Final[Mapping[str, GradingCompanyAdapter]] = MappingProxyType(
         str(GradingCompany.PSA): PSAAdapter(),
         str(GradingCompany.TAG): TAGAdapter(),
         str(GradingCompany.BGS): BGSAdapter(),
+    }
+)
+
+
+class Designation(StrEnum):
+    """A label a company issues that is not a point on its grade scale.
+
+    A `StrEnum` for the same reason `GradingCompany` is one: the value travels
+    as a plain string into a database column and out of a log line, and never
+    as ``Designation.AUTHENTIC``.
+
+    Unlike :class:`~tcg_grading_companies.port.GradingCompany` this **is** a
+    closed set, and the difference is not an inconsistency. A fourth company
+    must cost one adapter and no caller change, so its slug cannot be gated
+    here. A designation is a published label with a printed spelling: a sixth
+    one is a change to what these three companies issue, which is a re-read of
+    the standard and a new dated version either way.
+    """
+
+    #: PSA, issued **in place of** a numeric grade.
+    AUTHENTIC = "authentic"
+    #: PSA, likewise in place of a grade.
+    AUTHENTIC_ALTERED = "authentic_altered"
+    #: BGS, a label *on* grade 10 — the four subgrades are each 10.
+    BLACK_LABEL = "black_label"
+    #: TAG, on grade 10.
+    PRISTINE_10 = "pristine_10"
+    #: TAG, on grade 10.
+    GEM_MINT_10 = "gem_mint_10"
+
+
+#: Which company issues which designation, keyed by slug exactly as
+#: :data:`ADAPTERS` is. Beside it rather than on the adapter Protocol: a fourth
+#: company is one adapter and one line, and adding a sixth method to the port
+#: would make it two.
+#:
+#: A company with no entry is **accepted**, not refused, wherever this is read —
+#: the same rule `validated_grade_key` applies to a company with no adapter, and
+#: for the same reason: `GradingCompany` is a vocabulary, and making this
+#: mapping the closed set of valid companies would undo spec §22.
+DESIGNATIONS: Final[Mapping[str, frozenset[Designation]]] = MappingProxyType(
+    {
+        str(GradingCompany.PSA): frozenset({Designation.AUTHENTIC, Designation.AUTHENTIC_ALTERED}),
+        str(GradingCompany.TAG): frozenset({Designation.PRISTINE_10, Designation.GEM_MINT_10}),
+        str(GradingCompany.BGS): frozenset({Designation.BLACK_LABEL}),
     }
 )
