@@ -42,9 +42,11 @@ from tcg_api.datasets.fingerprints import (
     NEAR_DUPLICATE_DISTANCE,
     Fingerprint,
     distance,
+    near_duplicate_groups,
     read_fingerprints,
 )
 from tcg_api.datasets.tables import training_image_fingerprints, training_images
+from tcg_domain.analysis import ImageSide
 from tcg_shared.storage import StorageKey
 from tcg_shared.storage.memory import InMemoryObjectStorage
 
@@ -104,11 +106,16 @@ def jpeg(picture: NDArray[np.uint8], quality: int = 55) -> bytes:
     return bytes(cv2.imencode(".jpg", picture, [cv2.IMWRITE_JPEG_QUALITY, quality])[1].tobytes())
 
 
-def fingerprint(data: bytes) -> Fingerprint:
+def fingerprint(data: bytes, side: ImageSide = ImageSide.FRONT) -> Fingerprint:
     """Through the real path: detect, normalize, hash."""
     hashes = fingerprint_artifact(data)
     assert hashes is not None, "no card was located in this fixture"
-    return Fingerprint(uuid.uuid4(), perceptual_hash=hashes[0], perceptual_hash_rotated=hashes[1])
+    return Fingerprint(
+        uuid.uuid4(),
+        perceptual_hash=hashes[0],
+        perceptual_hash_rotated=hashes[1],
+        side=side,
+    )
 
 
 def apart(left: bytes, right: bytes) -> int:
@@ -292,7 +299,9 @@ def fetch(statement: Any) -> list[Any]:
     return run(scenario)
 
 
-def store(storage: InMemoryObjectStorage, data: bytes) -> uuid.UUID:
+def store(
+    storage: InMemoryObjectStorage, data: bytes, side: ImageSide = ImageSide.FRONT
+) -> uuid.UUID:
     """One training image row and its object, without going through ingestion.
 
     The provenance gate is `test_datasets_ingestion.py`'s subject; here it is a
@@ -305,7 +314,7 @@ def store(storage: InMemoryObjectStorage, data: bytes) -> uuid.UUID:
         sa.insert(training_images),
         {
             "id": image_id,
-            "side": "front",
+            "side": side.value,
             "original_uri": key,
             "sha256": f"{image_id.int:064x}"[:64],
             "mime_type": "image/png",
@@ -367,8 +376,6 @@ def test_the_pass_fingerprints_the_corpus_and_the_relationship_is_readable(
     assert result.computed == 3
     assert result.unlocatable == 0
     assert result.unreadable == 0
-
-    from tcg_api.datasets.fingerprints import near_duplicate_groups
 
     groups = near_duplicate_groups(stored_fingerprints())
     assert groups == (frozenset({first, second}),)
@@ -462,3 +469,61 @@ def test_an_image_whose_object_is_missing_does_not_stop_the_pass(
         row.id
         for row in fetch(sa.select(training_images.c.id).where(training_images.c.id != orphan))
     }
+
+
+# ---------------------------------------------------------------------------
+# The shared card back, on the path that ships — #191
+# ---------------------------------------------------------------------------
+
+
+def test_two_photographs_of_the_back_are_not_near_duplicates() -> None:
+    """The unit claim, through detect-normalize-hash rather than hand-written hex.
+
+    One raster twice, so the hashes are identical and the distance is zero. Two
+    fronts at zero bits are a group; two backs at zero bits are not, because
+    every English card carries the same back and the resemblance says nothing
+    about whether these are the same object.
+    """
+    picture = photograph()
+
+    fronts = (fingerprint(png(picture)), fingerprint(jpeg(picture)))
+    backs = (
+        fingerprint(png(picture), side=ImageSide.BACK),
+        fingerprint(jpeg(picture), side=ImageSide.BACK),
+    )
+
+    assert len(near_duplicate_groups(fronts)) == 1
+    assert near_duplicate_groups(backs) == ()
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_corpus_pass_does_not_merge_two_copies_through_their_backs(
+    storage: InMemoryObjectStorage,
+) -> None:
+    """#191 end to end: stored rows, the real read, and the group that is gone.
+
+    Two copies, each a front and a back. Both backs are one raster, so they hash
+    identically — the shared-printing case #181 measured at exactly the
+    threshold. The fronts are different artwork. Before this fix the backs linked
+    and the union-find pulled both copies into a single group.
+    """
+    shared_back = png(photograph(seed=7))
+    store(storage, png(photograph(seed=1)), side=ImageSide.FRONT)
+    first_back = store(storage, shared_back, side=ImageSide.BACK)
+    store(storage, png(photograph(seed=2)), side=ImageSide.FRONT)
+    # A recompression, so the bytes differ and `uq_training_images_sha256` allows
+    # the row: the same back photographed twice is what the corpus actually holds.
+    second_back = store(storage, jpeg(photograph(seed=7)), side=ImageSide.BACK)
+
+    result = sweep(storage)
+    stored = stored_fingerprints()
+
+    assert result.computed == 4
+    assert result.unlocatable == 0
+    # The side came back off the join, not off a default.
+    assert {row.side for row in stored} == {ImageSide.FRONT, ImageSide.BACK}
+    # The two backs are as alike as two images get, and still not a group.
+    linked = {member for group in near_duplicate_groups(stored) for member in group}
+    assert first_back not in linked
+    assert second_back not in linked

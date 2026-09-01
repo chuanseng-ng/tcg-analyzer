@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from io import BytesIO
 
 import numpy as np
@@ -37,6 +38,7 @@ from tcg_api.datasets.fingerprints import (
     near_duplicate_pairs,
 )
 from tcg_api.datasets.tables import _PERCEPTUAL_HASH_PATTERN
+from tcg_domain.analysis import ImageSide
 
 WIDTH = 756
 HEIGHT = 1056
@@ -63,12 +65,19 @@ def png(raster: NDArray[np.uint8]) -> bytes:
     return buffer.getvalue()
 
 
-def fingerprint(artifact: bytes, identifier: uuid.UUID | None = None) -> Fingerprint:
+def fingerprint(
+    artifact: bytes,
+    identifier: uuid.UUID | None = None,
+    side: ImageSide | None = ImageSide.FRONT,
+) -> Fingerprint:
+    """A front by default: #191 excludes only the back-to-back link, so every
+    test that is not about sides wants the side that is still compared."""
     upright, rotated = difference_hash(artifact)
     return Fingerprint(
         training_image_id=identifier or uuid.uuid4(),
         perceptual_hash=upright,
         perceptual_hash_rotated=rotated,
+        side=side,
     )
 
 
@@ -205,7 +214,9 @@ def test_distance_is_symmetric(seed: int) -> None:
 def test_an_image_with_no_hash_is_a_duplicate_of_nothing() -> None:
     """No card was located in it, so there is nothing to compare."""
     located = fingerprint(png(artwork(1)))
-    unlocatable = Fingerprint(uuid.uuid4(), perceptual_hash=None, perceptual_hash_rotated=None)
+    unlocatable = Fingerprint(
+        uuid.uuid4(), perceptual_hash=None, perceptual_hash_rotated=None, side=ImageSide.FRONT
+    )
 
     assert distance(located, unlocatable) is None
     assert distance(unlocatable, unlocatable) is None
@@ -234,13 +245,18 @@ def test_the_threshold_is_the_chosen_one() -> None:
 # ---------------------------------------------------------------------------
 
 
-def hashed(*values: str) -> tuple[Fingerprint, ...]:
-    """Fingerprints from hand-written hex, so grouping is tested without images."""
+def hashed(*values: str, side: ImageSide | None = ImageSide.FRONT) -> tuple[Fingerprint, ...]:
+    """Fingerprints from hand-written hex, so grouping is tested without images.
+
+    Values are right-padded to the full 16 characters, so a test about sides can
+    say `"00"` and mean "identical" without spelling fourteen more zeros.
+    """
     return tuple(
         Fingerprint(
             training_image_id=uuid.UUID(int=index + 1),
-            perceptual_hash=value,
-            perceptual_hash_rotated=value,
+            perceptual_hash=value.ljust(16, "0"),
+            perceptual_hash_rotated=value.ljust(16, "0"),
+            side=side,
         )
         for index, value in enumerate(values)
     )
@@ -295,3 +311,89 @@ def test_the_threshold_is_inclusive() -> None:
 
     assert len(near_duplicate_groups(hashed("0000000000000000", at))) == 1
     assert near_duplicate_groups(hashed("0000000000000000", past)) == ()
+
+
+# ---------------------------------------------------------------------------
+# The shared card back — #191
+# ---------------------------------------------------------------------------
+#
+# Every English Pokemon card carries one printing on its back. #181's `--measure`
+# run put two different cards' backs 10 bits apart, exactly at the threshold, and
+# the corpus pass then merged their two copies into one group through that link.
+# As the corpus grows every back is near every other back, and the whole corpus
+# collapses toward a single split group: two empty splits, for ever.
+#
+# The link is excluded rather than the threshold lowered. #155 is explicit that
+# tightening cannot separate two copies of one printing, and the retake side of
+# the valley is still unmeasured.
+
+
+def test_two_backs_are_not_linked_however_alike_they_look() -> None:
+    """The pathological case: identical hashes, both backs, no group.
+
+    A back-to-back resemblance is the *printing*, not the object. It is
+    structurally incapable of telling two copies apart, so it is not evidence.
+    """
+    backs = hashed("0000000000000000", "0000000000000000", side=ImageSide.BACK)
+
+    assert near_duplicate_pairs(backs) == ()
+    assert near_duplicate_groups(backs) == ()
+
+
+def test_two_fronts_that_look_alike_are_still_linked() -> None:
+    """The relation still does the job it exists for.
+
+    Front artwork differs per card, so a front-to-front match is real evidence —
+    a retake, or the same copy ingested twice under two submissions.
+    """
+    fronts = hashed("0000000000000000", "0000000000000000", side=ImageSide.FRONT)
+
+    assert len(near_duplicate_pairs(fronts)) == 1
+    assert len(near_duplicate_groups(fronts)) == 1
+
+
+def test_a_front_and_a_back_are_still_compared() -> None:
+    """Only the back-to-back link is dropped, and deliberately only that.
+
+    A front resembling a back is either a mislabelled row or one photograph
+    ingested twice under two sides. Both are worth grouping, and neither is the
+    shared printing.
+    """
+    front, back = hashed("0000000000000000", "0000000000000000")
+
+    assert len(near_duplicate_groups((front, replace(back, side=ImageSide.BACK)))) == 1
+
+
+@pytest.mark.parametrize("side", [ImageSide.BACK, ImageSide.ANGLED_BACK, ImageSide.SURFACE_BACK])
+def test_every_view_of_the_back_counts_as_the_back(side: ImageSide) -> None:
+    """Three of §52's six values show the back, not just `back`.
+
+    `angled_back` and `surface_back` are spec §52's guided-photography flow. They
+    photograph the same one printing, so they carry the same non-information.
+    """
+    assert near_duplicate_groups(hashed("00", "00", side=side)) == ()
+
+
+def test_an_unknown_side_is_still_compared() -> None:
+    """`--measure` reads a bare directory, where nothing says which side a file is.
+
+    Unknown is compared rather than excluded: over-grouping costs a little
+    balance in the split and under-grouping leaks, which is the same direction
+    every other judgement in this module falls.
+    """
+    unknown = hashed("0000000000000000", "0000000000000000", side=None)
+
+    assert len(near_duplicate_groups(unknown)) == 1
+
+
+def test_the_shared_back_no_longer_chain_merges_two_copies() -> None:
+    """#191's actual failure, in miniature.
+
+    Two copies, each a front and a back. The fronts are different artwork and far
+    apart; the backs are the one printing and identical. Before this fix the two
+    backs linked, and the union-find pulled both whole copies into one group.
+    """
+    first_front, second_front = hashed("0f0f0f0f0f0f0f0f", "f0f0f0f0f0f0f0f0", side=ImageSide.FRONT)
+    first_back, second_back = hashed("0000000000000000", "0000000000000000", side=ImageSide.BACK)
+
+    assert near_duplicate_groups((first_front, first_back, second_front, second_back)) == ()

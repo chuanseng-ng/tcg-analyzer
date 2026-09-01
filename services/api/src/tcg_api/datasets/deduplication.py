@@ -317,6 +317,13 @@ def measure(directory: Path, *, threshold: int) -> None:
                     training_image_id=uuid.uuid4(),
                     perceptual_hash=hashes[0],
                     perceptual_hash_rotated=hashes[1],
+                    # Unknown, and honestly so: these files were never ingested,
+                    # so nothing says which side they are. This function reports
+                    # raw distances rather than forming the relation, so #191's
+                    # back-to-back exclusion never applies here — which is why
+                    # the histogram still shows the shared-back pair the
+                    # splitter now ignores. That is the point of an instrument.
+                    side=None,
                 ),
             )
         )

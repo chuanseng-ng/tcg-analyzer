@@ -45,8 +45,9 @@ from typing import Final
 import sqlalchemy as sa
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncConnection
+from tcg_domain.analysis import ImageSide
 
-from tcg_api.datasets.tables import training_image_fingerprints
+from tcg_api.datasets.tables import training_image_fingerprints, training_images
 
 __all__ = [
     "DHASH_SIDE",
@@ -89,6 +90,17 @@ DHASH_VERSION: Final = "dhash-8x8-v0.1.0"
 #: whole of it — not a smaller number, and not a learned embedding, which is M7's.
 NEAR_DUPLICATE_DISTANCE: Final = 10
 
+#: The views that show the card's back — three of spec §52's six sides, not one.
+#: `angled_back` and `surface_back` are the guided-photography flow, and they
+#: photograph the same single printing that `back` does.
+#:
+#: Two images of the back carry no information about whether they are the same
+#: *object*: every English Pokémon card has the one back, so the resemblance is
+#: guaranteed and says nothing. #181 measured two different cards' backs at
+#: exactly `NEAR_DUPLICATE_DISTANCE`, and the corpus pass then merged both copies
+#: into one group through that link (#191).
+_BACK_FACING: Final = frozenset({ImageSide.BACK, ImageSide.ANGLED_BACK, ImageSide.SURFACE_BACK})
+
 
 @dataclass(frozen=True, slots=True)
 class Fingerprint:
@@ -101,11 +113,21 @@ class Fingerprint:
         perceptual_hash_rotated: The same for the artifact turned 180 degrees.
             ``None`` exactly when ``perceptual_hash`` is, which the schema's
             `both_hashes_or_neither` enforces.
+        side: Which view of the card this is, from `training_images.side`, or
+            ``None`` where nothing says — `deduplication.measure` reads a bare
+            directory of files that were never ingested. It is a *grouping*
+            input rather than a hash input: :func:`near_duplicate_pairs` drops
+            the back-to-back link, and an unknown side is compared.
+
+    **`side` has no default, deliberately.** It is NOT NULL one table over, and
+    a default would have to be a front — the value that keeps a pair in the
+    relation — so forgetting to pass one would quietly restore #191.
     """
 
     training_image_id: uuid.UUID
     perceptual_hash: str | None
     perceptual_hash_rotated: str | None
+    side: ImageSide | None
 
 
 def difference_hash(artifact: bytes) -> tuple[str, str]:
@@ -201,6 +223,27 @@ def near_duplicate_pairs(
     Ordered by distance and then by identifier, so a report reads closest first
     and two runs over one corpus produce the same text.
 
+    **Two images of the card's back are never a pair** (#191). The hash answers
+    "do these look alike", and two backs look alike because every English card
+    shares one printing — the resemblance is guaranteed and therefore carries no
+    information about whether they photograph the same object. Left in it is not
+    a harmless extra link: the grouping below is a transitive closure, so
+    back-to-back edges chain unrelated copies together and, as the corpus grows,
+    collapse it toward one group — which is two empty splits and no splitter.
+
+    Nothing is lost by dropping it. A copy's own front and back already group
+    through `physical_copy_id`, which #156 unions first, so the only thing a
+    back-to-back edge ever adds is a link between *different* copies — the exact
+    link that is wrong. Front-to-front stays, because front artwork differs per
+    card and a match there is real evidence; front-to-back stays too, because
+    that is either a mislabelled row or one photograph ingested twice, and both
+    are worth grouping.
+
+    **This is not a threshold change.** `NEAR_DUPLICATE_DISTANCE` stays where
+    #155 put it and stays unstored. Tightening it cannot separate two copies of
+    one printing — #155 says so in as many words — and the retake side of the
+    valley is still unmeasured, so there is no number to move it to.
+
     ponytail: O(n²), and deliberately — the issue asks for it in as many words.
     ADR 0008's four approved sources produce a corpus in the low thousands, and
     5,000 images is 12.5M popcounts, about a second. The upgrade path is an LSH
@@ -210,6 +253,8 @@ def near_duplicate_pairs(
     found: list[tuple[uuid.UUID, uuid.UUID, int]] = []
     for index, left in enumerate(fingerprints):
         for right in fingerprints[index + 1 :]:
+            if left.side in _BACK_FACING and right.side in _BACK_FACING:
+                continue
             apart = distance(left, right)
             if apart is not None and apart <= threshold:
                 found.append((left.training_image_id, right.training_image_id, apart))
@@ -264,19 +309,33 @@ async def read_fingerprints(connection: AsyncConnection) -> tuple[Fingerprint, .
 
     The whole table, because the comparison is pairwise and there is no query
     that narrows it. #156 calls this and nothing else in this domain.
+
+    Joined to `training_images` for `side`, which #191 needs to drop the
+    back-to-back link. An inner join: the fingerprint's foreign key is NOT NULL
+    and so is the side, so a fingerprint without one cannot exist and an outer
+    join would only invent a NULL to think about.
     """
     rows = await connection.execute(
         sa.select(
             training_image_fingerprints.c.training_image_id,
             training_image_fingerprints.c.perceptual_hash,
             training_image_fingerprints.c.perceptual_hash_rotated,
-        ).order_by(training_image_fingerprints.c.computed_at)
+            training_images.c.side,
+        )
+        .select_from(
+            training_image_fingerprints.join(
+                training_images,
+                training_image_fingerprints.c.training_image_id == training_images.c.id,
+            )
+        )
+        .order_by(training_image_fingerprints.c.computed_at)
     )
     return tuple(
         Fingerprint(
             training_image_id=row.training_image_id,
             perceptual_hash=row.perceptual_hash,
             perceptual_hash_rotated=row.perceptual_hash_rotated,
+            side=ImageSide(row.side),
         )
         for row in rows
     )
