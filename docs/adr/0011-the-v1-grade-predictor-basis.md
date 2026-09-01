@@ -32,11 +32,14 @@ not to widen the allow-list."* That is not reopened here.
 
 So the question is not which model to train. It is what a V1 predictor may
 legitimately be when nothing can be fitted, what the milestone may claim when
-nothing can be scored, and where the code lives. Eight issues (#220–#228) each
-quote one of the answers, which is why they are settled in writing first — the
-#57, #171 and #42 precedent. This is **not** one of spec §78's four unresolved
-decisions; like [ADR 0010](0010-what-surface-defects-are-measured-against.md) it
-was raised by an issue, and no §78 entry covers it.
+nothing can be scored, and where the code lives. The eight issues that follow
+(#221–#228) each quote one of the answers rather than re-deciding it, which is
+why they are settled in writing first — the #57, #171 and #42 precedent. (#220
+is the side branch and quotes none of them; it carries a copy's issued grade into
+the manifest, and stays its own question.) This is **not** one of spec §78's four
+unresolved decisions; like
+[ADR 0010](0010-what-surface-defects-are-measured-against.md) it was raised by an
+issue, and no §78 entry covers it.
 
 Eight answers were genuinely on the table and are recorded here as rejected.
 
