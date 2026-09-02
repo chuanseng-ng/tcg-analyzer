@@ -37,6 +37,8 @@ from tcg_domain.condition import (
     RegionFinding,
     Representation,
     SurfaceAssessment,
+    region_coverage,
+    surface_coverage,
 )
 from tcg_domain.confidence import (
     INSUFFICIENT_INFORMATION,
@@ -702,3 +704,71 @@ def test_the_mappings_are_frozen() -> None:
         front_corners[CornerRegion.TOP_LEFT] = RegionFinding(  # type: ignore[index]
             label=CornerLabel.CLEAN, confidence=sure()
         )
+
+
+# ----------------------------------------------------------------
+# Coverage — how much of the card an assessment actually looked at (#225)
+# ----------------------------------------------------------------
+#
+# Hoisted out of `ml/grading/psa` and `ml/grading/tag` when BGS's predictor
+# would have been the third hand-written copy. What each predictor *does* with
+# the fraction stays in that predictor; only the counting is here.
+
+
+def test_a_fully_read_axis_is_wholly_covered() -> None:
+    built = assessment()
+    assert region_coverage(built.corners, regions_per_side=len(CornerRegion)) == 1.0
+    assert region_coverage(built.edges, regions_per_side=len(EdgeRegion)) == 1.0
+
+
+def test_an_unknown_region_is_a_slot_seen_and_not_read() -> None:
+    """`unknown` is the analyzer saying it could not judge a region it saw — so
+    it lowers coverage rather than counting as a clean corner."""
+    unreadable = sound_corners()
+    unreadable[CornerRegion.TOP_LEFT] = RegionFinding(label=CornerLabel.UNKNOWN, confidence=sure())
+    built = assessment(corners={ImageSide.FRONT: unreadable, ImageSide.BACK: sound_corners()})
+
+    assert region_coverage(built.corners, regions_per_side=len(CornerRegion)) == 7 / 8
+
+
+def test_a_refused_side_is_all_of_its_regions_at_once() -> None:
+    built = assessment(
+        corners={ImageSide.FRONT: INSUFFICIENT_INFORMATION, ImageSide.BACK: sound_corners()}
+    )
+    assert region_coverage(built.corners, regions_per_side=len(CornerRegion)) == 0.5
+
+    nothing = assessment(
+        corners=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION)
+    )
+    assert region_coverage(nothing.corners, regions_per_side=len(CornerRegion)) == 0.0
+
+
+def test_an_answered_surface_side_still_reports_what_it_did_not_look_at() -> None:
+    """The load-bearing one. ADR 0010's fine classes are refused class-level, so
+    an empty `findings` tuple is not a clean card — it is a card whose surface
+    was only partly examined, and this says by how much."""
+    partial = SurfaceAssessment(
+        findings=(),
+        not_assessed=dict.fromkeys(
+            (SurfaceLabel(name) for name in ADR_0010_FINE_CLASSES), INSUFFICIENT_INFORMATION
+        ),
+    )
+    built = assessment(surface={ImageSide.FRONT: partial, ImageSide.BACK: partial})
+
+    expected = 1.0 - len(ADR_0010_FINE_CLASSES) / len(SurfaceLabel)
+    assert surface_coverage(built.surface) == pytest.approx(expected)
+
+
+def test_surface_coverage_averages_the_two_sides() -> None:
+    built = assessment(
+        surface={
+            ImageSide.FRONT: SurfaceAssessment(findings=()),
+            ImageSide.BACK: INSUFFICIENT_INFORMATION,
+        }
+    )
+    assert surface_coverage(built.surface) == 0.5
+
+    nothing = assessment(
+        surface=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION)
+    )
+    assert surface_coverage(nothing.surface) == 0.0
