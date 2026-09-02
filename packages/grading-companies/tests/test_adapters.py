@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from tcg_domain.analysis import V1_SIDES
+from tcg_domain.condition import ConditionAssessment
+from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence
 from tcg_grading_companies import (
     ADAPTERS,
     BGSAdapter,
@@ -17,6 +20,19 @@ from tcg_grading_companies import (
 from tcg_grading_companies.reference import EMPTY_RULES
 
 SLUGS = sorted(ADAPTERS)
+
+#: The thinnest assessment the domain admits — every axis refused. #180 makes it
+#: constructible on purpose, and it is what proves the port asks for a
+#: `ConditionAssessment` rather than for a *measured* one.
+REFUSED_ASSESSMENT = ConditionAssessment(
+    centering=INSUFFICIENT_INFORMATION,
+    corners=dict.fromkeys(V1_SIDES, INSUFFICIENT_INFORMATION),
+    edges=dict.fromkeys(V1_SIDES, INSUFFICIENT_INFORMATION),
+    surface=dict.fromkeys(V1_SIDES, INSUFFICIENT_INFORMATION),
+    manufacturing_defects=INSUFFICIENT_INFORMATION,
+    eye_appeal=INSUFFICIENT_INFORMATION,
+    confidence=Confidence(0.0),
+)
 
 
 def test_the_registry_covers_exactly_the_v1_companies() -> None:
@@ -37,7 +53,7 @@ def test_the_registry_is_read_only() -> None:
 @pytest.mark.parametrize("slug", SLUGS, ids=str)
 def test_predict_grade_refuses_rather_than_fabricating_a_distribution(slug: str) -> None:
     with pytest.raises(GradePredictionUnavailable) as raised:
-        ADAPTERS[slug].predict_grade(object())
+        ADAPTERS[slug].predict_grade(REFUSED_ASSESSMENT)
     message = str(raised.value)
     assert slug in message
     assert "M8" in message

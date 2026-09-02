@@ -34,11 +34,11 @@ class UnsupportedGrade(GradingCompanyError, ValueError):
 
 
 class GradePredictionUnavailable(GradingCompanyError, NotImplementedError):
-    """No model exists yet to predict a grade for this company.
+    """This adapter has no grading model to consult.
 
-    Spec §24's per-company models arrive in M8. Until then every adapter's
-    ``predict_grade`` raises this rather than returning a fabricated
-    distribution — CLAUDE.md's "never fabricate certainty", made structural.
+    Raised rather than returning a fabricated distribution — CLAUDE.md's
+    "never fabricate certainty", made structural. Spec §24's per-company models
+    arrive in M8, so every V1 reference adapter raises this today.
 
     Also a `NotImplementedError`, because that is exactly what it is: the
     contract is declared and the implementation is not here yet.

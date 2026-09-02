@@ -263,9 +263,10 @@ stored twice and free to disagree with itself.
 
 **No condition representation.** The neutral `ConditionAssessment` spec §13
 describes is M7's, and it is *derived from* these rows rather than being them —
-`predict_grade`'s parameter is typed `object` (#37) for exactly that reason, and
-M8 narrows it. Nothing here carries a grade, a condition score or a grading
-company, and a test asserts their absence.
+`predict_grade`'s parameter was typed `object` (#37) for exactly that reason,
+until M8 narrowed it to that representation (#221). Nothing here carries a
+grade, a condition score or a grading company, and a test asserts their
+absence.
 
 **No review workflow and no inter-annotator agreement.** §30's eleven features
 include neither, and there is one annotator.
