@@ -1,9 +1,23 @@
 [project]
 name = "tcg-ml-grading-psa"
 version = "0.0.0"
-description = "PSA grade distribution predictor"
+description = "PSA grade distribution predictor: spec §24's first per-company model"
 requires-python = ">=3.12"
-dependencies = []
+# Deliberately no OpenCV and no numpy: this package reads an assessment M7
+# already produced and never opens an image, and a purity test holds it to
+# that. Acquiring the CV stack here would silently put a grade predictor back
+# in the worker-only set for a reason nothing in spec §24 asks for.
+#
+# `tcg-grading-companies` supplies `GradePrediction` and PSA's own ladder.
+# ADR 0011 decision 5 fixes the direction as `ml/*` -> `packages/grading-companies`
+# and never the reverse: that package keeps its `tcg-domain`-only invariant, and
+# the predictor reaches an adapter by being injected into it rather than
+# imported by it.
+dependencies = ["tcg-domain", "tcg-grading-companies"]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
+tcg-grading-companies = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

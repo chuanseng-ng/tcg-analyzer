@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Types
-        run: uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src packages/economic-engine/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src ml/centering/src ml/corners/src ml/edges/src ml/surface/src ml/condition/src ml/evaluation/src
+        run: uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src packages/economic-engine/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src ml/centering/src ml/corners/src ml/edges/src ml/surface/src ml/condition/src ml/evaluation/src ml/grading/psa/src
 
       # Tests needing a live service are deselected here and covered by the jobs
       # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
