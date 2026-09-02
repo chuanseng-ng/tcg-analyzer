@@ -102,8 +102,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from tcg_domain.analysis import V1_SIDES, ImageSide
-from tcg_domain.annotation import CornerRegion, DefectSeverity, EdgeRegion, SurfaceLabel
-from tcg_domain.condition import Centering, ConditionAssessment, RegionFinding, SurfaceAssessment
+from tcg_domain.annotation import CornerRegion, DefectSeverity, EdgeRegion
+from tcg_domain.condition import (
+    Centering,
+    ConditionAssessment,
+    RegionFinding,
+    SurfaceAssessment,
+    region_coverage,
+    surface_coverage,
+)
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
 from tcg_domain.distribution import GradeDistribution
 from tcg_grading_companies.companies import TAG_SCALE
@@ -117,11 +124,6 @@ from tcg_ml_grading_tag.thresholds import (
 )
 
 __all__ = ["predict"]
-
-#: The label value that means "there is a region here and the scan could not
-#: read it". Spelled as the value rather than the member because corners and
-#: edges carry different enums and both name it.
-_UNKNOWN: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,24 +331,22 @@ def _region_category[R](
 
     A region labelled ``unknown`` is one the scan could not read (`ml/corners`:
     *"a corner it cannot judge is `unknown`, never a guessed `clean`"*), so it
-    deducts nothing and lowers coverage instead. A refused side is all of its
-    regions at once.
+    deducts nothing and lowers coverage instead — which is
+    :func:`~tcg_domain.condition.region_coverage`'s rule, counted in the domain
+    since #225 so that the three predictors count once and score three times.
+    A refused side is all of its regions at once.
     """
     deduction = 0.0
-    unread = 0
-    slots = 0
     for side in V1_SIDES:
         findings = sides[side]
         if isinstance(findings, InsufficientInformation):
-            slots += regions_per_side
-            unread += regions_per_side
             continue
         for finding in findings.values():
-            slots += 1
-            if finding.label.value == _UNKNOWN:
-                unread += 1
             deduction += _deduction(finding.severity, thresholds)
-    return _Category(subscore=_scored(deduction), coverage=(slots - unread) / slots)
+    return _Category(
+        subscore=_scored(deduction),
+        coverage=region_coverage(sides, regions_per_side=regions_per_side),
+    )
 
 
 def _surface_category(
@@ -356,16 +356,14 @@ def _surface_category(
 
     ``not_assessed`` is the coverage signal and it is load-bearing: ADR 0010's
     fine classes are refused class-level by the v0.1.0 baseline, so a surface
-    side that answered still leaves most of §16's vocabulary unread, and this
-    category says so instead of taking an empty `findings` tuple for a clean
-    card.
+    side that answered still leaves most of §16's vocabulary unread, and
+    :func:`~tcg_domain.condition.surface_coverage` says so instead of taking an
+    empty `findings` tuple for a clean card.
     """
     deduction = 0.0
-    read = 0.0
     for side in V1_SIDES:
         face = sides[side]
         if isinstance(face, InsufficientInformation):
             continue
         deduction += math.fsum(_deduction(defect.severity, thresholds) for defect in face.findings)
-        read += 1.0 - len(face.not_assessed) / len(SurfaceLabel)
-    return _Category(subscore=_scored(deduction), coverage=read / len(V1_SIDES))
+    return _Category(subscore=_scored(deduction), coverage=surface_coverage(sides))

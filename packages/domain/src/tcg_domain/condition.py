@@ -68,6 +68,8 @@ __all__ = [
     "Representation",
     "SurfaceAssessment",
     "card_frame_of",
+    "region_coverage",
+    "surface_coverage",
 ]
 
 
@@ -772,3 +774,85 @@ def card_frame_of(details: Mapping[str, object] | None) -> BoundingBox | None:
         )
     except InvalidConditionAssessment:
         return None
+
+
+# ----------------------------------------------------------------
+# Coverage — how much of the card an assessment actually looked at
+# ----------------------------------------------------------------
+#
+# Hoisted out of `ml/grading/psa` and `ml/grading/tag` at #225, when BGS's
+# predictor would have been the third hand-written copy. It sits here rather
+# than in a shared grading package because ADR 0011 forbids one: a shared
+# `ml/grading/common` is the universal `condition_score -> grade` mapping
+# arriving by the back door, and a sibling import is that package with one
+# member. `_covers`' precedent (#222) says the same thing — shared arithmetic
+# goes in the domain, which all three predictors already depend on.
+#
+# **This is counting, not grading.** What a predictor *does* with a coverage
+# fraction — widen a Gaussian, blend a centre, lower a sub-score — stays three
+# times over in the three packages, deliberately, because that is the thing
+# spec §2.2 forbids sharing. Centering coverage is deliberately not here: PSA
+# weights the front and back ratios apart and TAG does not, so the two were
+# never counting the same thing.
+
+#: The label value that means "there is a region here and nobody could judge
+#: it". Spelled as the value rather than the member because corners and edges
+#: carry different enums and both name it — :data:`NO_DEFECT_LABELS` is built
+#: the same way, a few lines above.
+_UNKNOWN: Final = CornerLabel.UNKNOWN.value
+
+
+def region_coverage[RegionT](
+    axis: Mapping[ImageSide, Uncertain[Mapping[RegionT, RegionFinding]]],
+    *,
+    regions_per_side: int,
+) -> float:
+    """How much of a corner or edge axis was actually read, in ``[0, 1]``.
+
+    A region labelled ``unknown`` is a slot that was looked at and could not be
+    judged (`ml/corners`: *"a corner it cannot judge is `unknown`, never a
+    guessed `clean`"*), so it counts against coverage rather than as damage. A
+    refused side is all of its regions unread at once.
+
+    Args:
+        axis: One assessment's ``corners`` or ``edges`` — total over the V1
+            sides, as the constructor guarantees.
+        regions_per_side: ``len(CornerRegion)`` or ``len(EdgeRegion)``. Passed
+            rather than derived, because a refused side carries no findings to
+            count and both sides may be refused.
+
+    Returns:
+        The fraction of region slots that were read. Zero when both sides
+        refused, which is the honest answer whatever the denominator.
+    """
+    read = 0
+    slots = 0
+    for side in V1_SIDES:
+        findings = axis[side]
+        slots += regions_per_side
+        if isinstance(findings, InsufficientInformation):
+            continue
+        read += sum(1 for finding in findings.values() if finding.label.value != _UNKNOWN)
+    return read / slots
+
+
+def surface_coverage(surface: Mapping[ImageSide, Uncertain[SurfaceAssessment]]) -> float:
+    """How much of the surface vocabulary was actually looked at, in ``[0, 1]``.
+
+    ``not_assessed`` is the signal, and it is load-bearing: ADR 0010's fine
+    classes are refused class-level by `ml/surface`'s v0.1.0 baseline, so a side
+    that *answered* still left most of §16's vocabulary unread. Reading an empty
+    ``findings`` tuple as a clean surface is exactly the mistake this exists to
+    prevent.
+
+    Returns:
+        The mean, over the V1 sides, of the share of :class:`SurfaceLabel` each
+        side reported on. A refused side contributes nothing.
+    """
+    read = 0.0
+    for side in V1_SIDES:
+        face = surface[side]
+        if isinstance(face, InsufficientInformation):
+            continue
+        read += 1.0 - len(face.not_assessed) / len(SurfaceLabel)
+    return read / len(V1_SIDES)

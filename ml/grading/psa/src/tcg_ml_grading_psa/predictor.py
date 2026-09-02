@@ -75,8 +75,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from tcg_domain.analysis import V1_SIDES, ImageSide
-from tcg_domain.annotation import CornerRegion, DefectSeverity, EdgeRegion, SurfaceLabel
-from tcg_domain.condition import Centering, ConditionAssessment, RegionFinding, SurfaceAssessment
+from tcg_domain.annotation import CornerRegion, DefectSeverity, EdgeRegion
+from tcg_domain.condition import (
+    Centering,
+    ConditionAssessment,
+    RegionFinding,
+    SurfaceAssessment,
+    region_coverage,
+    surface_coverage,
+)
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
 from tcg_domain.distribution import GradeDistribution
 from tcg_grading_companies.companies import PSA_SCALE
@@ -89,12 +96,6 @@ from tcg_ml_grading_psa.thresholds import (
 )
 
 __all__ = ["predict"]
-
-#: The label value that means "there is a region here and nobody could judge
-#: it". Spelled as the value rather than the member because corners and edges
-#: carry different enums and both name it — the domain's own
-#: `Defect.__post_init__` compares the same way.
-_UNKNOWN: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,24 +260,22 @@ def _region_axis[R](
 
     A region labelled ``unknown`` is one the analyzer could not judge
     (`ml/corners`: *"a corner it cannot judge is `unknown`, never a guessed
-    `clean`"*), so it widens rather than scoring. A refused side is all four of
-    its regions at once.
+    `clean`"*), so it widens rather than scoring — which is
+    :func:`~tcg_domain.condition.region_coverage`'s rule, counted in the domain
+    since #225 so that the three predictors count once and weigh three times.
+    A refused side is all four of its regions at once.
     """
     damage = 0.0
-    unseen = 0
-    slots = 0
     for side in V1_SIDES:
         findings = sides[side]
         if isinstance(findings, InsufficientInformation):
-            slots += regions_per_side
-            unseen += regions_per_side
             continue
         for finding in findings.values():
-            slots += 1
-            if finding.label.value == _UNKNOWN:
-                unseen += 1
             damage += _damage(finding.severity, thresholds)
-    return _Axis(damage=min(1.0, damage / saturation), unmeasured=unseen / slots)
+    return _Axis(
+        damage=min(1.0, damage / saturation),
+        unmeasured=1.0 - region_coverage(sides, regions_per_side=regions_per_side),
+    )
 
 
 def _surface_axis(
@@ -287,19 +286,16 @@ def _surface_axis(
     ``not_assessed`` is the coverage signal and it is load-bearing: ADR 0010's
     fine classes are refused class-level by the v0.1.0 baseline, so a surface
     side that answered still leaves most of §16's vocabulary unlooked-at, and
-    this axis says so instead of reading an empty `findings` tuple as a clean
-    card.
+    :func:`~tcg_domain.condition.surface_coverage` says so instead of reading an
+    empty `findings` tuple as a clean card.
     """
     damage = 0.0
-    unseen = 0.0
     for side in V1_SIDES:
         face = sides[side]
         if isinstance(face, InsufficientInformation):
-            unseen += 1.0
             continue
         damage += math.fsum(_damage(defect.severity, thresholds) for defect in face.findings)
-        unseen += len(face.not_assessed) / len(SurfaceLabel)
     return _Axis(
         damage=min(1.0, damage / thresholds.surface_saturation_damage),
-        unmeasured=unseen / len(V1_SIDES),
+        unmeasured=1.0 - surface_coverage(sides),
     )
