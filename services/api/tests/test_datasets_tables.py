@@ -814,9 +814,10 @@ def test_nothing_here_reaches_the_analysis_or_the_catalog() -> None:
 def test_an_annotation_carries_no_grade_and_no_condition_score() -> None:
     """M7 defines the neutral condition representation and derives it *from* these.
 
-    #37's `predict_grade` parameter is typed `object` for exactly that reason, so
-    a grade or a condition score appearing here would be this issue answering
-    M7's question. The inverse assertion is the guard.
+    #37's `predict_grade` parameter was typed `object` for exactly that reason —
+    #221 narrowed it to M7's `ConditionAssessment`, never to a row here — so a
+    grade or a condition score appearing here would be this issue answering M7's
+    question. The inverse assertion is the guard.
     """
     columns = set(image_annotations.c.keys()) | set(centering_measurements.c.keys())
 

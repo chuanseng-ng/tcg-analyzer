@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from tcg_domain.condition import ConditionAssessment
 from tcg_domain.confidence import Confidence, Uncertain
 from tcg_domain.distribution import GradeDistribution
 
@@ -126,15 +127,20 @@ class GradingCompanyAdapter(Protocol):
         :mod:`tcg_grading_companies.reference`.
         """
 
-    def predict_grade(self, condition: object) -> Uncertain[GradePrediction]:
+    def predict_grade(self, condition: ConditionAssessment) -> Uncertain[GradePrediction]:
         """Predict a grade distribution from a neutral condition representation.
 
         Args:
-            condition: The neutral, company-independent condition
-                representation. M7 defines that type and M8 narrows this
-                parameter to it; inventing a placeholder here would be a second
-                definition for M7 to reconcile against its own.
-                ``# ponytail: typed `object` until M7 exists; narrow it there.``
+            condition: Spec §13's neutral, company-independent condition
+                representation — M7's :class:`~tcg_domain.condition.ConditionAssessment`
+                (#180), which carries no company vocabulary, no grade and no
+                score. A caller reading a stored `analyses.condition_details`
+                document (#187) rehydrates it into this type first: the port
+                speaks the domain object, never the document.
+
+                A refused axis is not a reason to withhold it. An assessment
+                with every axis refused is constructible on purpose, and what a
+                model does with thin evidence is the model's business.
 
         Returns:
             A :class:`GradePrediction`, or
@@ -143,7 +149,9 @@ class GradingCompanyAdapter(Protocol):
             a legitimate answer, not a failure.
 
         Raises:
-            GradePredictionUnavailable: In V1, always. Spec §24's models arrive
-                in M8; until then a fabricated distribution would be exactly
-                the confidently-wrong output the product exists to avoid.
+            GradePredictionUnavailable: When this adapter has no grading model
+                to consult. Every V1 reference adapter raises today — spec
+                §24's per-company models arrive in M8 — and a fabricated
+                distribution would be exactly the confidently-wrong output the
+                product exists to avoid.
         """

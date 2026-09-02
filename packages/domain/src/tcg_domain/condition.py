@@ -5,9 +5,10 @@ independent of any grading company, that every company model consumes. The
 master architectural rule — grading separate from condition, no universal
 ``condition_score → grade`` mapping — depends on this module carrying **no
 company vocabulary, no grade and no score**, and it never will.
-:meth:`tcg_grading_companies.port.GradingCompanyAdapter.predict_grade` stays
-typed ``object`` through all of M7; M8 narrows it to
-:class:`ConditionAssessment` in its own change.
+:meth:`tcg_grading_companies.port.GradingCompanyAdapter.predict_grade` stayed
+typed ``object`` through all of M7 so that this module could define the type
+without a placeholder to reconcile against; M8 narrowed it to
+:class:`ConditionAssessment` in its own change (#221).
 
 The vocabularies are :mod:`tcg_domain.annotation`'s, reused and never copied —
 that module's docstring names this one as the second consumer it was placed in

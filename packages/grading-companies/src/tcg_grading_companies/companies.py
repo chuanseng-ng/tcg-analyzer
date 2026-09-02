@@ -88,6 +88,7 @@ from types import MappingProxyType
 from typing import ClassVar, Final
 
 from tcg_domain.card import POKEMON
+from tcg_domain.condition import ConditionAssessment
 from tcg_domain.confidence import Uncertain
 from tcg_domain.grade import MAX_GRADE, Grade
 
@@ -237,7 +238,10 @@ class _ReferenceAdapter:
         """
         return ()
 
-    def predict_grade(self, condition: object) -> Uncertain[GradePrediction]:  # noqa: ARG002
+    def predict_grade(
+        self,
+        condition: ConditionAssessment,  # noqa: ARG002
+    ) -> Uncertain[GradePrediction]:
         raise GradePredictionUnavailable(
             f"no {self.company} grading model exists yet: spec §24's per-company models "
             "arrive in M8. Returning a distribution here would be fabricated certainty."
