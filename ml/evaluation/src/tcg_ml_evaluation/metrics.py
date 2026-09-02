@@ -1,4 +1,4 @@
-"""§26's defect-detection figures, computed honestly at small support.
+"""§26's counting figures, computed honestly at small support.
 
 Precision, recall and F1 are counting arithmetic; what earns this module a
 file is the refusal shape. The corpus this benchmark first runs against has a
@@ -10,12 +10,21 @@ truth examples starves recall — and F1 inherits the first refusal it meets.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tcg_domain import InsufficientInformation, Uncertain
 
-__all__ = ["ClassMetrics", "ErrorSummary", "class_metrics", "error_summary"]
+__all__ = [
+    "AccuracyRate",
+    "ClassMetrics",
+    "ErrorSummary",
+    "accuracy_rate",
+    "class_metrics",
+    "error_summary",
+    "wilson_lower_bound",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +56,21 @@ class ErrorSummary:
     mean: float
     maximum: float
     count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AccuracyRate:
+    """One accuracy figure and the counts behind it — §26's grade metrics.
+
+    The counts ride along for the same reason `ClassMetrics`' do: a perfect
+    rate over four samples is not the same claim as a perfect rate over four
+    hundred, and §27's target is read against the interval rather than the
+    rate — see :func:`wilson_lower_bound`.
+    """
+
+    hits: int
+    count: int
+    rate: float
 
 
 def class_metrics(
@@ -101,3 +125,43 @@ def error_summary(errors: Sequence[float]) -> Uncertain[ErrorSummary]:
         maximum=max(errors),
         count=len(errors),
     )
+
+
+def accuracy_rate(*, hits: int, count: int) -> Uncertain[AccuracyRate]:
+    """One accuracy figure with the counts that produced it.
+
+    Raises:
+        ValueError: If the counts are negative or claim more hits than
+            attempts — a tallying bug, not a metric.
+    """
+    if min(hits, count) < 0 or hits > count:
+        raise ValueError(f"expected 0 <= hits <= count, got hits={hits} count={count}")
+    if count == 0:
+        return InsufficientInformation("no_scored_predictions")
+    return AccuracyRate(hits=hits, count=count, rate=hits / count)
+
+
+def wilson_lower_bound(*, hits: int, count: int, z: float) -> float:
+    """The lower end of the Wilson score interval for `hits` of `count`.
+
+    ADR 0011 decision 2 makes spec §27's claim conditional on this figure
+    rather than on the observed rate: the interval self-scales, so a perfect
+    4/4 reports 0.5101 and even a flawless record cannot clear 0.80 below
+    n = 16. The normal approximation would report 1.0 for the same 4/4, which
+    is exactly the fabricated certainty the product exists to refuse.
+
+    `z` is the caller's — the harness passes ADR 0011's two-sided 95% value,
+    and moving it is a new ADR rather than an argument.
+
+    Raises:
+        ValueError: If the counts are negative or claim more hits than
+            attempts, or if `count` is zero — an undefined interval is a
+            refusal the caller must have made already.
+    """
+    if count <= 0 or min(hits, count) < 0 or hits > count:
+        raise ValueError(f"expected 0 <= hits <= count and count > 0, got {hits}/{count}")
+    observed = hits / count
+    z_squared = z * z
+    centre = observed + z_squared / (2 * count)
+    half_width = z * math.sqrt(observed * (1 - observed) / count + z_squared / (4 * count * count))
+    return (centre - half_width) / (1 + z_squared / count)

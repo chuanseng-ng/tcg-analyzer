@@ -11,14 +11,17 @@ refuse.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import textwrap
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
-from tcg_domain import Confidence, ImageSide, InsufficientInformation
+from tcg_domain import Confidence, ImageSide, InsufficientInformation, Uncertain
 from tcg_domain.annotation import (
     AnnotationKind,
     CornerLabel,
@@ -37,10 +40,28 @@ from tcg_domain.condition import (
     SurfaceAssessment,
 )
 from tcg_domain.dataset import DatasetSplit
+from tcg_domain.distribution import GradeDistribution
+from tcg_domain.grade import Grade
+from tcg_grading_companies.companies import BGS_SCALE, PSA_SCALE
+from tcg_grading_companies.errors import UnsupportedGrade
+from tcg_grading_companies.port import GradePrediction
 from tcg_ml_evaluation.calibration import (
     CALIBRATION_BINS,
     CalibrationSummary,
+    DistributionSummary,
     calibration_summary,
+    distribution_summary,
+)
+from tcg_ml_evaluation.grading import (
+    GRADE_EVALUATION_VERSION,
+    WILSON_Z_95,
+    WITHIN_ONE_TARGET,
+    GradeSubject,
+    IssuedGrade,
+    covered_points,
+    evaluate_grades,
+    is_exact_hit,
+    ladder_distance,
 )
 from tcg_ml_evaluation.manifest import (
     CorpusAnnotation,
@@ -50,7 +71,13 @@ from tcg_ml_evaluation.manifest import (
     load_manifest,
 )
 from tcg_ml_evaluation.matching import IOU_THRESHOLD, iou, match_findings
-from tcg_ml_evaluation.metrics import class_metrics, error_summary
+from tcg_ml_evaluation.metrics import (
+    AccuracyRate,
+    accuracy_rate,
+    class_metrics,
+    error_summary,
+    wilson_lower_bound,
+)
 from tcg_ml_evaluation.report import (
     CENTERING_AGREEMENT_TOLERANCE,
     EVALUATION_VERSION,
@@ -862,3 +889,340 @@ def test_an_empty_bin_reports_no_mean_and_no_accuracy() -> None:
 
 def test_zero_events_is_a_refusal_never_a_perfectly_calibrated_nothing() -> None:
     assert calibration_summary(()) == InsufficientInformation("no_events")
+
+
+# ---------------------------------------------------------------------------
+# Multi-class calibration — §25's figures over a grade distribution
+# ---------------------------------------------------------------------------
+def test_multiclass_brier_against_a_hand_calculated_fixture() -> None:
+    """Mass 0.2 / 0.5 / 0.3 on three of eighteen classes, truth the middle one.
+
+    (0.2)^2 + (0.5-1)^2 + (0.3)^2 = 0.04 + 0.25 + 0.09 = 0.38; the fifteen
+    untouched classes contribute nothing.
+    """
+    mass = [0.0] * 18
+    mass[14], mass[16], mass[17] = 0.2, 0.5, 0.3
+
+    summary = distribution_summary(((mass, 16),))
+
+    assert isinstance(summary, DistributionSummary)
+    assert summary.brier_score == pytest.approx(0.38)
+    assert summary.count == 1
+
+
+def test_multiclass_log_loss_against_a_hand_calculated_fixture() -> None:
+    """-ln(0.5) for a half of the mass on the class that occurred."""
+    summary = distribution_summary((([0.5, 0.2, 0.3], 0),))
+
+    assert isinstance(summary, DistributionSummary)
+    assert summary.log_loss == pytest.approx(0.6931471805599453)
+
+
+def test_a_perfectly_confident_correct_prediction_scores_a_zero_brier() -> None:
+    summary = distribution_summary((([0.0, 1.0, 0.0], 1),))
+
+    assert isinstance(summary, DistributionSummary)
+    assert summary.brier_score == pytest.approx(0.0)
+    assert summary.log_loss == pytest.approx(0.0)
+
+
+def test_a_perfectly_confident_wrong_prediction_is_clamped_never_infinite() -> None:
+    """Brier is the worst possible 2.0, and the log loss is -ln(epsilon)."""
+    summary = distribution_summary((([0.0, 1.0, 0.0], 0),))
+
+    assert isinstance(summary, DistributionSummary)
+    assert summary.brier_score == pytest.approx(2.0)
+    assert math.isfinite(summary.log_loss)
+    assert summary.log_loss > 30.0
+
+
+def test_expected_calibration_error_reads_the_top_class_confidence() -> None:
+    """The same fixture as the binary case, reached through the top class.
+
+    Bin [0.9, 1.0]: 2 events at 0.95, one right -> (2/3)*0.45.
+    Bin [0.5, 0.6): 1 event at 0.55, right -> (1/3)*0.45. ECE = 0.45.
+    """
+    summary = distribution_summary(
+        (
+            ([0.05, 0.95], 1),
+            ([0.05, 0.95], 0),
+            ([0.45, 0.55], 1),
+        )
+    )
+
+    assert isinstance(summary, DistributionSummary)
+    assert summary.expected_calibration_error == pytest.approx(0.45)
+    assert len(summary.bins) == CALIBRATION_BINS
+
+
+def test_zero_distribution_events_is_a_refusal_never_a_perfect_score() -> None:
+    assert distribution_summary(()) == InsufficientInformation("no_events")
+
+
+def test_a_truth_outside_the_class_ladder_is_a_programming_error() -> None:
+    with pytest.raises(ValueError):
+        distribution_summary((([0.5, 0.5], 7),))
+
+
+# ---------------------------------------------------------------------------
+# Accuracy rates and §27's Wilson bound — ADR 0011 decision 2
+# ---------------------------------------------------------------------------
+def test_accuracy_rate_reports_hits_count_and_rate() -> None:
+    rate = accuracy_rate(hits=3, count=4)
+
+    assert isinstance(rate, AccuracyRate)
+    assert (rate.hits, rate.count) == (3, 4)
+    assert rate.rate == pytest.approx(0.75)
+
+
+def test_an_empty_accuracy_rate_is_a_refusal_never_a_zero() -> None:
+    assert accuracy_rate(hits=0, count=0) == InsufficientInformation("no_scored_predictions")
+
+
+def test_the_wilson_bound_of_a_perfect_four_is_the_figure_adr_0011_computed() -> None:
+    """ADR 0011 decision 2: a flawless 4/4 has a 95% lower bound of 0.5101."""
+    assert wilson_lower_bound(hits=4, count=4, z=WILSON_Z_95) == pytest.approx(0.5101, abs=1e-4)
+
+
+def test_even_a_flawless_record_needs_sixteen_before_it_can_clear_the_target() -> None:
+    """At p = 1 the bound is n / (n + z^2), which first clears 0.80 at n = 16."""
+    assert wilson_lower_bound(hits=15, count=15, z=WILSON_Z_95) < WITHIN_ONE_TARGET
+    assert wilson_lower_bound(hits=16, count=16, z=WILSON_Z_95) >= WITHIN_ONE_TARGET
+
+
+# ---------------------------------------------------------------------------
+# The grade ladder — a step on the company's own scale, never +/-1.0
+# ---------------------------------------------------------------------------
+def test_one_step_from_ten_is_nine_five_for_bgs_and_nine_for_psa() -> None:
+    """The same arithmetic on two ladders, which is the whole point of §24."""
+    ten = Grade.parse("10")
+
+    assert ladder_distance(BGS_SCALE, Grade.parse("9.5"), ten) == 1
+    assert ladder_distance(BGS_SCALE, Grade.parse("9"), ten) == 2
+    assert ladder_distance(PSA_SCALE, Grade.parse("9"), ten) == 1
+
+
+def test_a_bucket_covers_the_points_it_collapses_and_is_never_an_exact_hit() -> None:
+    """PSA's 7_or_lower collapses 1 through 7 — thirteen points, not one."""
+    bucket = Grade.parse("7_or_lower")
+    points = covered_points(PSA_SCALE, bucket)
+
+    assert len(points) == 13
+    assert points[0] == Grade.parse("1")
+    assert points[-1] == Grade.parse("7")
+    assert ladder_distance(PSA_SCALE, bucket, Grade.parse("6")) == 0
+    assert ladder_distance(PSA_SCALE, bucket, Grade.parse("7.5")) == 1
+    assert ladder_distance(PSA_SCALE, bucket, Grade.parse("8")) == 2
+    assert is_exact_hit(PSA_SCALE, bucket, Grade.parse("6")) is False
+    assert is_exact_hit(PSA_SCALE, Grade.parse("6"), Grade.parse("6")) is True
+
+
+# ---------------------------------------------------------------------------
+# The grade report — per split, per company, counts beside everything
+# ---------------------------------------------------------------------------
+def _grade_prediction(
+    mapping: dict[str, float],
+    *,
+    confidence: float = 0.4,
+    version: str = "grading-psa-test-v0.1.0",
+) -> GradePrediction:
+    return GradePrediction(
+        grade_probability=GradeDistribution.from_mapping(mapping),
+        model_confidence=Confidence(confidence),
+        model_version=version,
+    )
+
+
+def _grade_subject(
+    *,
+    predictions: Mapping[str, Uncertain[GradePrediction]] | None = None,
+    outcomes: Mapping[str, IssuedGrade] | None = None,
+    split: DatasetSplit = DatasetSplit.TEST,
+    identifier: str = "00000000-0000-0000-0000-0000000000c1",
+) -> GradeSubject:
+    return GradeSubject(
+        subject_id=uuid.UUID(identifier),
+        split=split,
+        predictions=predictions or {},
+        outcomes=outcomes or {},
+    )
+
+
+def _psa(report: Mapping[str, Any], split: str = "test") -> Mapping[str, Any]:
+    return report["splits"][split]["psa"]
+
+
+def test_a_grade_the_company_cannot_issue_is_refused_rather_than_mis_scored() -> None:
+    """PSA has no 9.5; scoring one silently would flatter the model."""
+    subject = _grade_subject(
+        predictions={"psa": _grade_prediction({"9.5": 0.5, "9": 0.5})},
+        outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("9"))},
+    )
+
+    with pytest.raises(UnsupportedGrade):
+        evaluate_grades((subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE})
+
+
+def test_a_correct_prediction_scores_exact_and_within_one() -> None:
+    """0.7 on the issued 9 and 0.3 on 10: Brier (0.7-1)^2 + 0.3^2 = 0.18."""
+    subject = _grade_subject(
+        predictions={"psa": _grade_prediction({"9": 0.7, "10": 0.3})},
+        outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("9"))},
+    )
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    psa = _psa(report)
+    assert psa["scored"] == 1
+    assert psa["exact_accuracy"] == {"hits": 1, "count": 1, "rate": pytest.approx(1.0)}
+    assert psa["within_one_accuracy"]["hits"] == 1
+    assert psa["within_one_accuracy"]["meets_target"] is False
+    assert psa["probability_quality"]["brier_score"] == pytest.approx(0.18)
+    assert psa["model_versions"] == ["grading-psa-test-v0.1.0"]
+
+
+def test_a_prediction_two_steps_off_is_neither_exact_nor_within_one() -> None:
+    subject = _grade_subject(
+        predictions={"psa": _grade_prediction({"8": 0.9, "9": 0.1})},
+        outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("10"))},
+    )
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    psa = _psa(report)
+    assert psa["exact_accuracy"]["hits"] == 0
+    assert psa["within_one_accuracy"]["hits"] == 0
+    assert psa["confusion"] == {"10": {"8": 1}}
+
+
+def test_the_bucket_rule_spreads_its_mass_over_the_points_it_covers() -> None:
+    """All the mass on PSA's 7_or_lower against a truth of 6.
+
+    Thirteen covered points share 1.0, so P(6) = 1/13: the bucket is a
+    within-one hit and never an exact one, log loss is ln 13, and Brier is
+    12*(1/13)^2 + (12/13)^2 = 12/13.
+    """
+    subject = _grade_subject(
+        predictions={"psa": _grade_prediction({"7_or_lower": 1.0})},
+        outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("6"))},
+    )
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    psa = _psa(report)
+    assert psa["exact_accuracy"]["hits"] == 0
+    assert psa["within_one_accuracy"]["hits"] == 1
+    assert psa["probability_quality"]["log_loss"] == pytest.approx(math.log(13))
+    assert psa["probability_quality"]["brier_score"] == pytest.approx(12 / 13)
+
+
+def test_an_abstention_is_counted_never_scored() -> None:
+    subject = _grade_subject(
+        predictions={"psa": InsufficientInformation("grade_prediction_unavailable")},
+        outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("9"))},
+    )
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    psa = _psa(report)
+    assert psa["abstained"] == {"grade_prediction_unavailable": 1}
+    assert psa["scored"] == 0
+    assert psa["exact_accuracy"] == {"insufficient_information": "no_scored_predictions"}
+
+
+def test_a_missing_prediction_is_an_exclusion_rather_than_a_miss() -> None:
+    subject = _grade_subject(outcomes={"psa": IssuedGrade(company="psa", grade=Grade.parse("9"))})
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    assert _psa(report)["excluded"] == {"no_prediction_supplied": 1}
+
+
+def test_an_outcome_that_is_a_designation_rather_than_a_grade_is_unscorable() -> None:
+    """PSA issues Authentic in place of a number; there is no point to score."""
+    subject = _grade_subject(
+        predictions={"psa": _grade_prediction({"9": 1.0})},
+        outcomes={"psa": IssuedGrade(company="psa", grade=None, designation="authentic")},
+    )
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    assert _psa(report)["unscorable"] == {"designation_without_grade": 1}
+
+
+def test_every_figure_refuses_on_a_split_with_no_issued_grades() -> None:
+    """Today's corpus: predictions exist, grading_outcomes holds zero rows."""
+    subject = _grade_subject(predictions={"psa": _grade_prediction({"9": 1.0})})
+
+    report = evaluate_grades(
+        (subject,), dataset_version="v", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    psa = _psa(report)
+    assert psa["unscorable"] == {"no_issued_grade": 1}
+    assert psa["exact_accuracy"] == {"insufficient_information": "no_scored_predictions"}
+    assert psa["within_one_accuracy"] == {"insufficient_information": "no_scored_predictions"}
+    assert psa["probability_quality"] == {"insufficient_information": "no_events"}
+    assert psa["confusion"] == {}
+
+
+def test_the_record_names_its_versions_its_thresholds_and_every_split() -> None:
+    report = evaluate_grades(
+        (), dataset_version="pokemon-condition-v0.2.0", split_seed=1, scales={"psa": PSA_SCALE}
+    )
+
+    assert report["dataset_version"] == "pokemon-condition-v0.2.0"
+    assert report["split_seed"] == 1
+    assert report["grade_evaluation_version"] == GRADE_EVALUATION_VERSION
+    assert report["thresholds"] == {
+        "within_one_target": WITHIN_ONE_TARGET,
+        "wilson_z": WILSON_Z_95,
+        "calibration_bins": CALIBRATION_BINS,
+    }
+    assert set(report["splits"]) == {"train", "validation", "test"}
+    assert set(report["splits"]["train"]) == {"psa"}
+
+
+def test_splits_and_companies_are_scored_separately_and_never_pooled() -> None:
+    nine = IssuedGrade(company="psa", grade=Grade.parse("9"))
+    report = evaluate_grades(
+        (
+            _grade_subject(
+                split=DatasetSplit.TRAIN,
+                predictions={
+                    "psa": _grade_prediction({"9": 1.0}),
+                    "bgs": _grade_prediction({"8": 1.0}),
+                },
+                outcomes={
+                    "psa": nine,
+                    "bgs": IssuedGrade(company="bgs", grade=Grade.parse("9")),
+                },
+            ),
+            _grade_subject(
+                identifier="00000000-0000-0000-0000-0000000000c2",
+                split=DatasetSplit.TEST,
+                predictions={"psa": _grade_prediction({"8": 1.0})},
+                outcomes={"psa": nine},
+            ),
+        ),
+        dataset_version="v",
+        split_seed=1,
+        scales={"psa": PSA_SCALE, "bgs": BGS_SCALE},
+    )
+
+    assert report["splits"]["train"]["psa"]["exact_accuracy"]["hits"] == 1
+    assert report["splits"]["train"]["bgs"]["exact_accuracy"]["hits"] == 0
+    assert report["splits"]["test"]["psa"]["exact_accuracy"]["hits"] == 0
+    assert report["splits"]["validation"]["psa"]["subjects"] == 0

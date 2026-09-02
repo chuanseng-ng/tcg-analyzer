@@ -7,10 +7,18 @@ requires-python = ">=3.12"
 # domain shapes against manifest rows, and a purity test holds it to that. The
 # analyzers run in the caller (`tcg-evaluate-condition`, a worker-image
 # command); this package never decodes a photograph.
-dependencies = ["tcg-domain"]
+#
+# `tcg-grading-companies` is neither: it depends only on `tcg-domain`, and it is
+# what supplies each company's own grade ladder. Scoring a grade "within +/-1"
+# is a step on `GradeScale.ordered` and never +/-1.0 on the value — PSA and TAG
+# have no 9.5 and BGS does — so the ladder has to come from somewhere, and ADR
+# 0011 fixes the direction as `ml/*` -> `packages/grading-companies`, never the
+# reverse.
+dependencies = ["tcg-domain", "tcg-grading-companies"]
 
 [tool.uv.sources]
 tcg-domain = { workspace = true }
+tcg-grading-companies = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
