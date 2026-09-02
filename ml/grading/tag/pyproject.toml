@@ -1,9 +1,29 @@
 [project]
 name = "tcg-ml-grading-tag"
 version = "0.0.0"
-description = "TAG grade distribution predictor"
+description = "TAG grade distribution predictor: spec §24's second per-company model"
 requires-python = ">=3.12"
-dependencies = []
+# Deliberately no OpenCV and no numpy: this package reads an assessment M7
+# already produced and never opens an image, and a purity test holds it to
+# that. `math.erf` is the only special function it needs.
+#
+# `tcg-grading-companies` supplies `GradePrediction` and TAG's own ladder.
+# ADR 0011 decision 5 fixes the direction as `ml/*` -> `packages/grading-companies`
+# and never the reverse: that package keeps its `tcg-domain`-only invariant, and
+# the predictor reaches an adapter by being injected into it rather than
+# imported by it.
+#
+# `tcg-ml-grading-psa` is deliberately absent and must stay absent — not for a
+# helper, not for a base class. ADR 0011 forbids a shared `ml/grading/common`
+# because a shared grading package is the universal condition-to-grade mapping
+# arriving by the back door, and a sibling import is that package with one
+# member. The cross-company comparison lives in the repository-root test suite,
+# which is why it costs this package no dependency.
+dependencies = ["tcg-domain", "tcg-grading-companies"]
+
+[tool.uv.sources]
+tcg-domain = { workspace = true }
+tcg-grading-companies = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
