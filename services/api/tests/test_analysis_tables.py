@@ -111,6 +111,9 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 # acceptance criterion is structured condition output with
                 # uncertainty, and it needs somewhere to live (#187).
                 "condition_details",
+                # The per-company grade distributions, `condition_details`'
+                # family and one stage downstream of it (#227).
+                "grade_predictions",
             },
         ),
         (
@@ -191,6 +194,43 @@ def test_the_model_bundle_comment_no_longer_claims_no_model_exists() -> None:
 
     assert "no model exists yet" not in comment
     assert "condition" in comment
+
+
+def test_grade_predictions_are_a_nullable_document_outside_the_record() -> None:
+    """#227's storage decision: JSONB on `analyses`, `condition_details`' family.
+
+    Nullable with no default so NULL keeps meaning "the step never ran" — a
+    refusal is a stored value, never an absence. Not in `REPRODUCIBILITY_COLUMNS`
+    for `condition_details`' reason: not §57's record, one writer inside the
+    claim.
+    """
+    column = analyses.columns["grade_predictions"]
+
+    assert isinstance(column.type, postgresql.JSONB)
+    assert column.nullable
+    assert column.server_default is None
+    assert column.comment
+    assert "grade_predictions" not in REPRODUCIBILITY_COLUMNS
+
+
+def test_the_grading_rules_comment_no_longer_claims_no_rules_exist() -> None:
+    """#227 writes the standards in force at every claim, so the comment's
+    "Always NULL in V1: no grading rules exist yet" — false since
+    `tcg-seed-grading-rules` first ran — changed with the writer, in the
+    migration and here together (autogenerate compares comments)."""
+    comment = analyses.columns["grading_rules_version"].comment or ""
+
+    assert "no grading rules exist yet" not in comment
+    assert "Always NULL" not in comment
+    assert "in force" in comment
+
+
+def test_the_model_bundle_comment_names_the_grading_versions_too() -> None:
+    """ADR 0011 decision 6: each predictor's version composes into the bundle
+    version exactly as the analyzers' compose into the condition version."""
+    comment = analyses.columns["model_bundle_version"].comment or ""
+
+    assert "grading" in comment
 
 
 def test_the_reproducibility_record_is_declared_immutable() -> None:
