@@ -73,7 +73,8 @@ from tcg_ml_grading_tag import predict as predict_tag
 
 #: Every predictor's signature, as far as this file needs it. Deliberately not
 #: `GradingCompanyAdapter.predict_grade`: nothing here goes through an adapter,
-#: because #226 has not injected one yet and this claim is about the mappings.
+#: because this claim is about the mappings — #226's seam has its own root
+#: test, `test_adapters_carry_the_predictors.py`.
 type _Predictor = Callable[[ConditionAssessment], GradePrediction]
 
 #: The three mappings and the ladder each answers on. A fourth company would be

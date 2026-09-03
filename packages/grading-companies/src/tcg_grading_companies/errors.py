@@ -14,6 +14,7 @@ mean the caller asked for something the package cannot answer at all.
 from __future__ import annotations
 
 __all__ = [
+    "GradePredictionFailed",
     "GradePredictionUnavailable",
     "GradingCompanyError",
     "UnsupportedGrade",
@@ -37,9 +38,27 @@ class GradePredictionUnavailable(GradingCompanyError, NotImplementedError):
     """This adapter has no grading model to consult.
 
     Raised rather than returning a fabricated distribution — CLAUDE.md's
-    "never fabricate certainty", made structural. Spec §24's per-company models
-    arrive in M8, so every V1 reference adapter raises this today.
+    "never fabricate certainty", made structural. An adapter built without a
+    :data:`~tcg_grading_companies.port.GradePredictor` raises it, and every
+    entry in :data:`~tcg_grading_companies.companies.ADAPTERS` is built without
+    one: the model is injected by the process that has it, which the API image
+    is not (ADR 0011 decision 5).
 
     Also a `NotImplementedError`, because that is exactly what it is: the
-    contract is declared and the implementation is not here yet.
+    contract is declared and nothing here implements it.
+    """
+
+
+class GradePredictionFailed(GradingCompanyError, RuntimeError):
+    """The grading model an adapter consulted raised something of its own.
+
+    The port's rule is that implementations raise only this package's types,
+    so a caller's error handling survives swapping one model for another. A
+    model's own exception is therefore translated into this one, chained as
+    its ``__cause__``, and never allowed to leak through the adapter — the
+    same translation the PostgreSQL `CardRepository` performs on asyncpg.
+
+    Distinct from a *refusal*: a model that cannot say returns
+    :data:`~tcg_domain.confidence.INSUFFICIENT_INFORMATION`, which is a
+    result. This is a model that could not run.
     """

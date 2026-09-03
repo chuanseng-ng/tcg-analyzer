@@ -7,8 +7,8 @@ grade)``, and that key cannot be written until something says which grades each
 company issues.
 
 The package depends on `tcg-domain` and nothing else. It reaches no network, no
-database and no vendor SDK: an adapter here is published reference data, not a
-client.
+database and no vendor SDK: an adapter here is published reference data, plus
+whatever grading model it was handed at construction — never one it imports.
 
 Everything re-exported here is the package's public surface; nothing else is.
 """
@@ -30,11 +30,17 @@ from tcg_grading_companies.companies import (
     TAGAdapter,
 )
 from tcg_grading_companies.errors import (
+    GradePredictionFailed,
     GradePredictionUnavailable,
     GradingCompanyError,
     UnsupportedGrade,
 )
-from tcg_grading_companies.port import GradePrediction, GradingCompany, GradingCompanyAdapter
+from tcg_grading_companies.port import (
+    GradePrediction,
+    GradePredictor,
+    GradingCompany,
+    GradingCompanyAdapter,
+)
 from tcg_grading_companies.reference import EMPTY_RULES, GradingRules, ServiceOption
 from tcg_grading_companies.scale import GradeScale
 
@@ -51,7 +57,9 @@ __all__ = [
     "BGSAdapter",
     "Designation",
     "GradePrediction",
+    "GradePredictionFailed",
     "GradePredictionUnavailable",
+    "GradePredictor",
     "GradeScale",
     "GradingCompany",
     "GradingCompanyAdapter",

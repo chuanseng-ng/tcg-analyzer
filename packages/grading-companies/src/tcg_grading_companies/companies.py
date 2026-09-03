@@ -89,11 +89,20 @@ from typing import ClassVar, Final
 
 from tcg_domain.card import POKEMON
 from tcg_domain.condition import ConditionAssessment
-from tcg_domain.confidence import Uncertain
+from tcg_domain.confidence import InsufficientInformation, Uncertain
 from tcg_domain.grade import MAX_GRADE, Grade
 
-from tcg_grading_companies.errors import GradePredictionUnavailable
-from tcg_grading_companies.port import GradePrediction, GradingCompany, GradingCompanyAdapter
+from tcg_grading_companies.errors import (
+    GradePredictionFailed,
+    GradePredictionUnavailable,
+    GradingCompanyError,
+)
+from tcg_grading_companies.port import (
+    GradePrediction,
+    GradePredictor,
+    GradingCompany,
+    GradingCompanyAdapter,
+)
 from tcg_grading_companies.reference import GradingRules, ServiceOption
 from tcg_grading_companies.scale import GradeScale
 
@@ -209,16 +218,25 @@ BGS_RULES: Final = GradingRules(
 # The adapters
 # --------------------------------------------------------------------------
 class _ReferenceAdapter:
-    """A V1 adapter: published reference data, and one honest refusal.
+    """A V1 adapter: published reference data, and a model somebody hands it.
 
-    All three companies share this because in M4 they differ only in their
-    data. When M8 gives each its own model, ``predict_grade`` moves down into
-    the three subclasses and this base keeps the four getters.
+    All three companies share this because they differ only in their data and
+    in which model they are given. Four of spec §22's five answers are
+    in-package constants; the fifth, ``predict_grade``, is answered by the
+    :data:`~tcg_grading_companies.port.GradePredictor` the adapter was built
+    with, and refused honestly when it was built without one. That is ADR 0011
+    decision 5: the predictor is *injected*, so this package never imports
+    `ml/grading/*` and the API image — which imports :data:`ADAPTERS` through
+    `routers/grading.py` — carries no model at all. The worker builds the
+    predicting adapters (#227). A fourth company is still one subclass.
     """
 
     company: ClassVar[str]
     _scale: ClassVar[GradeScale]
     _rules: ClassVar[GradingRules]
+
+    def __init__(self, predictor: GradePredictor | None = None) -> None:
+        self._predictor = predictor
 
     def get_grade_scale(self) -> GradeScale:
         return self._scale
@@ -238,14 +256,31 @@ class _ReferenceAdapter:
         """
         return ()
 
-    def predict_grade(
-        self,
-        condition: ConditionAssessment,  # noqa: ARG002
-    ) -> Uncertain[GradePrediction]:
-        raise GradePredictionUnavailable(
-            f"no {self.company} grading model exists yet: spec §24's per-company models "
-            "arrive in M8. Returning a distribution here would be fabricated certainty."
-        )
+    def predict_grade(self, condition: ConditionAssessment) -> Uncertain[GradePrediction]:
+        if self._predictor is None:
+            raise GradePredictionUnavailable(
+                f"no {self.company} grading model was supplied to this adapter. The "
+                "predictor is injected by the process that has one (ADR 0011); returning "
+                "a distribution here would be fabricated certainty."
+            )
+        try:
+            prediction = self._predictor(condition)
+        except GradingCompanyError:
+            # Already the port's vocabulary — a predictor validating against
+            # its own scale raises `UnsupportedGrade`, and wrapping that would
+            # hide the more specific type behind the less specific one.
+            raise
+        except Exception as error:
+            raise GradePredictionFailed(
+                f"the {self.company} grading model failed: {error!r}"
+            ) from error
+        if isinstance(prediction, InsufficientInformation):
+            # A refusal is a result, not an exception (spec §2.7).
+            return prediction
+        # This adapter's ladder, whatever was injected: a model answering a
+        # 9.5 for PSA, or a bucket, fails here rather than at the API.
+        self._scale.validate(prediction.grade_probability)
+        return prediction
 
 
 class PSAAdapter(_ReferenceAdapter):

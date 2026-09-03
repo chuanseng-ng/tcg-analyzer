@@ -1,4 +1,4 @@
-"""The port's four answers and its one refusal."""
+"""The port's four answers, its one refusal, and the seam its fifth answer comes through."""
 
 from __future__ import annotations
 
@@ -7,15 +7,20 @@ from datetime import date
 import pytest
 from tcg_domain.analysis import V1_SIDES
 from tcg_domain.condition import ConditionAssessment
-from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence
+from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence, InsufficientInformation
+from tcg_domain.distribution import GradeDistribution
 from tcg_grading_companies import (
     ADAPTERS,
     BGSAdapter,
+    GradePrediction,
+    GradePredictionFailed,
     GradePredictionUnavailable,
+    GradePredictor,
     GradingCompany,
     GradingCompanyError,
     PSAAdapter,
     TAGAdapter,
+    UnsupportedGrade,
 )
 from tcg_grading_companies.reference import EMPTY_RULES
 
@@ -48,21 +53,111 @@ def test_the_registry_is_read_only() -> None:
 
 
 # --------------------------------------------------------------------------
-# predict_grade
+# predict_grade — the seam, exercised with stubs
 # --------------------------------------------------------------------------
+# Stubs rather than the three real predictors: `ml/grading/*` depend on this
+# package and never the reverse (ADR 0011 decision 5), and a test importing
+# `tcg_ml_grading_psa` would be a dependency nothing declares. The real three
+# are bound to the adapters at the repository root, in
+# `tests/test_adapters_carry_the_predictors.py`, for the same reason
+# `test_grade_predictors_differ.py` lives there.
+ADAPTER_CLASSES = {"psa": PSAAdapter, "tag": TAGAdapter, "bgs": BGSAdapter}
+
+
+def _answering(distribution: GradeDistribution) -> GradePredictor:
+    def predictor(condition: ConditionAssessment) -> GradePrediction:
+        return GradePrediction(
+            grade_probability=distribution,
+            model_confidence=Confidence(0.2),
+            model_version="grading-stub-v0.0.0",
+        )
+
+    return predictor
+
+
+def _refusing(condition: ConditionAssessment) -> InsufficientInformation:
+    return INSUFFICIENT_INFORMATION
+
+
+def _raising(error: BaseException) -> GradePredictor:
+    def predictor(condition: ConditionAssessment) -> GradePrediction:
+        raise error
+
+    return predictor
+
+
+TEN = GradeDistribution.from_mapping({"10": 1.0})
+NINE_POINT_FIVE = GradeDistribution.from_mapping({"9.5": 1.0})
+
+
 @pytest.mark.parametrize("slug", SLUGS, ids=str)
-def test_predict_grade_refuses_rather_than_fabricating_a_distribution(slug: str) -> None:
+def test_an_adapter_built_without_a_model_refuses_rather_than_fabricating(slug: str) -> None:
+    """`ADAPTERS` is what the API image imports, and it carries no predictor."""
     with pytest.raises(GradePredictionUnavailable) as raised:
         ADAPTERS[slug].predict_grade(REFUSED_ASSESSMENT)
     message = str(raised.value)
     assert slug in message
-    assert "M8" in message
+    assert "grading model" in message
 
 
 def test_the_refusal_is_catchable_as_a_not_implemented_error() -> None:
     """Derived from the closest builtin, the way `tcg_domain.errors` are."""
     assert issubclass(GradePredictionUnavailable, NotImplementedError)
     assert issubclass(GradePredictionUnavailable, GradingCompanyError)
+
+
+@pytest.mark.parametrize("slug", SLUGS, ids=str)
+def test_an_adapter_built_with_a_model_answers_with_it(slug: str) -> None:
+    adapter = ADAPTER_CLASSES[slug](predictor=_answering(TEN))
+
+    prediction = adapter.predict_grade(REFUSED_ASSESSMENT)
+
+    assert isinstance(prediction, GradePrediction)
+    assert prediction.grade_probability == TEN
+    assert prediction.model_version == "grading-stub-v0.0.0"
+    assert adapter.company == slug
+
+
+@pytest.mark.parametrize("slug", SLUGS, ids=str)
+def test_a_models_refusal_is_a_result_and_not_an_exception(slug: str) -> None:
+    """The two paths, distinguished: "cannot say" returns, "no model" raises."""
+    adapter = ADAPTER_CLASSES[slug](predictor=_refusing)
+
+    assert adapter.predict_grade(REFUSED_ASSESSMENT) is INSUFFICIENT_INFORMATION
+
+
+def test_a_models_own_exception_surfaces_as_a_package_error_and_never_leaks() -> None:
+    """The port's standing rule: implementations raise only this package's types."""
+    cause = RuntimeError("weights not loaded")
+    adapter = PSAAdapter(predictor=_raising(cause))
+
+    with pytest.raises(GradePredictionFailed) as raised:
+        adapter.predict_grade(REFUSED_ASSESSMENT)
+
+    assert isinstance(raised.value, GradingCompanyError)
+    assert raised.value.__cause__ is cause
+    assert "psa" in str(raised.value)
+
+
+def test_a_package_error_from_the_model_is_not_wrapped_a_second_time() -> None:
+    error = UnsupportedGrade("already the port's vocabulary")
+    adapter = TAGAdapter(predictor=_raising(error))
+
+    with pytest.raises(UnsupportedGrade) as raised:
+        adapter.predict_grade(REFUSED_ASSESSMENT)
+
+    assert raised.value is error
+
+
+def test_the_distribution_is_validated_against_that_adapters_own_scale() -> None:
+    """A 9.5 is a BGS grade and not a PSA one, whatever was injected."""
+    assert (
+        BGSAdapter(predictor=_answering(NINE_POINT_FIVE)).predict_grade(REFUSED_ASSESSMENT)
+        is not INSUFFICIENT_INFORMATION
+    )
+
+    with pytest.raises(UnsupportedGrade, match=r"psa does not issue grade 9\.5"):
+        PSAAdapter(predictor=_answering(NINE_POINT_FIVE)).predict_grade(REFUSED_ASSESSMENT)
 
 
 # --------------------------------------------------------------------------
