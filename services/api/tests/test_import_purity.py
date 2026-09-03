@@ -148,6 +148,24 @@ def test_the_condition_wiring_is_the_module_that_binds_the_condition_packages() 
     } <= set(stages), stages
 
 
+def test_the_grading_wiring_is_the_module_that_binds_the_grading_packages() -> None:
+    """Guard the guard for #227's step — the first of these with no OpenCV.
+
+    `tcg_api.analysis.grading` is the third module `_advance` imports lazily,
+    and the registration point the three predictors deferred to their first
+    importer (ADR 0011 decision 5). They bind no CV stack, so `cv2` is not
+    asserted; what makes the lazy import load-bearing for them is the
+    `tcg_ml_` prefix probe above, which they match all the same.
+    """
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.analysis.grading")
+
+    assert {
+        "tcg_ml_grading_bgs",
+        "tcg_ml_grading_psa",
+        "tcg_ml_grading_tag",
+    } <= set(stages), stages
+
+
 def test_deriving_duplicate_groups_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
     """#155's pure half stays runnable outside the worker image, and #156 needs it to.
 

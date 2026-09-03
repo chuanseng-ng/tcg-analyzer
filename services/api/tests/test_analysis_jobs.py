@@ -374,6 +374,18 @@ class _FakeCatalogVersions:
 #: must not silently rewrite what these tests mean.
 A_CONDITION_VERSION = "condition-compose-test-v0"
 
+#: What the stubbed grading module reports as its composed version, for the
+#: same reason.
+A_GRADING_VERSION = "grading-test-v0"
+
+#: What the stubbed rules store answers per company — the shape the real
+#: `rules_in_force` returns, minus everything the record does not read.
+RULES_IN_FORCE: dict[str, str | None] = {
+    "bgs": "bgs-rules-test",
+    "psa": "psa-rules-test",
+    "tag": "tag-rules-test",
+}
+
 
 def _run_with_gate(
     monkeypatch: pytest.MonkeyPatch,
@@ -381,8 +393,10 @@ def _run_with_gate(
     *,
     recorded: list[dict[str, Any]] | None = None,
     condition_calls: list[dict[str, Any]] | None = None,
+    grading_calls: list[dict[str, Any]] | None = None,
     catalog_version: str | None = "pokemon-catalog-v0.3.0",
     snapshot_id: uuid.UUID | None = None,
+    rules: dict[str, str | None] | None = None,
 ) -> tuple[list[AnalysisStatus], _FakeEngine]:
     """Drive `_advance` with a stubbed store, a stubbed gate and a stubbed catalog.
 
@@ -392,15 +406,17 @@ def _run_with_gate(
     the keyword arguments each write was made with; one that cares about the
     condition step passes `condition_calls`; most callers pass neither.
 
-    Both lazily imported worker modules are stubbed through `sys.modules` —
-    the real ones bind the CV stack, and `_advance` must be drivable on a
-    machine without it.
+    All three lazily imported worker modules are stubbed through `sys.modules`
+    — the real ones bind the CV stack or the `tcg_ml_` prefix, and `_advance`
+    must be drivable on a machine without them.
     """
     engine = _FakeEngine()
     session = _FakeSession()
     moves: list[AnalysisStatus] = []
     writes = recorded if recorded is not None else []
     assessed = condition_calls if condition_calls is not None else []
+    predicted = grading_calls if grading_calls is not None else []
+    in_force = RULES_IN_FORCE if rules is None else rules
 
     async def transition(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
         moves.append(to)
@@ -414,10 +430,17 @@ def _run_with_gate(
         # trick, so a test can assert *where* in the run the step happened.
         assessed.append({"analysis_id": analysis_id, "after": list(moves)})
 
+    async def predict_grades(_db: Any, analysis_id: Any) -> None:
+        predicted.append({"analysis_id": analysis_id, "after": list(moves)})
+
     async def current_snapshot(_db: Any) -> Any:
         if snapshot_id is None:
             return None
         return types.SimpleNamespace(id=snapshot_id)
+
+    async def rules_in_force(_db: Any, company: str, _on: Any) -> Any:
+        version = in_force[company]
+        return None if version is None else types.SimpleNamespace(version=version)
 
     async def record_reproducibility(_db: Any, _id: Any, **values: Any) -> None:
         # The moves so far travel with the write, which is what lets a test
@@ -432,10 +455,16 @@ def _run_with_gate(
     stage.CONDITION_VERSION = A_CONDITION_VERSION  # type: ignore[attr-defined]
     stage.assess_condition = assess_condition  # type: ignore[attr-defined]
 
+    predictors = types.ModuleType("tcg_api.analysis.grading")
+    predictors.GRADING_VERSION = A_GRADING_VERSION  # type: ignore[attr-defined]
+    predictors.predict_grades = predict_grades  # type: ignore[attr-defined]
+
     versions = type("_Versions", (_FakeCatalogVersions,), {"published": catalog_version})
 
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.quality", gate)
     monkeypatch.setitem(sys.modules, "tcg_api.analysis.condition", stage)
+    monkeypatch.setitem(sys.modules, "tcg_api.analysis.grading", predictors)
+    monkeypatch.setattr(jobs, "rules_in_force", rules_in_force)
     monkeypatch.setattr(jobs, "create_engine", lambda: engine)
     monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: lambda: session)
     monkeypatch.setattr(jobs, "transition", transition)
@@ -604,17 +633,18 @@ def test_no_snapshot_is_recorded_as_none_rather_than_invented(
 def test_the_model_bundle_version_is_recorded_at_the_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#187: the composed condition version is a §57 field like the others.
+    """#187: the composed condition version is a §57 field like the others,
+    and #227 composes the grading version into it (ADR 0011 decision 6).
 
-    A compile-time constant of the condition packages, so it is resolvable at
-    the claim — and recorded there whether or not the run later reaches the
-    condition step, because the record says which versions were in force, not
-    which stages completed.
+    Compile-time constants of the ml packages, so resolvable at the claim —
+    and recorded there whether or not the run later reaches either step,
+    because the record says which versions were in force, not which stages
+    completed.
     """
     recorded: list[dict[str, Any]] = []
     _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
 
-    assert recorded[0]["model_bundle_version"] == A_CONDITION_VERSION
+    assert recorded[0]["model_bundle_version"] == f"{A_CONDITION_VERSION}+{A_GRADING_VERSION}"
     assert recorded[0]["after"] == [AnalysisStatus.IDENTIFYING]
 
 
@@ -622,12 +652,55 @@ def test_a_gate_refusal_still_records_the_model_bundle_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The record is written before the gate runs, so a refused analysis still
-    says which condition version was in force — `card_database_version`'s
-    rule applied to the new field."""
+    says which versions were in force — `card_database_version`'s rule
+    applied to the new field."""
     recorded: list[dict[str, Any]] = []
     _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, recorded=recorded)
 
-    assert recorded[0]["model_bundle_version"] == A_CONDITION_VERSION
+    assert recorded[0]["model_bundle_version"] == f"{A_CONDITION_VERSION}+{A_GRADING_VERSION}"
+
+
+def test_the_grading_rules_version_is_the_standards_in_force_at_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#227 fills the last empty §57 field. One string for three companies —
+    their versions joined with `+` in slug order, because at the claim no
+    company has been selected and all three standards were in force (ADR
+    0011). Resolved against the table, inside the claim, like every other
+    field."""
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.GOOD, recorded=recorded)
+
+    assert recorded[0]["grading_rules_version"] == "bgs-rules-test+psa-rules-test+tag-rules-test"
+    assert recorded[0]["after"] == [AnalysisStatus.IDENTIFYING]
+
+
+def test_a_gate_refusal_still_records_the_grading_rules_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What was in force, not what was consulted — #187's reasoning for the
+    model bundle, applied to the rules."""
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, recorded=recorded)
+
+    assert recorded[0]["grading_rules_version"] == "bgs-rules-test+psa-rules-test+tag-rules-test"
+
+
+def test_a_company_with_no_standard_in_force_leaves_the_rules_version_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial composite would misreport which standards were in force, so
+    one missing company makes the whole field the documented absence — never
+    a two-company string that reads as complete."""
+    recorded: list[dict[str, Any]] = []
+    _run_with_gate(
+        monkeypatch,
+        QualityStatus.GOOD,
+        recorded=recorded,
+        rules={**RULES_IN_FORCE, "tag": None},
+    )
+
+    assert recorded[0]["grading_rules_version"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +739,47 @@ def test_unusable_photographs_never_reach_the_condition_step(
     _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, condition_calls=calls)
 
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# The grade prediction step — issue #227
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    [QualityStatus.GOOD, QualityStatus.ACCEPTABLE, QualityStatus.POOR],
+    ids=["good", "acceptable", "poor"],
+)
+def test_the_grading_step_runs_after_the_condition_step_inside_the_claim(
+    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus
+) -> None:
+    """M8's acceptance criterion lives here: every analysis the gate lets
+    through gets a grade distribution per company, produced inside the claim
+    right after the condition document it reads — before the analysis is
+    handed back at `awaiting_confirmation`, so the document and the transition
+    land in one transaction (ADR 0011 decision 5)."""
+    assessed: list[dict[str, Any]] = []
+    predicted: list[dict[str, Any]] = []
+    moves, _ = _run_with_gate(
+        monkeypatch, verdict, condition_calls=assessed, grading_calls=predicted
+    )
+
+    assert len(predicted) == 1
+    assert predicted[0]["after"] == [AnalysisStatus.IDENTIFYING]
+    assert len(assessed) == 1
+    assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.AWAITING_CONFIRMATION]
+
+
+def test_unusable_photographs_never_reach_the_grading_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate stops the run, so `grade_predictions` stays NULL — the honest
+    "never ran"."""
+    predicted: list[dict[str, Any]] = []
+    _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, grading_calls=predicted)
+
+    assert predicted == []
 
 
 def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch) -> None:

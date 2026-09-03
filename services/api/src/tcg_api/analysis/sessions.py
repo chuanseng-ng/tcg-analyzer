@@ -52,6 +52,9 @@ __all__ = [
     "execute",
     "new_session_token",
     "read_analysis",
+    "read_condition",
+    "record_condition",
+    "record_grade_predictions",
     "record_reproducibility",
     "resolve_session",
     "set_confirmed_card",
@@ -292,6 +295,7 @@ async def record_reproducibility(
     card_database_version: str | None,
     market_snapshot_id: UUID | None,
     model_bundle_version: str,
+    grading_rules_version: str | None,
 ) -> None:
     """Write spec §57's reproducibility record onto `analysis_id`.
 
@@ -312,17 +316,21 @@ async def record_reproducibility(
     argument rather than one defaulting to `None` — a default is how a caller
     that ought to record a snapshot silently stops.
 
-    `model_bundle_version` is the composed condition version (#187) — a
-    compile-time constant of the condition packages, so it is resolvable at
-    the claim like every other field, and recorded whether or not the run
-    later reaches the condition step: the record says which versions were in
-    force, not which stages completed.
+    `model_bundle_version` is the composed condition version (#187) joined to
+    the composed grading version (#227, ADR 0011 decision 6) — compile-time
+    constants of the ml packages, so it is resolvable at the claim like every
+    other field, and recorded whether or not the run later reaches either
+    step: the record says which versions were in force, not which stages
+    completed.
 
-    `grading_rules_version` is deliberately not a parameter. Nothing in an
-    analysis consults grading rules until per-company grade prediction arrives,
-    so recording a rules version on a run that never applied one would be a
-    false claim; that milestone adds the argument. An explicit absence rather
-    than a `None` this caller has to keep passing.
+    `grading_rules_version` is the same idea for the published standards: one
+    string naming all three companies' versions in force at the claim, joined
+    with `+` in slug order, because no company has been selected yet and all
+    three were in force (#227, ADR 0011). What was in force, not what was
+    consulted — a V1 predictor reads no machine-readable rules. `None` when
+    some company had no standard recorded, because a partial composite would
+    misreport; and like `market_snapshot_id` it is **required** rather than
+    defaulted, for the same reason.
 
     Does not commit; the caller owns the transaction. Writing twice is refused
     by `trg_analyses_reproducibility_immutable` rather than by a check here,
@@ -337,6 +345,7 @@ async def record_reproducibility(
             card_database_version=card_database_version,
             market_snapshot_id=market_snapshot_id,
             model_bundle_version=model_bundle_version,
+            grading_rules_version=grading_rules_version,
         )
     )
     await execute(db, statement)
@@ -365,5 +374,41 @@ async def record_condition(
     """
     statement = (
         sa.update(analyses).where(analyses.c.id == analysis_id).values(condition_details=details)
+    )
+    await execute(db, statement)
+
+
+async def read_condition(db: AsyncSession, analysis_id: UUID) -> dict[str, object] | None:
+    """The condition step's document for `analysis_id`, or `None` if it never ran — #227.
+
+    The whole document, as stored: the grading step reads it (never the
+    analyzers) and rehydrates the assessment itself. No session in the `WHERE`
+    clause, on :func:`record_condition`'s terms — this is the worker inside
+    its claim, not the HTTP surface.
+    """
+    statement = sa.select(analyses.c.condition_details).where(analyses.c.id == analysis_id)
+    result = await execute(db, statement)
+    document = result.scalar_one_or_none()
+    return None if document is None else dict(document)
+
+
+async def record_grade_predictions(
+    db: AsyncSession,
+    analysis_id: UUID,
+    *,
+    details: dict[str, object],
+) -> None:
+    """Write the grade prediction step's document onto `analysis_id` — #227.
+
+    `details` is the per-company predictions beside the composed grading
+    version and the predictors' thresholds — each company's entry the full
+    distribution with its confidence and version, or a one-key
+    `insufficient_information` with its reason. The step always writes one,
+    so a NULL keeps meaning "the step never ran". Everything
+    :func:`record_condition` says about a plain document, one writer and no
+    trigger holds here unchanged.
+    """
+    statement = (
+        sa.update(analyses).where(analyses.c.id == analysis_id).values(grade_predictions=details)
     )
     await execute(db, statement)
