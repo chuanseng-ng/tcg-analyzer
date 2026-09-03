@@ -277,9 +277,7 @@ def test_a_model_that_breaks_fails_the_job_rather_than_recording_a_refusal(
     assert wired.documents == []
 
 
-def test_the_predicting_adapters_are_the_registry_with_models(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_predicting_adapters_are_the_registry_with_models() -> None:
     """#226's rule: the same three classes, keyed by the same slugs, each
     constructed with its model — and `ADAPTERS` itself still refuses."""
     from tcg_grading_companies import GradePredictionUnavailable
