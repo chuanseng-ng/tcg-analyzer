@@ -545,6 +545,25 @@ def test_a_run_reaches_the_confirmation_gate_and_stops(
 CATALOG_VERSION = "pokemon-catalog-v9.9.9"
 
 
+def publish_grading_rules() -> None:
+    """Publish spec §23's three standards, the way `tcg-seed-grading-rules` does.
+
+    The seeder's own writer, because what is being tested is that the run
+    records whatever the table says is in force — and a fresh database says
+    nothing until something publishes.
+    """
+    from tcg_api.grading.seed import apply_grading_rules, load_grading_rules
+
+    async def publish() -> None:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            await apply_grading_rules(load_grading_rules(), engine)
+        finally:
+            await engine.dispose()
+
+    run(publish)
+
+
 def publish_catalog_version(version: str = CATALOG_VERSION) -> None:
     """Register a card database version, past the import pipeline.
 
@@ -584,6 +603,7 @@ def test_a_run_records_what_it_was_computed_against(
     from tcg_ml_condition import CONDITION_VERSION
 
     publish_catalog_version()
+    publish_grading_rules()
     created = client.post("/analyses").json()
     uploaded(created["id"])
     client.post(f"/analyses/{created['id']}/run")
