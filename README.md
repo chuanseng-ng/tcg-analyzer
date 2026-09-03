@@ -67,19 +67,19 @@ historical answer can be re-derived rather than re-guessed. Eight fields, and
 | `application_version` | the version of the service that ran it |
 | `card_database_version` | the published catalog identifier that was current |
 | `image_sha256` | a digest per side, of the bytes that were *stored* |
-| `model_bundle_version` | null — no model exists yet |
-| `grading_rules_version` | null — the rules exist, but no run applies one |
+| `model_bundle_version` | the composed condition version joined to the three per-company grading versions |
+| `grading_rules_version` | the three published standards in force at the claim, joined in slug order |
 | `market_snapshot_id` | null — nothing has ingested, so there is none to name |
 | `economic_configuration_id` | null — the economic engine is a later milestone |
 
 The values are captured when the run claims the analysis — never resolved when
 it is read — and a written field cannot be changed afterwards, because a trigger
-refuses it. A null is a documented absence rather than an omission, and the two
-kinds differ: the model bundle, the economic configuration and an ingested price
-**do not exist yet**, while grading rules exist and are simply not consulted by
-any analysis until per-company grade prediction arrives. Recording a rules
-version on a run that never applied one would be a false claim rather than a
-record.
+refuses it. A null is a documented absence rather than an omission: the economic
+configuration arrives later from the user, and an ingested price **does not
+exist yet**. Both version strings say what was *in force* when the run claimed
+the analysis, not which stages completed — a gate-refused analysis records them
+too — and `grading_rules_version` names all three companies because at the claim
+none has been selected yet (ADR 0011).
 
 [`docs/architecture.md`](docs/architecture.md) carries the reasoning, along with
 the `grading_rules`, `market_observations` and `market_snapshots` schemas that
