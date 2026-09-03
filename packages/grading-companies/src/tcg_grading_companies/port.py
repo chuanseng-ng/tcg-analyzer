@@ -16,13 +16,18 @@ in-package constants, and M8's ``predict_grade`` runs a model in-process inside
 a Celery task, which is not the API's event loop and is exactly where blocking
 belongs.
 
-*``predict_grade`` is declared in full and refuses.* It exists from the
-beginning so that M8 fills an existing contract rather than reshaping the
-interface after callers have been written against a narrower one.
+*``predict_grade`` is declared in full, and the model behind it is injected.*
+The method existed from the beginning so that M8 filled an existing contract
+rather than reshaping the interface after callers had been written against a
+narrower one. What fills it is a :data:`GradePredictor` handed to the adapter
+at construction (ADR 0011 decision 5): this package depends on `tcg-domain`
+alone, the three predictors in ``ml/grading/*`` depend on *it*, and an adapter
+built without one refuses rather than importing anything.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -34,7 +39,7 @@ from tcg_domain.distribution import GradeDistribution
 from tcg_grading_companies.reference import GradingRules, ServiceOption
 from tcg_grading_companies.scale import GradeScale
 
-__all__ = ["GradePrediction", "GradingCompany", "GradingCompanyAdapter"]
+__all__ = ["GradePrediction", "GradePredictor", "GradingCompany", "GradingCompanyAdapter"]
 
 
 class GradingCompany(StrEnum):
@@ -80,6 +85,15 @@ class GradePrediction:
     grade_probability: GradeDistribution
     model_confidence: Confidence
     model_version: str
+
+
+#: What an adapter consults to answer :meth:`GradingCompanyAdapter.predict_grade`:
+#: one company's model, as a plain callable over the neutral condition
+#: representation. `ml/grading/{psa,tag,bgs}` each export one as ``predict``.
+#: A callable rather than a second Protocol because there is exactly one thing
+#: to ask of it, and because a callable is what keeps the dependency pointing
+#: from those packages to this one — an adapter never imports its model.
+type GradePredictor = Callable[[ConditionAssessment], Uncertain[GradePrediction]]
 
 
 class GradingCompanyAdapter(Protocol):
@@ -150,8 +164,14 @@ class GradingCompanyAdapter(Protocol):
 
         Raises:
             GradePredictionUnavailable: When this adapter has no grading model
-                to consult. Every V1 reference adapter raises today — spec
-                §24's per-company models arrive in M8 — and a fabricated
+                to consult — it was built without a :data:`GradePredictor`,
+                which is true of every entry in
+                :data:`~tcg_grading_companies.companies.ADAPTERS`. A fabricated
                 distribution would be exactly the confidently-wrong output the
                 product exists to avoid.
+            GradePredictionFailed: When the model it consults raised something
+                of its own. Translated here so that swapping one model for
+                another changes no caller's error handling.
+            UnsupportedGrade: When the model answered a grade this company
+                cannot issue — a 9.5 from a PSA model, or a bucket.
         """

@@ -199,9 +199,12 @@ than a principle: adding CGC or ARS later must cost one new adapter and no
 caller change. That is why the company vocabulary is a `StrEnum` whose members
 are `str` — the shape `Game` and `Language` already use — instead of a closed
 enum sitting between every caller and every adapter. Its V1 adapters answer
-four of spec §22's five responsibilities from published reference data and
-refuse the fifth: `predict_grade` raises rather than returning a fabricated
-distribution until M8's per-company models exist. The three grade scales are
+four of spec §22's five responsibilities from published reference data, and the
+fifth, `predict_grade`, from a per-company model **injected** at construction
+(ADR 0011): `ml/grading/{psa,tag,bgs}` depend on this package and never the
+reverse, the worker hands each adapter its model, and an adapter built without
+one — every entry the API image imports — raises rather than returning a
+fabricated distribution. The three grade scales are
 not interchangeable — PSA and TAG issue no 9.5 and BGS does — which is why spec
 §35 keys a graded price by `(grading_company, grade)` and why this package
 lands in M4 ahead of the models that will use it.
