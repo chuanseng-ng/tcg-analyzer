@@ -251,11 +251,14 @@ analyses = sa.Table(
         PRINTED,
         nullable=True,
         comment=(
-            "The model bundle the condition output was produced under — the composed "
-            "condition version, e.g. 'condition-compose-v0.1.0+centering-opencv-v0.1.0+…'. "
-            "An explicit identifier, never '/latest/' (spec §31), resolved when the run "
-            "claimed the analysis (#187). NULL on analyses that predate the condition "
-            "step: a documented absence rather than a gap."
+            "The model bundle the condition output and the grade predictions were "
+            "produced under — the composed condition version joined to the three "
+            "per-company grading versions, e.g. "
+            "'condition-compose-v0.1.0+…+grading-bgs-heuristic-v0.1.0+grading-psa-heuristic-v0.1.0+…' "
+            "(#187, #227, ADR 0011). An explicit identifier, never '/latest/' (spec §31), "
+            "resolved when the run claimed the analysis. NULL on analyses that predate "
+            "the condition step, and the bare condition version on those that predate the "
+            "grading step: a documented absence rather than a gap."
         ),
     ),
     sa.Column(
@@ -325,10 +328,14 @@ analyses = sa.Table(
         PRINTED,
         nullable=True,
         comment=(
-            "Which grading-rule version the prediction was made under — spec §57. "
-            "Always NULL in V1: no grading rules exist yet, and the column is here so "
-            "the absence is documented rather than indistinguishable from a bug when "
-            "they do. The milestone that introduces them fills it at run time."
+            "Which published grading standards were in force when the analysis ran — spec "
+            "§57, resolved when the run claimed it (#227, ADR 0011). One string for three "
+            "companies: their grading_rules.version identifiers joined with '+' in slug "
+            "order, because at the claim no company has been selected and all three "
+            "standards were in force. What was in force, not what was consulted — a V1 "
+            "predictor reads no machine-readable rules. NULL when no run has claimed the "
+            "analysis, or when some company had no standard recorded as in force: a "
+            "partial composite would misreport."
         ),
     ),
     sa.Column(
@@ -343,6 +350,20 @@ analyses = sa.Table(
             "assessed (#187). NULL means the condition step never ran — never that "
             "the card is clean. JSONB rather than a table on `quality_details`' "
             "reasoning: nothing joins it, and M8 reads the whole document."
+        ),
+    ),
+    sa.Column(
+        "grade_predictions",
+        postgresql.JSONB(),
+        nullable=True,
+        comment=(
+            "What each grading company's model concluded from the condition assessment — "
+            "per company slug, the full grade distribution, the model's confidence and "
+            "its version, or a one-key insufficient_information with its reason; the "
+            "composed grading version and the predictors' thresholds beside them so a row "
+            "explains itself (#227). NULL means the grading step never ran — a refusal is "
+            "a stored value, never an absence. JSONB on `condition_details`' reasoning: "
+            "nothing joins it, and the results route reads the whole document."
         ),
     ),
     sa.CheckConstraint(

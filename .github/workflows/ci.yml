@@ -322,7 +322,7 @@ jobs:
           $COMPOSE exec -T worker python -c "
           import cv2, tcg_ml_card_detection, tcg_ml_image_quality, tcg_ml_normalization
           import tcg_ml_centering, tcg_ml_condition, tcg_ml_corners, tcg_ml_edges, tcg_ml_surface
-          import tcg_ml_evaluation
+          import tcg_ml_evaluation, tcg_ml_grading_bgs, tcg_ml_grading_psa, tcg_ml_grading_tag
           print(cv2.__version__)"
 
           # Deliberately not `! $COMPOSE exec ... python -c "import cv2"`.
@@ -331,12 +331,14 @@ jobs:
           # whichever way the import went — which is the failure mode this step
           # exists to catch. Assert on what the interpreter said instead.
           #
-          # All nine, because the split is one `--extra worker` and a package
+          # All twelve, because the split is one `--extra worker` and a package
           # left out of it is an ImportError the API container only finds at
-          # startup.
+          # startup. The three grade predictors bind no OpenCV and are asserted
+          # absent all the same: a model has no business in the API image
+          # (ADR 0011 decision 5).
           for module in cv2 tcg_ml_image_quality tcg_ml_card_detection tcg_ml_normalization \
               tcg_ml_centering tcg_ml_condition tcg_ml_corners tcg_ml_edges tcg_ml_surface \
-              tcg_ml_evaluation; do
+              tcg_ml_evaluation tcg_ml_grading_bgs tcg_ml_grading_psa tcg_ml_grading_tag; do
             present=$($COMPOSE exec -T api python -c "
           try:
               import $module

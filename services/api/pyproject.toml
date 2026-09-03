@@ -72,17 +72,19 @@ dependencies = [
 
 # The analysis worker's extras, and nothing the HTTP surface needs.
 #
-# Every member here brings OpenCV — the three pipeline stages directly, and
+# Most members here bring OpenCV — the three pipeline stages directly, and
 # `tcg-ml-condition` through the four axis analyzers it composes — and
 # OpenCV has no business in an internet-facing web server:
 # `infrastructure/docker/api.Dockerfile` syncs `--package tcg-api` and gets
 # none of it, while `worker.Dockerfile` adds `--extra worker` and gets all of
-# it. What makes that split hold at runtime is
-# that `tcg_api.analysis.jobs` imports the gate's and the condition step's
-# wiring inside the function
-# that runs a job rather than at module scope — `tests/test_import_purity.py`
-# asserts it, because the symptom of getting it wrong is an API container that
-# will not start.
+# it. The four that bring none (the evaluation harness and the three grade
+# predictors) ride here because their only importers are worker-image
+# modules, and a model has no business in the API image either (ADR 0011).
+# What makes that split hold at runtime is that `tcg_api.analysis.jobs`
+# imports the gate's, the condition step's and the grading step's wiring
+# inside the function that runs a job rather than at module scope —
+# `tests/test_import_purity.py` asserts it, because the symptom of getting it
+# wrong is an API container that will not start.
 #
 # `tcg-ml-condition` alone would pull the four analyzers transitively; all
 # five are named so the worker's contract is readable at the extra rather
@@ -103,6 +105,11 @@ worker = [
     # extra because `tcg_api.datasets.evaluation` (a worker-image command)
     # is its importer, and the API image has no caller for it.
     "tcg-ml-evaluation",
+    # The three per-company grade predictors (#227) — no OpenCV either; the
+    # worker builds the predicting adapters from them (ADR 0011 decision 5).
+    "tcg-ml-grading-bgs",
+    "tcg-ml-grading-psa",
+    "tcg-ml-grading-tag",
     "tcg-ml-image-quality",
     "tcg-ml-normalization",
     "tcg-ml-surface",
@@ -119,6 +126,9 @@ tcg-ml-condition = { workspace = true }
 tcg-ml-corners = { workspace = true }
 tcg-ml-edges = { workspace = true }
 tcg-ml-evaluation = { workspace = true }
+tcg-ml-grading-bgs = { workspace = true }
+tcg-ml-grading-psa = { workspace = true }
+tcg-ml-grading-tag = { workspace = true }
 tcg-ml-image-quality = { workspace = true }
 tcg-ml-normalization = { workspace = true }
 tcg-ml-surface = { workspace = true }

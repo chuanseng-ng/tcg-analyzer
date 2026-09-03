@@ -772,3 +772,138 @@ def test_surface_coverage_averages_the_two_sides() -> None:
         surface=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION)
     )
     assert surface_coverage(nothing.surface) == 0.0
+
+
+# ----------------------------------------------------------------
+# The persisted form's inverse — #227, `as_record()` read back
+# ----------------------------------------------------------------
+#
+# The worker reads `analyses.condition_details` and hands the type to the
+# three company models; the document is the seam (#187) and the port speaks
+# the type, never the document (#221). Every shape the writers emit must read
+# back to an equal value, and a malformed document must fail as the one
+# domain error rather than as a KeyError three frames down.
+
+
+def a_scuff_with_geometry() -> Defect:
+    return Defect(
+        type=SurfaceLabel.SCUFF,
+        confidence=Confidence(0.7),
+        severity=DefectSeverity.MODERATE,
+        side=ImageSide.BACK,
+        representation=Representation.ORIGINAL,
+        bounding_box=BoundingBox(x=0.1, y=0.2, width=0.3, height=0.4),
+        polygon=((0.1, 0.2), (0.4, 0.2), (0.4, 0.6)),
+        metadata={"source": "test"},
+    )
+
+
+def an_elaborate_assessment() -> ConditionAssessment:
+    """Every optional key present somewhere, every refusal level exercised."""
+    front_corners = sound_corners()
+    front_corners[CornerRegion.TOP_LEFT] = RegionFinding(
+        label=CornerLabel.WHITENING,
+        confidence=Confidence(0.6),
+        severity=DefectSeverity.MINOR,
+        bounding_box=BoundingBox(x=0.0, y=0.0, width=0.1, height=0.1),
+    )
+    front_corners[CornerRegion.BOTTOM_RIGHT] = RegionFinding(
+        label=CornerLabel.UNKNOWN, confidence=Confidence(0.5)
+    )
+    rough = Defect(
+        type=EdgeLabel.ROUGH_CUT,
+        confidence=sure(),
+        severity=DefectSeverity.MODERATE,
+        side=ImageSide.FRONT,
+        representation=Representation.NORMALIZED,
+    )
+    return assessment(
+        centering=Centering(
+            front_horizontal=0.55,
+            front_vertical=InsufficientInformation("borderless"),
+            back_horizontal=0.5,
+            back_vertical=INSUFFICIENT_INFORMATION,
+            confidence=Confidence(0.4),
+        ),
+        corners={ImageSide.FRONT: front_corners, ImageSide.BACK: INSUFFICIENT_INFORMATION},
+        surface={
+            ImageSide.FRONT: SurfaceAssessment(
+                findings=(a_stain(),),
+                not_assessed={SurfaceLabel.SCRATCH: InsufficientInformation("too fine")},
+            ),
+            ImageSide.BACK: SurfaceAssessment(findings=(a_scuff_with_geometry(),)),
+        },
+        manufacturing_defects=(rough,),
+        eye_appeal=InsufficientInformation("eye_appeal_not_measured_in_v1"),
+    )
+
+
+@pytest.mark.parametrize(
+    "built",
+    [
+        assessment(),
+        an_elaborate_assessment(),
+        assessment(
+            centering=INSUFFICIENT_INFORMATION,
+            corners=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION),
+            edges=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION),
+            surface=dict.fromkeys((ImageSide.FRONT, ImageSide.BACK), INSUFFICIENT_INFORMATION),
+            manufacturing_defects=InsufficientInformation("manufacturing_classes_not_assessed"),
+            confidence=Confidence(0.0),
+        ),
+    ],
+    ids=["plain", "elaborate", "everything-refused"],
+)
+def test_a_record_reads_back_to_the_assessment_that_wrote_it(
+    built: ConditionAssessment,
+) -> None:
+    assert ConditionAssessment.from_record(built.as_record()) == built
+
+
+def test_a_record_reads_back_through_json() -> None:
+    """JSONB hands back lists for tuples and plain dicts — the polygon and the
+    metadata bag in particular — and the reader must not depend on the writer's
+    Python types surviving the round trip."""
+    import json
+
+    built = an_elaborate_assessment()
+    document = json.loads(json.dumps(built.as_record()))
+
+    assert ConditionAssessment.from_record(document) == built
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        {"centering": {"insufficient_information": None}},
+        lambda record: record.update(corners={"front": record["corners"]["front"]}),
+        lambda record: record["corners"]["front"]["top_left"].update(label="shine"),
+        lambda record: record["corners"]["front"]["top_left"].update(confidence="high"),
+        lambda record: record["surface"]["front"].update(findings="stain"),
+        lambda record: record.update(confidence=None),
+    ],
+    ids=[
+        "missing-members",
+        "missing-side",
+        "unknown-label",
+        "non-numeric-confidence",
+        "findings-not-a-list",
+        "confidence-absent",
+    ],
+)
+def test_a_malformed_record_is_the_domain_error(corrupt: object) -> None:
+    """One clause catches the whole domain (`errors.py`) — a stored document
+    that no longer matches the writer must fail as that clause, never as a
+    KeyError, TypeError or ValueError from deep inside a constructor."""
+    if isinstance(corrupt, dict):
+        record = corrupt
+    else:
+        record = assessment().as_record()
+        corrupt(record)  # type: ignore[operator]
+    with pytest.raises(InvalidConditionAssessment):
+        ConditionAssessment.from_record(record)
+
+
+def test_a_record_must_be_a_mapping() -> None:
+    with pytest.raises(InvalidConditionAssessment):
+        ConditionAssessment.from_record("assessment")  # type: ignore[arg-type]

@@ -56,7 +56,7 @@ from tcg_domain.annotation import (
     SurfaceLabel,
 )
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
-from tcg_domain.errors import InvalidConditionAssessment
+from tcg_domain.errors import InvalidConditionAssessment, InvalidConfidence
 
 __all__ = [
     "BoundingBox",
@@ -600,6 +600,179 @@ def _surface_record(surface: Mapping[ImageSide, Uncertain[SurfaceAssessment]]) -
     }
 
 
+# ----------------------------------------------------------------
+# The persisted form read back — #227, `as_record()`'s inverse
+# ----------------------------------------------------------------
+#
+# One reader per writer above, so the two shapes cannot drift apart without a
+# round-trip test noticing. Every reader hands its value to the constructor it
+# reconstitutes, so validation stays where it always was; what the readers add
+# is that a document which no longer matches the writer fails as the one
+# domain error (`errors.py`'s catch-the-whole-domain-with-one-clause rule)
+# rather than as a KeyError three frames inside a constructor.
+
+_REFUSAL_KEY: Final = "insufficient_information"
+
+
+def _mapping_of(value: object, *, label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise InvalidConditionAssessment(f"{label} must be a mapping, got {type(value).__name__}")
+    return value
+
+
+def _field_of(record: Mapping[str, object], key: str, *, label: str) -> object:
+    if key not in record:
+        raise InvalidConditionAssessment(f"{label} is missing {key!r}")
+    return record[key]
+
+
+def _is_refusal(value: object) -> bool:
+    return isinstance(value, Mapping) and _REFUSAL_KEY in value
+
+
+def _refusal_of(value: object) -> InsufficientInformation:
+    reason = _mapping_of(value, label="a refusal")[_REFUSAL_KEY]
+    if reason is not None and not isinstance(reason, str):
+        raise InvalidConditionAssessment(
+            f"a refusal's reason must be a string or null, got {type(reason).__name__}"
+        )
+    return InsufficientInformation(reason)
+
+
+def _confidence_of(value: object, *, owner: str) -> Confidence:
+    try:
+        return Confidence(value)  # type: ignore[arg-type]
+    except InvalidConfidence as error:
+        raise InvalidConditionAssessment(f"{owner} confidence: {error}") from error
+
+
+def _box_of(value: object) -> BoundingBox:
+    record = _mapping_of(value, label="a bounding box")
+    return BoundingBox(
+        x=_field_of(record, "x", label="a bounding box"),  # type: ignore[arg-type]
+        y=_field_of(record, "y", label="a bounding box"),  # type: ignore[arg-type]
+        width=_field_of(record, "width", label="a bounding box"),  # type: ignore[arg-type]
+        height=_field_of(record, "height", label="a bounding box"),  # type: ignore[arg-type]
+    )
+
+
+def _severity_of(record: Mapping[str, object]) -> DefectSeverity | None:
+    return None if "severity" not in record else _coerced(DefectSeverity, record["severity"])
+
+
+def _optional_box_of(record: Mapping[str, object]) -> BoundingBox | None:
+    return None if "bounding_box" not in record else _box_of(record["bounding_box"])
+
+
+def _defect_label_of(value: object) -> SurfaceLabel | EdgeLabel:
+    """A defect's type, preferring the surface vocabulary where a value is in both.
+
+    `dent` and `unknown` name a member of each enum, and the writer stored only
+    the value. The two members compare equal (`StrEnum`), so the round trip is
+    exact either way; the preference only decides which `isinstance` holds,
+    and surface is the vocabulary every stored defect speaks today — a
+    manufacturing defect from the edges is `rough_cut`, which is edge-only.
+    """
+    try:
+        return SurfaceLabel(value)  # type: ignore[arg-type]
+    except ValueError:
+        return _coerced(EdgeLabel, value)
+
+
+def _defect_of(value: object) -> Defect:
+    record = _mapping_of(value, label="a defect")
+    return Defect(
+        type=_defect_label_of(_field_of(record, "type", label="a defect")),
+        confidence=_confidence_of(
+            _field_of(record, "confidence", label="a defect"), owner="a defect's"
+        ),
+        severity=_severity_of(record),
+        side=_field_of(record, "side", label="a defect"),  # type: ignore[arg-type]
+        representation=_field_of(record, "representation", label="a defect"),  # type: ignore[arg-type]
+        bounding_box=_optional_box_of(record),
+        polygon=record.get("polygon"),  # type: ignore[arg-type]
+        metadata=_mapping_of(record.get("metadata", _NO_METADATA), label="a defect's metadata"),
+    )
+
+
+def _finding_of(value: object, *, labels: type[CornerLabel | EdgeLabel]) -> RegionFinding:
+    record = _mapping_of(value, label="a finding")
+    return RegionFinding(
+        label=_coerced(labels, _field_of(record, "label", label="a finding")),
+        confidence=_confidence_of(
+            _field_of(record, "confidence", label="a finding"), owner="a finding's"
+        ),
+        severity=_severity_of(record),
+        bounding_box=_optional_box_of(record),
+    )
+
+
+def _centering_of(value: object) -> Uncertain[Centering]:
+    if _is_refusal(value):
+        return _refusal_of(value)
+    record = _mapping_of(value, label="centering")
+    ratios: dict[str, object] = {}
+    for name in _RATIO_FIELDS:
+        ratio = _field_of(record, name, label="centering")
+        ratios[name] = _refusal_of(ratio) if _is_refusal(ratio) else ratio
+    return Centering(
+        confidence=_confidence_of(
+            _field_of(record, "confidence", label="centering"), owner="centering's"
+        ),
+        **ratios,  # type: ignore[arg-type]
+    )
+
+
+def _axis_of[RegionT: StrEnum](
+    value: object, *, regions: type[RegionT], labels: type[CornerLabel | EdgeLabel], axis: str
+) -> dict[ImageSide, Uncertain[Mapping[RegionT, RegionFinding]]]:
+    record = _mapping_of(value, label=axis)
+    answers: dict[ImageSide, Uncertain[Mapping[RegionT, RegionFinding]]] = {}
+    for side in V1_SIDES:
+        answer = _field_of(record, side.value, label=axis)
+        if _is_refusal(answer):
+            answers[side] = _refusal_of(answer)
+            continue
+        findings = _mapping_of(answer, label=f"the {side.value} {axis}")
+        answers[side] = {
+            _coerced(regions, region): _finding_of(finding, labels=labels)
+            for region, finding in findings.items()
+        }
+    return answers
+
+
+def _surface_of(value: object) -> dict[ImageSide, Uncertain[SurfaceAssessment]]:
+    record = _mapping_of(value, label="surface")
+    answers: dict[ImageSide, Uncertain[SurfaceAssessment]] = {}
+    for side in V1_SIDES:
+        answer = _field_of(record, side.value, label="surface")
+        if _is_refusal(answer):
+            answers[side] = _refusal_of(answer)
+            continue
+        face = _mapping_of(answer, label=f"the {side.value} surface")
+        findings = _field_of(face, "findings", label=f"the {side.value} surface")
+        if not isinstance(findings, Iterable) or isinstance(findings, (str, bytes, Mapping)):
+            raise InvalidConditionAssessment(
+                f"the {side.value} surface findings must be a list, got {type(findings).__name__}"
+            )
+        refused = _mapping_of(face.get("not_assessed", {}), label="not_assessed")
+        answers[side] = SurfaceAssessment(
+            findings=tuple(_defect_of(finding) for finding in findings),
+            not_assessed={label: _refusal_of(verdict) for label, verdict in refused.items()},  # type: ignore[misc]
+        )
+    return answers
+
+
+def _manufacturing_of(value: object) -> Uncertain[tuple[Defect, ...]]:
+    if _is_refusal(value):
+        return _refusal_of(value)
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes, Mapping)):
+        raise InvalidConditionAssessment(
+            f"manufacturing defects must be a list or the refusal, got {type(value).__name__}"
+        )
+    return tuple(_defect_of(defect) for defect in value)
+
+
 @dataclass(frozen=True, slots=True)
 class ConditionAssessment:
     """Spec §13's tree — the one neutral condition representation.
@@ -729,6 +902,53 @@ class ConditionAssessment:
             "eye_appeal": _refusal_record(self.eye_appeal),
             "confidence": self.confidence.value,
         }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, object]) -> ConditionAssessment:
+        """Read :meth:`as_record`'s form back — the worker's rehydration (#227).
+
+        The inverse of the writer, and nothing more: vocabulary strings become
+        members, floats become :class:`Confidence`, absent keys become
+        ``None``, and the one-key refusal object becomes
+        :class:`InsufficientInformation` wherever it appears. Every value goes
+        through the same constructors the analyzers use, so this reader adds
+        no rule of its own — a document that validated on the way in
+        validates on the way out, and ``from_record(a.as_record()) == a``.
+
+        Raises:
+            InvalidConditionAssessment: If the document does not match the
+                writer's shape — a missing member, a label outside its
+                vocabulary, a confidence that is not a number — or any
+                constructor refuses what it holds.
+        """
+        document = _mapping_of(record, label="a condition record")
+        eye_appeal = _field_of(document, "eye_appeal", label="a condition record")
+        if not _is_refusal(eye_appeal):
+            raise InvalidConditionAssessment("eye_appeal must be the refusal")
+        return cls(
+            centering=_centering_of(_field_of(document, "centering", label="a condition record")),
+            corners=_axis_of(
+                _field_of(document, "corners", label="a condition record"),
+                regions=CornerRegion,
+                labels=CornerLabel,
+                axis="corners",
+            ),
+            edges=_axis_of(
+                _field_of(document, "edges", label="a condition record"),
+                regions=EdgeRegion,
+                labels=EdgeLabel,
+                axis="edges",
+            ),
+            surface=_surface_of(_field_of(document, "surface", label="a condition record")),
+            manufacturing_defects=_manufacturing_of(
+                _field_of(document, "manufacturing_defects", label="a condition record")
+            ),
+            eye_appeal=_refusal_of(eye_appeal),
+            confidence=_confidence_of(
+                _field_of(document, "confidence", label="a condition record"),
+                owner="the assessment's",
+            ),
+        )
 
 
 def card_frame_of(details: Mapping[str, object] | None) -> BoundingBox | None:

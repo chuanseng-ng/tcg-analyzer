@@ -545,6 +545,25 @@ def test_a_run_reaches_the_confirmation_gate_and_stops(
 CATALOG_VERSION = "pokemon-catalog-v9.9.9"
 
 
+def publish_grading_rules() -> None:
+    """Publish spec §23's three standards, the way `tcg-seed-grading-rules` does.
+
+    The seeder's own writer, because what is being tested is that the run
+    records whatever the table says is in force — and a fresh database says
+    nothing until something publishes.
+    """
+    from tcg_api.grading.seed import apply_grading_rules, load_grading_rules
+
+    async def publish() -> None:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            await apply_grading_rules(load_grading_rules(), engine)
+        finally:
+            await engine.dispose()
+
+    run(publish)
+
+
 def publish_catalog_version(version: str = CATALOG_VERSION) -> None:
     """Register a card database version, past the import pipeline.
 
@@ -572,15 +591,19 @@ def test_a_run_records_what_it_was_computed_against(
     `application_version` is the running application's, resolved by the process
     that did the work; `card_database_version` is the published identifier that
     was current at that moment; `model_bundle_version` is the composed
-    condition version the run resolved at its claim (#187). The three that
-    name components no milestone has built yet are null, and null here means
-    "does not exist", not "not sent".
+    condition version joined to the composed grading version, both resolved at
+    the claim (#187, #227); `grading_rules_version` is the three standards in
+    force at that moment, in slug order (#227, ADR 0011). The two that name
+    components no milestone has built yet are null, and null here means "does
+    not exist", not "not sent".
     """
-    # Imported here rather than at the top: the constant lives beside the CV
-    # stack, and only this test needs it.
+    # Imported here rather than at the top: the constants live beside the CV
+    # stack and the `tcg_ml_` prefix, and only this test needs them.
+    from tcg_api.analysis.grading import GRADING_VERSION
     from tcg_ml_condition import CONDITION_VERSION
 
     publish_catalog_version()
+    publish_grading_rules()
     created = client.post("/analyses").json()
     uploaded(created["id"])
     client.post(f"/analyses/{created['id']}/run")
@@ -594,10 +617,27 @@ def test_a_run_records_what_it_was_computed_against(
     assert record["card_database_version"] == querying(
         "SELECT version FROM card_database_versions ORDER BY ordinal DESC LIMIT 1"
     )
-    assert record["model_bundle_version"] == CONDITION_VERSION
-    assert record["grading_rules_version"] is None
+    assert record["model_bundle_version"] == f"{CONDITION_VERSION}+{GRADING_VERSION}"
+    # Read back the same way: the standards the table says are in force today,
+    # not the strings the seed happened to publish.
+    assert record["grading_rules_version"] == "+".join(
+        querying(
+            "SELECT version FROM grading_rules WHERE company = :company "
+            "AND (effective_from IS NULL OR effective_from <= current_date) "
+            "ORDER BY effective_from DESC NULLS LAST LIMIT 1",
+            company=company,
+        )
+        for company in ("bgs", "psa", "tag")
+    )
     assert record["market_snapshot_id"] is None
     assert record["economic_configuration_id"] is None
+    # M8's acceptance criterion in the product (#227): a distribution per
+    # company, kept in full, stored beside the condition it was read from.
+    predictions = querying(
+        "SELECT grade_predictions -> 'predictions' FROM analyses WHERE id = :id",
+        id=uuid.UUID(created["id"]),
+    )
+    assert set(predictions) == {"bgs", "psa", "tag"}
 
 
 @pytest.mark.integration

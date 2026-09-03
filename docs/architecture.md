@@ -332,16 +332,18 @@ session lives for days, so the version that opened one is not necessarily the
 version that ran this. Every value is resolved when the analysis ran, never a
 pointer to whatever is current: the worker captures them at the moment it claims
 the analysis, which is the one moment at which "what is this being computed
-against" has an answer. `market_snapshot_id` is the second of the six the worker
-actually resolves, and the only one carrying a foreign key — `RESTRICT`, so
-pruning can never make a recorded analysis unresolvable, where a catalog version
-is an identifier worth keeping even if its record went. Four of the six are
-still null through V1: no model bundle or economic configuration exists yet;
-nothing has ingested a price, so there is no snapshot to name and the run
-records that rather than inventing one; and grading rules now exist but nothing
-in an analysis consults them until per-company grade prediction arrives — so
-recording a rules version on a run that never applied one would be a false
-claim. A documented absence rather than a gap.
+against" has an answer. `market_snapshot_id` is the only one carrying a foreign
+key — `RESTRICT`, so pruning can never make a recorded analysis unresolvable,
+where a catalog version is an identifier worth keeping even if its record went.
+`model_bundle_version` is the composed condition version joined to the three
+per-company grading versions (#187, #227), and `grading_rules_version` is the
+three published standards in force at the claim, joined in slug order — all
+three, because no company has been selected at that moment, and what was *in
+force* rather than what was consulted, since a V1 predictor reads no
+machine-readable rules (ADR 0011). Two of the six are still null through V1: the
+economic configuration is the user's and arrives later; and nothing has ingested
+a price, so there is no snapshot to name and the run records that rather than
+inventing one. A documented absence rather than a gap.
 
 Immutability is a database guarantee here too. A `BEFORE UPDATE` trigger refuses
 to change any of those six once it holds a value, so a re-run is a new analysis

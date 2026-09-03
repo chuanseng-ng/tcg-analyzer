@@ -13,17 +13,19 @@ lazy import** — see `_advance` — and `tests/test_import_purity.py` is what k
 it from being tidied away. Isolation (spec §56) remains the container's: no
 published port, no capabilities, `no-new-privileges`.
 
-**What the harness actually does, and what it deliberately does not.** There is
-one pipeline stage here, spec §19's image-quality gate, and no ML. A run claims
-an analysis whose images have arrived, records spec §57's reproducibility
-values as part of claiming it, judges them, and — unless they are
-unusable — advances to `awaiting_confirmation`, where it rests. That is not a
-stub standing in for a result: spec §20 forbids acting on an identification the
+**What the harness actually does, and what it deliberately does not.** Three
+pipeline stages run here: spec §19's image-quality gate, M7's condition step
+(#187) and M8's grade prediction step (#227). A run claims an analysis whose
+images have arrived, records spec §57's reproducibility values as part of
+claiming it, judges the photographs, and — unless they are unusable — assesses
+the card's condition, predicts a grade distribution per company from that, and
+advances to `awaiting_confirmation`, where it rests. That is not a stub
+standing in for a result: spec §20 forbids acting on an identification the
 user has not confirmed, no milestone yet produces a candidate, and #104 is the
 issue that supplies the confirmation which lets it move on. **Do not make this
-reach `completed`** — every result column is still NULL, and a completed
-analysis with nothing computed is precisely the confidently-wrong output the
-specification forbids.
+reach `completed`** — the economics are still unconfigured at this point, and
+a completed analysis with nothing computed is precisely the confidently-wrong
+output the specification forbids.
 
 **Security.** The `python-background-jobs` skill's example configuration is
 insecure by omission and none of its snippets are copied here:
@@ -53,6 +55,7 @@ disagree with the first.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from functools import lru_cache
 from uuid import UUID
 
@@ -60,7 +63,9 @@ import structlog
 from celery import Celery, Task, shared_task
 from celery.exceptions import OperationalError
 from celery.utils.time import get_exponential_backoff_interval
+from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
+from tcg_grading_companies import ADAPTERS
 
 from tcg_api.analysis.retention import (
     SWEEP_INTERVAL_SECONDS,
@@ -73,6 +78,7 @@ from tcg_api.analysis.state import transition
 from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.database import create_engine, create_session_factory
+from tcg_api.grading.rules import rules_in_force
 from tcg_api.market.snapshots import current_snapshot
 from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
@@ -259,11 +265,19 @@ async def _advance(analysis_id: UUID) -> bool:
             # a subscription that is not yet active, so nothing has ingested and
             # there is no snapshot. Never a fabricated one.
             snapshot = await current_snapshot(db)
+            # §57's rules version, resolved against the table like the catalog
+            # version above, and before the gate for the same reason the model
+            # bundle is: the record says what was in force, not which stages
+            # completed. See `_grading_rules_version`.
+            rules_version = await _grading_rules_version(db)
             # Imported *here*, not at the top of the module, exactly like the
             # gate below: `tcg_ml_condition` pulls the four axis analyzers and
             # with them OpenCV, and `routers/analyses.py` imports this file to
-            # enqueue. See `tcg_api.analysis.condition`.
+            # enqueue. See `tcg_api.analysis.condition`. The grading wiring
+            # binds no OpenCV but matches the `tcg_ml_` prefix
+            # `test_import_purity.py` probes, so it is deferred all the same.
             from tcg_api.analysis.condition import CONDITION_VERSION, assess_condition
+            from tcg_api.analysis.grading import GRADING_VERSION, predict_grades
 
             await record_reproducibility(
                 db,
@@ -274,12 +288,14 @@ async def _advance(analysis_id: UUID) -> bool:
                 application_version=application_version(),
                 card_database_version=None if current_catalog is None else current_catalog.version,
                 market_snapshot_id=None if snapshot is None else snapshot.id,
-                # A compile-time constant of the condition packages, so it is
-                # resolvable at the claim like every other §57 field — and
-                # recorded whether or not the run reaches the condition step,
-                # because the record says which versions were in force, not
-                # which stages completed (#187).
-                model_bundle_version=CONDITION_VERSION,
+                # Compile-time constants of the ml packages, so resolvable at
+                # the claim like every other §57 field — and recorded whether
+                # or not the run reaches either step, because the record says
+                # which versions were in force, not which stages completed
+                # (#187). The grading version composes in after the condition
+                # version, ADR 0011 decision 6.
+                model_bundle_version=f"{CONDITION_VERSION}+{GRADING_VERSION}",
+                grading_rules_version=rules_version,
             )
 
             # Spec §18 puts the quality gate here, before anything looks for a
@@ -316,6 +332,13 @@ async def _advance(analysis_id: UUID) -> bool:
             # architectural rule — which is why it can run before confirmation.
             await assess_condition(db, analysis_id)
 
+            # The grade prediction step — M8's acceptance criterion (#227): the
+            # document the step above stored in, a distribution per company
+            # out, refusals included. Same claim, same transaction, and before
+            # confirmation for the same reason: it reads the neutral
+            # representation and never the card's identity (ADR 0011).
+            await predict_grades(db, analysis_id)
+
             # Where identification would run. It does not exist in any decomposed
             # milestone yet, so the analysis reaches the confirmation gate with no
             # candidate and the user names the card themselves (#91, #104).
@@ -328,6 +351,37 @@ async def _advance(analysis_id: UUID) -> bool:
     finally:
         await engine.dispose()
     return True
+
+
+async def _grading_rules_version(db: AsyncSession) -> str | None:
+    """Spec §57's `grading_rules_version`: the standards in force at the claim.
+
+    One string for three companies — each company's `grading_rules.version`
+    as `rules_in_force` resolves it against the **table** (never the package,
+    `GET /grading-companies`' rule), joined with `+` in slug order. All three,
+    because at the claim no company has been selected: the economic
+    configuration naming them arrives later, and all three standards were in
+    force (ADR 0011). A V1 predictor reads no machine-readable rules; the
+    record says what was in force, not what was consulted.
+
+    `None` when any company has no standard recorded as in force — a partial
+    composite would read as complete and misreport. The log names the slug.
+    The date is this process's, `routers/grading.py`'s reasoning: reference
+    data that changes every few years is not a clock-skew question. A store
+    that cannot be read raises `GradingRulesUnavailable` and is left to
+    propagate, `CatalogUnavailable`'s rule: fail the run, retry.
+    """
+    today = datetime.now(UTC).date()
+    versions: list[str] = []
+    # ponytail: one statement per company against a three-row table, the
+    # router's own deferral. One windowed statement if the list ever grows.
+    for company in sorted(ADAPTERS):
+        rules = await rules_in_force(db, company, today)
+        if rules is None:
+            logger.warning("analysis.grading_rules_not_in_force", company=company)
+            return None
+        versions.append(rules.version)
+    return "+".join(versions)
 
 
 async def _fail(analysis_id: UUID) -> None:

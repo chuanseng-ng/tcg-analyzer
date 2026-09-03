@@ -281,9 +281,10 @@ class ReproducibilityResponse(BaseModel):
     model_bundle_version: str | None = Field(
         description=(
             "The model bundle that produced the condition and grade "
-            "predictions. Always null in V1: no model exists yet, and an "
-            "explicit identifier — never `/latest/` — is what will go here when "
-            "one does (spec §31)."
+            "predictions: the composed condition version joined to the three "
+            "per-company grading versions with `+`, resolved when the run "
+            "claimed the analysis. An explicit identifier, never `/latest/` "
+            "(spec §31). Null until a run has claimed the analysis."
         ),
     )
     card_database_version: str | None = Field(
@@ -298,8 +299,12 @@ class ReproducibilityResponse(BaseModel):
     )
     grading_rules_version: str | None = Field(
         description=(
-            "The grading-rule version the prediction was made under. Always "
-            "null in V1: no grading rules exist yet."
+            "The published grading standards in force when the run claimed "
+            "the analysis — one string for all three companies, their "
+            "`GET /grading-companies` rules versions joined with `+` in slug "
+            "order, because nothing has been selected at that moment. Null "
+            "until a run has claimed the analysis, or when some company had "
+            "no standard recorded as in force."
         ),
     )
     market_snapshot_id: UUID | None = Field(
