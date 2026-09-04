@@ -160,10 +160,29 @@ own spec §57 record, including the market snapshot it was computed against, whi
 is what ADR 0006 requires the UI to date-stamp. `Cache-Control: no-store`, for
 the same reason `GET /cards/{id}/market` is.
 
-**Today `companies` is `[]` and `recommendation` is `null` in every
-deployment**, because nothing predicts a grade yet. That `null` is deliberately
-not spec §44's `insufficient_information`: the engine has not declined to
-recommend, it has not been asked.
+**`companies` and `recommendation` fill in from what the worker stored** (#228).
+Once an analysis has an economic configuration and the worker has recorded its
+grade predictions, `companies` carries one entry per configured company whose
+model predicted — the stored distribution, never one predicted at read time —
+priced against the snapshot the analysis recorded, and `recommendation` is the
+engine's answer under the stored thresholds, with the weakest photograph's
+quality score as spec §44's third confidence source. Until then both are `[]`
+and `null`, and that `null` is deliberately not spec §44's
+`insufficient_information`: the engine has not declined to recommend, it has
+not been asked. A deployment that has never ingested (ADR 0006) still answers
+200: every priced figure is present-and-null beside the engine's own reason,
+and the recommendation is `insufficient_information` with
+`comparison_reason: no_company_can_be_ranked`. A company whose model refused has
+no distribution to carry and is not a `companies` entry; it appears in
+`recommendation.comparison.unranked` with its stored reason — except when every
+configured company refused, where the engine's `no_company_can_be_ranked` is the
+whole answer and the per-company reasons are not on the wire.
+
+With the V1 heuristic predictors every recommendation is
+`insufficient_information` on `grade_confidence_below_threshold`: ADR 0011's
+declared confidence of 0.35 sits below the provisional `minimum_grade_confidence`
+of 0.50, and the response says so with the value and the threshold rather than
+forcing a verdict.
 
 The four writes — `POST /analyses`, `POST /analyses/{id}/images`,
 `POST /analyses/{id}/confirm-card` and

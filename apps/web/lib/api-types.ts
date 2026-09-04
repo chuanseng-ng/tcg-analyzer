@@ -131,7 +131,7 @@ export interface paths {
          *
          *     **Nothing is conflated.** `incremental_grading_decision` answers 'should I grade the card I own?' and `investment_return` answers 'did buying it to grade make money?'. They share no field name, and neither ratio is called `roi`.
          *
-         *     **`companies` is empty and `recommendation` is `null` until the analysis has been calculated.** No milestone predicts a grade distribution yet, so that is today's answer for every analysis. It is an empty result rather than an error because the analysis is fine — it simply has not got there.
+         *     **`companies` is empty and `recommendation` is `null` until the analysis has an economic configuration and the worker has stored its grade predictions.** That is an empty result rather than an error because the analysis is fine — it simply has not got there. Prices come from the snapshot the analysis recorded, never a provider; with no snapshot every figure is present-and-null beside the engine's own reason. A company whose model refused appears in the comparison's `unranked` with its reason.
          *
          *     `Cache-Control: no-store`: every figure here descends from prices whose confidence is discounted for age at the moment of asking.
          */
@@ -2200,7 +2200,7 @@ export interface components {
             card_id: string | null;
             /**
              * Companies
-             * @description One entry per configured company. **Empty until a grade distribution exists** — no milestone predicts one yet, so this is `[]` today, and it is empty rather than absent so a client parses the same shape either way.
+             * @description One entry per configured company whose model predicted, in the configuration's order, each with its full distribution. **Empty until the analysis has an economic configuration and the worker has stored its grade predictions** — and empty rather than absent so a client parses the same shape either way. A company whose model refused is not here: it has no distribution to carry, and appears in `recommendation.comparison.unranked` with its reason.
              */
             companies: components["schemas"]["CompanyEconomicsResponse"][];
             /**
@@ -2213,7 +2213,7 @@ export interface components {
             economic_configuration: components["schemas"]["EconomicConfigurationResponse"] | null;
             /** @description The snapshot recorded on this analysis, or `null` when nothing had been ingested when it ran. */
             market_snapshot: components["schemas"]["MarketSnapshotReference"] | null;
-            /** @description Spec §44's answer, or `null` when the analysis has not been calculated. **`null` is not `insufficient_information`**: the first means nobody has asked yet, the second that we asked and the data did not support an answer. */
+            /** @description Spec §44's answer, or `null` when nothing has been asked yet — no configuration, or no prediction stored. **`null` is not `insufficient_information`**: the first means nobody has asked, the second that we asked and the data did not support an answer. */
             recommendation: components["schemas"]["RecommendationResponse"] | null;
             /**
              * Status
