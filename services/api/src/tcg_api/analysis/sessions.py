@@ -53,6 +53,7 @@ __all__ = [
     "new_session_token",
     "read_analysis",
     "read_condition",
+    "read_grade_predictions",
     "record_condition",
     "record_grade_predictions",
     "record_reproducibility",
@@ -387,6 +388,20 @@ async def read_condition(db: AsyncSession, analysis_id: UUID) -> dict[str, objec
     its claim, not the HTTP surface.
     """
     statement = sa.select(analyses.c.condition_details).where(analyses.c.id == analysis_id)
+    result = await execute(db, statement)
+    document = result.scalar_one_or_none()
+    return None if document is None else dict(document)
+
+
+async def read_grade_predictions(db: AsyncSession, analysis_id: UUID) -> dict[str, object] | None:
+    """The grade prediction step's document for `analysis_id`, or `None` if it never ran — #228.
+
+    :func:`read_condition`'s twin one stage on: the whole document, as stored,
+    for the results route to filter to the configured companies and rehydrate.
+    Ownership is the caller's — `read_analysis` has already established it
+    before this is asked.
+    """
+    statement = sa.select(analyses.c.grade_predictions).where(analyses.c.id == analysis_id)
     result = await execute(db, statement)
     document = result.scalar_one_or_none()
     return None if document is None else dict(document)
