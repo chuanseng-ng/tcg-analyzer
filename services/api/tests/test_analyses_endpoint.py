@@ -1085,3 +1085,63 @@ def test_an_unreachable_database_is_a_503_rather_than_a_500(
 
     assert response.status_code == 503
     assert response.json()["code"] == ErrorCode.PROVIDER_ERROR.value
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_worked_analysis_serves_its_grade_distributions(
+    client: TestClient, enqueued: list[uuid.UUID]
+) -> None:
+    """M8 end to end (#227, #228): what the worker stored is what the results serve.
+
+    The real predictors, the real route; no snapshot, because none exists on a
+    deployment that has never ingested (ADR 0006). With nothing uploaded the
+    gate lets nothing through to the analyzers, so every company's stored
+    entry is a refusal — and a refusal is served as one, never fabricated into
+    a distribution.
+    """
+    publish_grading_rules()
+    created = client.post("/analyses").json()
+    uploaded(created["id"])
+    client.post(f"/analyses/{created['id']}/run")
+    worked(created["id"])
+
+    status = client.get(f"/analyses/{created['id']}").json()["status"]
+    assert status == "awaiting_confirmation", status
+    assert (
+        client.post(
+            f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/analyses/{created['id']}/economic-configuration",
+            json={"grading_companies": ["psa", "bgs"], "optimization_mode": "expected_profit"},
+        ).status_code
+        == 201
+    )
+
+    body = client.get(f"/analyses/{created['id']}/results").json()
+
+    stored = querying(
+        "SELECT grade_predictions -> 'predictions' FROM analyses WHERE id = :id",
+        id=uuid.UUID(created["id"]),
+    )
+    assert set(stored) == {"bgs", "psa", "tag"}
+    served = {company["company"]: company for company in body["companies"]}
+    for slug in ("psa", "bgs"):
+        entry = stored[slug]
+        if "distribution" in entry:
+            assert {
+                term["grade"]: term["probability"] for term in served[slug]["grade_distribution"]
+            } == entry["distribution"]
+        else:
+            assert slug not in served
+    # Nothing was uploaded, so nothing was assessed: every entry is a refusal
+    # and there is no photograph for §44's third confidence source — the
+    # route answers `null`, "not asked", rather than an admission nothing
+    # measured.
+    assert all("insufficient_information" in entry for entry in stored.values())
+    assert body["companies"] == []
+    assert body["recommendation"] is None

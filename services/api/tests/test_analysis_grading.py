@@ -31,7 +31,12 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.analysis import grading
-from tcg_api.analysis.sessions import read_condition, record_condition, record_grade_predictions
+from tcg_api.analysis.sessions import (
+    read_condition,
+    read_grade_predictions,
+    record_condition,
+    record_grade_predictions,
+)
 from tcg_api.analysis.tables import analyses
 from tcg_api.database import create_session_factory
 from tcg_api.version import application_version
@@ -415,6 +420,28 @@ def test_the_predictions_document_round_trips_through_jsonb(analysis: UUID) -> N
     run(lambda: _with_session(write))
 
     assert run(lambda: _with_session(read)) == document
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_predictions_document_reads_back_and_a_null_is_none(analysis: UUID) -> None:
+    """#228's side of the seam: the whole document, and a step that never ran
+    is `None` rather than an empty mapping."""
+    document = {
+        "version": grading.GRADING_VERSION,
+        "thresholds": MERGED_THRESHOLDS,
+        "predictions": {"psa": {"insufficient_information": "no_axis_measured"}},
+    }
+
+    async def before(db: Any) -> Any:
+        return await read_grade_predictions(db, analysis)
+
+    async def write_then_read(db: Any) -> Any:
+        await record_grade_predictions(db, analysis, details=document)
+        return await read_grade_predictions(db, analysis)
+
+    assert run(lambda: _with_session(before)) is None
+    assert run(lambda: _with_session(write_then_read)) == document
 
 
 @pytest.mark.integration

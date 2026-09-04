@@ -33,18 +33,25 @@ and never zero. That is #56's rule for a missing price, #91's for an unmeasured
 confidence, and ADR 0007's for an absent acquisition cost, which reaches a client
 here as `investment_roi_reason: "acquisition_cost_not_supplied"`.
 
-**Results are empty until something predicts a grade.** No milestone yet produces
-a grade distribution — M7 defines the condition representation and M8 the
-per-company predictors — so `_load_predictions` returns nothing and `companies`
-is `[]` with `recommendation: null`. The alternative was to answer 409 until an
-analysis reaches `completed`, which is unreachable for the same reason; an empty
-result that names the analysis's own status tells a client more, and fills in
-without a contract change when M9 wires the pipeline.
+**Results fill in from what the worker stored, never from a prediction made
+here.** `_load_predictions` reads #227's `analyses.grade_predictions` document,
+filtered to the configuration's companies, and prices each distribution against
+the snapshot the analysis recorded — never a provider (ADR 0006), never today's
+cut; the engine does the rest. `companies` is `[]` and `recommendation` is
+`null` until an analysis has both a configuration and a stored prediction, and
+that `null` still means nobody has asked — a third thing from §44's
+`insufficient_information`, which is the engine having been asked and declined.
+A company whose model refused cannot be a `companies` entry, because it has no
+distribution to carry; it rides on the comparison's `unranked` with its stored
+reason instead. The alternative to the empty answer was a 409 until `completed`;
+an empty result that names the analysis's own status tells a client more.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections.abc import Iterable, Mapping
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Final
 from uuid import UUID
@@ -54,26 +61,37 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, 
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import AnalysisStatus
+from tcg_domain.catalog import CardId
 from tcg_domain.confidence import Confidence, InsufficientInformation
-from tcg_domain.errors import InvalidMoney
+from tcg_domain.distribution import GradeDistribution
+from tcg_domain.errors import CatalogUnavailable, InvalidMoney
+from tcg_domain.grade import Grade
 from tcg_domain.money import Money
 from tcg_economic_engine import (
     CompanyComparison,
     CompanyOutlook,
     CostConfiguration,
     EconomicEngineError,
+    GradedPrice,
     Recommendation,
     SellingFee,
+    company_outlook,
+    recommend,
     strategy_for,
 )
 from tcg_grading_companies.companies import ADAPTERS
+from tcg_market_data import MarketSnapshot, PriceObservation, price_confidence
 
+from tcg_api.analysis.images import ImageQuality, read_quality
 from tcg_api.analysis.sessions import (
     AnalysisRecord,
     AnalysisStoreUnavailable,
     read_analysis,
+    read_grade_predictions,
     resolve_session,
 )
+from tcg_api.catalog.cards import PostgresCardRepository
+from tcg_api.config import Settings, get_settings
 from tcg_api.economics.store import (
     EconomicConfiguration,
     EconomicConfigurationUnavailable,
@@ -81,7 +99,7 @@ from tcg_api.economics.store import (
     read_configuration,
 )
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
-from tcg_api.market.snapshots import MarketSnapshotUnavailable, get_snapshot
+from tcg_api.market.snapshots import MarketSnapshotUnavailable, get_snapshot, resolve_prices
 from tcg_api.rate_limit import analysis_rate_limit
 from tcg_api.routers.analyses import SESSION_COOKIE, analysis_session
 
@@ -109,6 +127,7 @@ _NOT_FOUND: Final = "No analysis is recorded under that identifier."
 _UNREACHABLE: Final = "The analysis store could not be reached."
 _CONFIGURATION_UNREACHABLE: Final = "The economic configuration could not be stored."
 _MARKET_UNREACHABLE: Final = "The market data store could not be reached."
+_CATALOG_UNREACHABLE: Final = "The card catalog could not be reached."
 
 #: The one state a configuration may be recorded from. Spec §5's journey puts
 #: *Economic Configuration* immediately after *User Confirmation*, and §65 gives
@@ -121,10 +140,9 @@ _ALREADY_CONFIGURED: Final = (
     "immutable. Start a new analysis to price the card differently."
 )
 
-#: `no-store` for `GET /cards/{id}/market`'s reason, one step ahead of needing
-#: it: every figure a result carries is derived from prices whose confidence is
-#: discounted for age at the moment of asking, so a cached body would report a
-#: frozen one.
+#: `no-store` for `GET /cards/{id}/market`'s reason: every figure a result
+#: carries is derived from prices whose confidence is discounted for age at the
+#: moment of asking, so a cached body would report a frozen one.
 _CACHE_CONTROL: Final = "no-store"
 
 
@@ -697,17 +715,21 @@ class ResultsResponse(BaseModel):
     )
     companies: list[CompanyEconomicsResponse] = Field(
         description=(
-            "One entry per configured company. **Empty until a grade distribution "
-            "exists** — no milestone predicts one yet, so this is `[]` today, and it "
-            "is empty rather than absent so a client parses the same shape either way."
+            "One entry per configured company whose model predicted, in the "
+            "configuration's order, each with its full distribution. **Empty until "
+            "the analysis has an economic configuration and the worker has stored "
+            "its grade predictions** — and empty rather than absent so a client "
+            "parses the same shape either way. A company whose model refused is not "
+            "here: it has no distribution to carry, and appears in "
+            "`recommendation.comparison.unranked` with its reason."
         ),
     )
     recommendation: RecommendationResponse | None = Field(
         description=(
-            "Spec §44's answer, or `null` when the analysis has not been calculated. "
-            "**`null` is not `insufficient_information`**: the first means nobody has "
-            "asked yet, the second that we asked and the data did not support an "
-            "answer."
+            "Spec §44's answer, or `null` when nothing has been asked yet — no "
+            "configuration, or no prediction stored. **`null` is not "
+            "`insufficient_information`**: the first means nobody has asked, the "
+            "second that we asked and the data did not support an answer."
         ),
     )
 
@@ -715,10 +737,10 @@ class ResultsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Engine → wire
 # ---------------------------------------------------------------------------
-# Pure functions over the engine's frozen results, tested directly. They have no
-# runtime caller until `_load_predictions` has a source (M8), which is why they
-# are unit-tested against hand-built engine objects rather than through a
-# request: the acceptance criterion is about the shape, and the shape is here.
+# Pure functions over the engine's frozen results, unit-tested against
+# hand-built engine objects rather than through a request: the acceptance
+# criterion is about the shape, and the shape is here. `read_results` has been
+# their runtime caller since #228.
 
 
 def _amount(value: Money) -> str:
@@ -944,6 +966,125 @@ def _recommendation(recommendation: Recommendation) -> RecommendationResponse:
 
 
 # ---------------------------------------------------------------------------
+# Stored document → engine
+# ---------------------------------------------------------------------------
+# Pure over #227's document, a configuration and a snapshot's observations, so
+# the rules — filtered on read, never re-predicted, a refusal kept apart, a
+# missing price left missing — are tested without a database.
+
+
+def _graded_prices(
+    observations: tuple[PriceObservation, ...],
+    company: str,
+    *,
+    at: datetime,
+    stale_after: timedelta,
+) -> tuple[dict[Grade, GradedPrice], GradedPrice | None]:
+    """One company's ladder and the raw price, as the engine takes them.
+
+    `GET /cards/{id}/market`'s keying, one company at a time; the raw price is
+    the same for every company. The confidence is #55's, discounted for age at
+    the moment of asking — which is what makes this route's `no-store` true
+    rather than cautious.
+    """
+
+    def priced(observation: PriceObservation) -> GradedPrice:
+        return GradedPrice(
+            observation.price,
+            price_confidence(observation, at=at, stale_after=stale_after),
+        )
+
+    graded = {
+        observation.grade: priced(observation)
+        for observation in observations
+        if observation.grading_company == company and observation.grade is not None
+    }
+    raw = next(
+        (
+            priced(observation)
+            for observation in observations
+            if observation.grading_company is None
+        ),
+        None,
+    )
+    return graded, raw
+
+
+def _outlooks(
+    document: Mapping[str, Any],
+    configuration: EconomicConfiguration,
+    observations: tuple[PriceObservation, ...],
+    *,
+    at: datetime,
+    stale_after: timedelta,
+) -> tuple[tuple[CompanyOutlook, ...], dict[str, InsufficientInformation]]:
+    """#227's document, filtered to the configured companies on read.
+
+    Never re-predicted: an entry is what the worker stored at the claim, and the
+    only thing done to it is rehydration through `GradeDistribution.from_mapping`
+    — spec §63 again, at the read boundary, so a document that does not sum to 1
+    raises rather than being served. A refused entry is kept apart wearing its
+    stored reason; an absent one is neither a refusal nor a prediction, and the
+    `KeyError` is the corrupt record it is. `model_confidence` is what the engine
+    takes as `distribution_confidence` — never the distribution's own spread.
+    """
+    predictions = document["predictions"]
+    outlooks: list[CompanyOutlook] = []
+    refusals: dict[str, InsufficientInformation] = {}
+    for company in configuration.companies:
+        entry = predictions[company]
+        if "insufficient_information" in entry:
+            refusals[company] = InsufficientInformation(entry["insufficient_information"])
+            continue
+        graded, raw = _graded_prices(observations, company, at=at, stale_after=stale_after)
+        outlooks.append(
+            company_outlook(
+                company,
+                GradeDistribution.from_mapping(entry["distribution"]),
+                graded,
+                raw,
+                configuration.acquisition_cost,
+                configuration.costs,
+                distribution_confidence=Confidence(entry["model_confidence"]),
+            )
+        )
+    return tuple(outlooks), refusals
+
+
+def _image_quality(images: Iterable[ImageQuality]) -> Confidence | None:
+    """The weakest photograph's verdict, or `None` when none was assessed.
+
+    §44's one confidence is a minimum, never a product, and the same rule holds
+    across the two sides. `None` rather than a fabricated zero: a photograph
+    nobody assessed is not a bad one either (spec §2.7), and the caller answers
+    `null` — nobody has asked — instead of an admission nothing measured.
+    """
+    scores = [image.quality_score for image in images if image.quality_score is not None]
+    return None if not scores else Confidence(min(scores))
+
+
+def _with_refusals(
+    recommendation: Recommendation, refusals: Mapping[str, InsufficientInformation]
+) -> Recommendation:
+    """Put the companies whose model refused beside the engine's own unranked.
+
+    §43's rule, one layer up: an undefined figure is unranked with its reason,
+    never sorted last and never dropped. Nothing is recomputed — the order and
+    the winner are the engine's. When nothing at all could be ranked the
+    comparison is the engine's admission and stays so; the per-company reasons
+    have no field to travel in then, which is a contract gap, not one to patch
+    here.
+    """
+    comparison = recommendation.comparison
+    if not refusals or not isinstance(comparison, CompanyComparison):
+        return recommendation
+    return replace(
+        recommendation,
+        comparison=replace(comparison, unranked={**comparison.unranked, **refusals}),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -1097,27 +1238,45 @@ async def configure_economics(
 
 
 async def _load_predictions(
-    db: AsyncSession,  # noqa: ARG001 - the signature is the seam; see the docstring
-    analysis_id: UUID,  # noqa: ARG001
-) -> tuple[CompanyOutlook, ...]:
-    """Every configured company's figures for this analysis. Nothing, today.
+    db: AsyncSession,
+    record: AnalysisRecord,
+    configuration: EconomicConfiguration,
+    snapshot: MarketSnapshot | None,
+    *,
+    at: datetime,
+    stale_after: timedelta,
+) -> tuple[tuple[CompanyOutlook, ...], dict[str, InsufficientInformation]] | None:
+    """Every configured company's figures, or `None` if the prediction step never ran.
 
-    The economics need a grade distribution per company, and **no milestone
-    produces one yet**: M7 defines the neutral condition representation and M8
-    the per-company predictors that turn it into distributions. There is
-    therefore no table to read and nothing to compute from, and inventing a
-    distribution here would be the fabrication spec §2.7 forbids — with the
-    additional problem that it would be the economics guessing at the ML
-    system's output, which is the master architectural rule broken in the
-    direction that matters least and reads worst.
-
-    This is the one seam this route leaves open. When M8 stores distributions,
-    this function reads them, builds one `CompanyOutlook` per configured company
-    from the analysis's recorded snapshot and configuration, and everything below
-    it — including the two §41 figures the response is shaped around — already
-    works.
+    Reads what the worker stored (#227) and the prices the analysis's own
+    snapshot holds for its confirmed card — never a provider (ADR 0006), never
+    today's cut. An analysis with no snapshot still answers, with the engine's
+    own refusals: M4's ingestion is blocked on a subscription and this route
+    does not wait for it. The three reads raise three distinct 503 reasons, so
+    an operator learns which statement failed rather than guessing from the path.
     """
-    return ()
+    try:
+        document = await read_grade_predictions(db, record.id)
+    except AnalysisStoreUnavailable as error:
+        logger.warning("economics.predictions_could_not_be_read", exc_info=True)
+        raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
+    if document is None:
+        return None
+
+    observations: tuple[PriceObservation, ...] = ()
+    if snapshot is not None and record.card_id is not None:
+        try:
+            card = await PostgresCardRepository(db).get(CardId(record.card_id))
+        except CatalogUnavailable as error:
+            logger.warning("economics.card_could_not_be_read", exc_info=True)
+            raise _unreachable("catalog_unreachable", _CATALOG_UNREACHABLE) from error
+        try:
+            observations = () if card is None else await resolve_prices(db, snapshot, card)
+        except MarketSnapshotUnavailable as error:
+            logger.warning("economics.prices_could_not_be_read", exc_info=True)
+            raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
+
+    return _outlooks(document, configuration, observations, at=at, stale_after=stale_after)
 
 
 @router.get(
@@ -1133,9 +1292,12 @@ async def _load_predictions(
         "grade make money?'. They share no field name, and neither ratio is called "
         "`roi`.\n\n"
         "**`companies` is empty and `recommendation` is `null` until the analysis "
-        "has been calculated.** No milestone predicts a grade distribution yet, so "
-        "that is today's answer for every analysis. It is an empty result rather "
-        "than an error because the analysis is fine — it simply has not got there.\n\n"
+        "has an economic configuration and the worker has stored its grade "
+        "predictions.** That is an empty result rather than an error because the "
+        "analysis is fine — it simply has not got there. Prices come from the "
+        "snapshot the analysis recorded, never a provider; with no snapshot every "
+        "figure is present-and-null beside the engine's own reason. A company whose "
+        "model refused appears in the comparison's `unranked` with its reason.\n\n"
         "`Cache-Control: no-store`: every figure here descends from prices whose "
         "confidence is discounted for age at the moment of asking."
     ),
@@ -1159,6 +1321,7 @@ async def read_results(
     request: Request,
     response: Response,
     db: Annotated[AsyncSession, Depends(analysis_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
     analysis_id: Annotated[
         UUID,
         Path(description="The identifier `POST /analyses` answered with."),
@@ -1167,9 +1330,16 @@ async def read_results(
     """Lay out what this analysis has arrived at so far.
 
     Everything is read from the analysis's own §57 record — the configuration it
-    references and the snapshot it was computed against — rather than resolved
-    now. A result recomputed against whatever is current would answer a different
-    question from the one the analysis asked.
+    references, the snapshot it was computed against and the predictions the
+    worker stored — rather than resolved now. A result recomputed against
+    whatever is current would answer a different question from the one the
+    analysis asked. The one thing asked *now* is each price's age (#55), once,
+    so every confidence in the body is mutually consistent.
+
+    The recommendation needs three things and is `null` without any of them: a
+    configuration (the mode and the thresholds), a stored prediction, and an
+    assessed photograph (§44's third confidence source). `companies` needs the
+    first two.
     """
     record = await _owned_analysis(db, request, analysis_id)
 
@@ -1195,7 +1365,50 @@ async def read_results(
         logger.warning("economics.snapshot_could_not_be_read", exc_info=True)
         raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
 
-    outlooks = await _load_predictions(db, record.id)
+    predicted = (
+        None
+        if configuration is None
+        else await _load_predictions(
+            db,
+            record,
+            configuration,
+            snapshot,
+            at=datetime.now(UTC),
+            stale_after=timedelta(days=settings.market_stale_after_days),
+        )
+    )
+
+    outlooks: tuple[CompanyOutlook, ...] = ()
+    recommendation: Recommendation | None = None
+    if configuration is not None and predicted is not None:
+        outlooks, refusals = predicted
+        try:
+            quality = _image_quality(await read_quality(db, record.id))
+        except AnalysisStoreUnavailable as error:
+            logger.warning("economics.image_quality_could_not_be_read", exc_info=True)
+            raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
+        if quality is not None:
+            recommendation = _with_refusals(
+                recommend(
+                    outlooks,
+                    strategy_for(configuration.optimization_mode),
+                    image_quality=quality,
+                    thresholds=configuration.thresholds,
+                ),
+                refusals,
+            )
+        # Identifiers, which companies answered and the verdict — never a
+        # probability or an amount (spec §54, and what a user paid is theirs).
+        logger.info(
+            "economics.results_computed",
+            analysis_id=str(record.id),
+            companies=[outlook.company for outlook in outlooks],
+            refused={company: admission.reason for company, admission in refusals.items()},
+            recommended_action=(
+                None if recommendation is None else str(recommendation.recommended_action)
+            ),
+            market_snapshot_id=None if snapshot is None else str(snapshot.id),
+        )
 
     response.headers["Cache-Control"] = _CACHE_CONTROL
     return ResultsResponse(
@@ -1216,8 +1429,5 @@ async def read_results(
             )
         ),
         companies=[_company_economics(outlook) for outlook in outlooks],
-        # `null`, never a fabricated `insufficient_information`: §44's admission
-        # carries a reason and a confidence, and there is nothing here that could
-        # honestly supply either before anything has been computed.
-        recommendation=None,
+        recommendation=None if recommendation is None else _recommendation(recommendation),
     )
