@@ -22,10 +22,13 @@ the card's condition, predicts a grade distribution per company from that, and
 advances to `awaiting_confirmation`, where it rests. That is not a stub
 standing in for a result: spec §20 forbids acting on an identification the
 user has not confirmed, no milestone yet produces a candidate, and #104 is the
-issue that supplies the confirmation which lets it move on. **Do not make this
-reach `completed`** — the economics are still unconfigured at this point, and
-a completed analysis with nothing computed is precisely the confidently-wrong
-output the specification forbids.
+issue that supplies the confirmation which lets it move on. **The worker never
+writes `completed`.** `POST /analyses/{id}/confirm-card` writes `analyzing`
+and `POST /analyses/{id}/economic-configuration` writes `completed` (#244),
+because the configuration is the last input the results need and #228
+composes them on read; at the claim the economics are still unconfigured, and
+a completed analysis with nothing to compute from is precisely the
+confidently-wrong output the specification forbids.
 
 **Security.** The `python-background-jobs` skill's example configuration is
 insecure by omission and none of its snippets are copied here:

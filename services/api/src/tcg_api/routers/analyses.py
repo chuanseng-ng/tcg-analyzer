@@ -310,14 +310,19 @@ class ReproducibilityResponse(BaseModel):
     market_snapshot_id: UUID | None = Field(
         description=(
             "The pre-ingested market snapshot the economics were computed "
-            "against. Always null in V1: market data arrives with its own "
-            "milestone."
+            "against, captured when the run claimed the analysis like the "
+            "rest of this record. Null until market ingestion first generates "
+            "a snapshot (M4's #54) — nothing in production has yet, and the "
+            "record says null rather than inventing a cut. Null also for any "
+            "analysis that ran before the first snapshot existed."
         ),
     )
     economic_configuration_id: UUID | None = Field(
         description=(
-            "The fee and cost configuration used. Always null in V1: the "
-            "economic engine arrives with its own milestone."
+            "Spec §57's `economic_configuration`: the immutable configuration "
+            "`POST /analyses/{id}/economic-configuration` attached, resolved "
+            "in full by `GET /analyses/{id}/results`. Null until one is "
+            "recorded — and recording one is what completes the analysis."
         ),
     )
     image_sha256: dict[ImageSide, str] = Field(
@@ -348,9 +353,12 @@ class AnalysisResponse(BaseModel):
     id: UUID = Field(description="This service's identifier for the analysis.")
     status: str = Field(
         description=(
-            "One of spec §65's nine states. `created` until an upload moves it. "
-            "`queued` is a transport word `POST /analyses/{id}/run` answers with "
-            "and is never held here."
+            "One of spec §65's nine states. `created` until an upload moves it; "
+            "`completed` once `POST /analyses/{id}/economic-configuration` has "
+            "recorded the economics. `queued` is a transport word "
+            "`POST /analyses/{id}/run` answers with and is never held here, and "
+            "`calculating` is passed through inside the configuration's "
+            "transaction and never observed."
         ),
         examples=["created"],
     )
