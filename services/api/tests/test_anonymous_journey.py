@@ -386,8 +386,9 @@ def test_a_new_user_completes_an_anonymous_analysis(
     opened = polled(client, analysis_id)
     assert opened["images"] == []
     assert opened["card_id"] is None
-    assert opened["reproducibility"].pop("image_sha256") == {}
-    assert all(value is None for value in opened["reproducibility"].values())
+    unwritten = opened["reproducibility"]
+    assert unwritten["image_sha256"] == {}
+    assert all(value is None for key, value in unwritten.items() if key != "image_sha256")
 
     # 2. Two photographs — two different ones, so the digests tell them apart;
     # the second upload is what makes the analysis runnable.
