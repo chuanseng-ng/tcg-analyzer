@@ -37,6 +37,10 @@ const MODULES = [
   // for numbers, and the one most likely to be filled in one-handed with a card
   // in the other hand.
   "app/configure/page.module.css",
+  // The results screen (#246) — the product's answer, read on the phone that
+  // took the photographs, and the widest thing it renders: one company's
+  // figures at a time is what keeps it inside 375px.
+  "app/results/page.module.css",
 ] as const;
 
 // Vitest runs with `apps/web` as its root.
@@ -117,6 +121,18 @@ describe("app/configure/page.module.css", () => {
     expect(readModule("app/configure/page.module.css")).toMatch(
       /\.input\s*\{[^}]*min-inline-size\s*:\s*0/,
     );
+  });
+});
+
+describe("app/results/page.module.css", () => {
+  // Two controls: the way back to a fresh analysis, and the retry when a store
+  // would not answer. Both are pressed with a thumb.
+  it.each(["action", "retry"])("gives .%s a comfortable touch target", (name) => {
+    const rule = new RegExp(
+      String.raw`\.${name}\s*\{[^}]*min-block-size\s*:\s*var\(--tap-target\)`,
+    );
+
+    expect(readModule("app/results/page.module.css")).toMatch(rule);
   });
 });
 

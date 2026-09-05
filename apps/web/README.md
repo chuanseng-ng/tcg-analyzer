@@ -23,17 +23,18 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path             | Contents                                                                                                                                                                                |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`           | App Router routes. `/` is the landing page                                                                                                                                              |
-| `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                         |
-| `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                           |
-| `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                           |
-| `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                   |
-| `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                              |
-| `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `amount-input.ts` and `analysis-session.ts` |
-| `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                  |
-| `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                       |
+| Path             | Contents                                                                                                                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`           | App Router routes. `/` is the landing page                                                                                                                                                                                                           |
+| `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                                                                                      |
+| `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                        |
+| `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                        |
+| `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                                                                                |
+| `app/results/`   | `/results` — the recommendation and the expected economic outcome (spec §49, §44, §41)                                                                                                                                                               |
+| `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                           |
+| `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
+| `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                               |
+| `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                                                                                    |
 
 ## Styling
 
@@ -219,7 +220,59 @@ confirming the card reaches. Four decisions shape it:
 
 Everything else follows the gate: one `lib/economics-errors.ts` classifier, a 429
 counted down with no button (ADR 0005), and no total anywhere — §46's line items
-are named and are never added into one figure.
+are named and are never added into one figure. Recording the figures completes
+the analysis, so the recorded view now leads on: a **See the results** link, live
+throughout, and `/results` on its own after four seconds — `/identify`'s pattern.
+
+## The results screen
+
+`/results` is where the product finally answers — spec §49's first two
+priorities, the recommendation and the expected economic outcome, in that order.
+The grade chart, the company comparison and the condition block each have their
+place held below and arrive with their own issues. Six decisions shape it:
+
+- **The analysis is read first, and the results once.** `GET /analyses/{id}` is
+  the endpoint §65 says a client polls, and `completed` means every input the
+  results need is recorded — the configuration write reaches it, so arriving
+  from `/configure` the first read already says so. The poll exists for a
+  reload, a direct arrival and for `failed`; it runs at `/analyze`'s cadence,
+  stops on a terminal state or when the screen is left, and `lib/analysis-state.ts`
+  is the one place the web spells §65's nine state names.
+- **"Not asked yet" and "not enough information" are two screens.** A `null`
+  recommendation means no configuration or no stored prediction — nobody has
+  asked. `insufficient_information` means the engine was asked and the data did
+  not support an answer. With the V1 heuristics every recommendation is the
+  second, on the grading model's confidence of 0.35 against a threshold of 0.50,
+  and the screen shows that as an admission with those numbers in words — it
+  neither hides the recommendation nor invents a verdict, and the companies'
+  figures stay below it rather than behind it.
+- **The reason is three things a person can check.** What was measured, what it
+  came to, what it needed to clear — from the `figure`, `value` and `threshold`
+  the wire carries — plus one sentence per `code`. Every gate that failed is
+  listed, not only the decisive one. `lib/results-copy.ts` holds all of it, keyed
+  off the code with a fallback that **names** an unknown code, because the codes
+  are bare strings on the wire and an empty string would be a recommendation with
+  no reason shown. Nothing is ever labelled `roi`.
+- **The two §41 figures are named apart, as `/configure` named them.** _Is it
+  worth grading this card?_ and _Did buying this card make money?_ head each
+  company's block, each figure present-and-null beside its own reason and rendered
+  as that reason — never as a number, never as zero — when null. A negative
+  profit is an answer and carries its sign. Every amount is the decimal string the
+  wire carried, prefixed with the currency, and nothing is a total.
+- **Every figure sits beside its date.** The market snapshot's date and version
+  are stamped under the companies (ADR 0006), and when the analysis recorded no
+  snapshot the screen says so rather than showing an undated figure.
+- **`failed` is explained from the photographs.** The poll endpoint carries no
+  error envelope; `confirm-card` decides between `image_quality_failure` and
+  `analysis_failed` by whether any photograph is `unusable`, and this screen
+  applies the same rule to the same field — naming the side and the gate's own
+  words from `lib/quality-copy.ts` — rather than making a second request to learn
+  a code. Any other failure is said without blaming the photographs.
+
+`lib/results-errors.ts` is a fifth error sibling: the bare 404 is `restart`, a
+store that would not answer is `retry`, and anything else is `unexpected`. Display
+names come from `GET /grading-companies`; a listing that fails leaves the slugs on
+screen rather than holding the figures back.
 
 ## Configuration
 

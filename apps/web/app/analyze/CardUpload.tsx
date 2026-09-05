@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { forgetAnalysis, rememberAnalysis } from "@/lib/analysis-session";
+import { isFailed, type AnalysisStatus } from "@/lib/analysis-state";
 import {
   ApiError,
   readAnalysis,
@@ -32,8 +33,10 @@ import styles from "./CardUpload.module.css";
  *
  * `uploaded` is where `run` leaves it and `identifying` is where the worker
  * claims it; anything else means the gate has spoken, one way or the other.
+ * Narrower than `isWorking` on purpose — this waits for the gate, not for the
+ * analysis — but spelled off the one list of state names (`lib/analysis-state`).
  */
-const STILL_WORKING: ReadonlySet<string> = new Set(["uploaded", "identifying"]);
+const STILL_WORKING: ReadonlySet<string> = new Set<AnalysisStatus>(["uploaded", "identifying"]);
 
 /** Between polls. Long enough not to hammer, short enough to feel immediate. */
 const VERDICT_POLL_INTERVAL_MS = 1_000;
@@ -295,7 +298,7 @@ export function CardUpload() {
     }
 
     const worrying = concerning(analysis.images);
-    if (analysis.status === "failed") {
+    if (isFailed(analysis.status)) {
       setVerdict({ kind: "refused", images: worrying });
       setBusy(false);
       return;
