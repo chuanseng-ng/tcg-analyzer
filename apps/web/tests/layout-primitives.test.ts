@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
  * 375px viewport scrolls horizontally. These tests assert the property that
  * causes that overflow instead — a fixed pixel width in a layout primitive.
  *
- * The real 375px browser assertion belongs to the E2E milestone; see the
- * `docs/` note on deferred viewport checks.
+ * The real 375px browser assertion is `e2e/anonymous-journey.spec.ts`, which
+ * checks the results screen does not scroll sideways in Chromium.
  *
  * `max-width` and `max-inline-size` are deliberately *not* caught: a maximum
  * still lets the box shrink to the device, which is the whole point.

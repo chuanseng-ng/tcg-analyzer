@@ -200,6 +200,7 @@ pnpm --filter @tcg/web format:check
 pnpm --filter @tcg/web gen:api-types:check   # frontend types match the schema
 pnpm --filter @tcg/web typecheck
 pnpm --filter @tcg/web test
+pnpm --filter @tcg/web e2e           # the browser journey; needs the Compose stack, seeded
 ```
 
 If `gen:api-types:check` fails, the API's OpenAPI schema and the committed
