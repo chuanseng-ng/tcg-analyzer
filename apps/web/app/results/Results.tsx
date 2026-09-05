@@ -29,6 +29,7 @@ import {
 } from "@/lib/results-copy";
 import { classifyResultsFailure, type ResultsFailure } from "@/lib/results-errors";
 
+import { GradeDistribution } from "./GradeDistribution";
 import styles from "./page.module.css";
 
 /** Between polls — the cadence `/analyze` waits for the quality gate at. */
@@ -262,9 +263,11 @@ function Unavailable({
 
 /**
  * Spec §49's order: the recommendation, then the expected economic outcome, then
- * room held for the distribution (#247), the comparison (#248) and the condition
- * (#249). The market snapshot sits under the figures it priced, so no figure is
- * ever shown without its date (ADR 0006).
+ * each company's grade distribution (#247), then room held for the comparison
+ * (#248) and the condition (#249). The market snapshot sits under the figures it
+ * priced, so no figure is ever shown without its date (ADR 0006). A refused
+ * company has no distribution to chart and is named, with its reason, among the
+ * figures above.
  */
 function Ready({
   results,
@@ -325,9 +328,30 @@ function Ready({
         <MarketStamp snapshot={results.market_snapshot} />
       </section>
 
-      <Placeholder heading="Grade probabilities">
-        Each company&apos;s chances for every grade, as a chart, arrive with #247.
-      </Placeholder>
+      {results.companies.length > 0 && (
+        <section className={styles.section} aria-labelledby="grades">
+          <h2 className={styles.sectionHeading} id="grades">
+            Grade probabilities
+          </h2>
+          {results.companies.map((company) => (
+            <article className={styles.company} key={company.company}>
+              <GradeDistribution
+                name={displayName(company.company)}
+                distribution={company.grade_distribution}
+              />
+              {/* The one number beside the chart (#247). Its threshold is the
+                  engine's (#64), and the recommendation above already sets the
+                  two side by side, so no "low" is decided here. */}
+              <dl className={styles.facts}>
+                <Fact
+                  term={figureLabel("distribution_confidence")}
+                  value={percentOf(company.distribution_confidence)}
+                />
+              </dl>
+            </article>
+          ))}
+        </section>
+      )}
       <Placeholder heading="Company comparison">
         The companies side by side, in the order the chosen way of ranking produced, arrives with
         #248.

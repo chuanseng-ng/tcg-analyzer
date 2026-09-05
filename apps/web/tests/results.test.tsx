@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Results } from "@/app/results/Results";
@@ -494,6 +494,67 @@ describe("spec §49 priority 2 — the expected economic outcome", () => {
     await shown();
 
     expect(screen.queryByText(/total/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("spec §49 priority 3 — the grade distribution", () => {
+  it("charts every company's full distribution under the economic outcome, with its confidence beside it", async () => {
+    readResultsMock.mockResolvedValue(
+      results({
+        companies: [
+          unpricedCompany(),
+          company({
+            company: "bgs",
+            grade_distribution: [
+              { grade: "9", probability: 0.5 },
+              { grade: "9.5", probability: 0.3 },
+              { grade: "10", probability: 0.2 },
+            ],
+            distribution_confidence: 0.35,
+          }),
+        ],
+      }),
+    );
+
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Grade probabilities" });
+    expect(
+      within(section).getByRole("figure", { name: "PSA grade probabilities" }),
+    ).toBeInTheDocument();
+    const bgs = within(section).getByRole("figure", { name: "BGS grade probabilities" });
+    expect(
+      within(bgs)
+        .getAllByRole("rowheader")
+        .map((cell) => cell.textContent),
+    ).toEqual(["9", "9.5", "10"]);
+    // The one number beside each chart, in the words the copy table already has.
+    expect(
+      within(section).getAllByText("How far the grading model trusts its own grades"),
+    ).toHaveLength(2);
+    expect(within(section).getAllByText("35%")).toHaveLength(2);
+    // The chart replaced its placeholder; the two after it are still held.
+    expect(screen.queryByText(/arrive with #247/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Company comparison" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Condition" })).toBeInTheDocument();
+  });
+
+  it("keeps the recommendation and the economic outcome above the distribution", async () => {
+    await shown();
+
+    const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+    const economics = headings.indexOf("What grading is expected to come to");
+    const grades = headings.indexOf("Grade probabilities");
+    expect(economics).toBeGreaterThan(0);
+    expect(grades).toBeGreaterThan(economics);
+  });
+
+  it("holds no chart section when no company has predicted", async () => {
+    readResultsMock.mockResolvedValue(results({ companies: [], recommendation: null }));
+
+    await shown();
+
+    expect(screen.queryByRole("region", { name: "Grade probabilities" })).not.toBeInTheDocument();
   });
 });
 

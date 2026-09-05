@@ -178,6 +178,75 @@
   font-weight: var(--weight-medium);
 }
 
+/* ------------------------------------------------------- grade distribution */
+
+/*
+ * One company's distribution as horizontal bars (#247), drawn to `dataviz`'s
+ * mark specs: a thin bar (12px, under the 24px cap) that grows from a hairline
+ * baseline, square there and rounded at its data end; rows separated by the
+ * surface, never a stroke; labels in text tokens, never the series colour. The
+ * chart is a table because spec §6 prints it as one, so the rows are the ladder.
+ */
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.chartCaption {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.ladder {
+  inline-size: 100%;
+  border-collapse: separate;
+  border-spacing: 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.grade {
+  padding-inline-end: var(--space-3);
+  text-align: end;
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+}
+
+/* The baseline every bar grows from: one solid hairline, one step off the surface. */
+.probability {
+  inline-size: 100%;
+  padding: 0;
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/*
+ * Width is set inline from the probability. The floor keeps a sub-1% bar a
+ * visible mark rather than nothing — its label says `<1%`, so the floor never
+ * overstates it. The bar may shrink but the label may not, so a bar near 100%
+ * gives up the room its label needs rather than pushing it off the line.
+ */
+.bar {
+  flex: 0 1 auto;
+  min-inline-size: var(--space-1);
+  block-size: var(--space-3);
+  border-start-end-radius: var(--radius-xs);
+  border-end-end-radius: var(--radius-xs);
+  background-color: var(--color-series-1);
+}
+
+.percent {
+  color: var(--color-fg);
+  white-space: nowrap;
+}
+
 /* ---------------------------------------------------------------- actions */
 
 .actions {

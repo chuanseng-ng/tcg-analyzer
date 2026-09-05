@@ -110,6 +110,9 @@ export type ReasonResponse = components["schemas"]["ReasonResponse"];
 /** Every M5 figure for one company, each present-and-null beside its own reason. */
 export type CompanyEconomicsResponse = components["schemas"]["CompanyEconomicsResponse"];
 
+/** One term of a grade distribution — spec §2.1's `P(g)`, keyed as `GET /grading-companies` spells the grade. */
+export type GradeProbabilityResponse = components["schemas"]["GradeProbabilityResponse"];
+
 /** The snapshot the figures were priced against — what ADR 0006 requires the UI to date-stamp. */
 export type MarketSnapshotReference = components["schemas"]["MarketSnapshotReference"];
 
