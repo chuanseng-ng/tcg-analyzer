@@ -131,7 +131,7 @@ export interface paths {
          *
          *     **Nothing is conflated.** `incremental_grading_decision` answers 'should I grade the card I own?' and `investment_return` answers 'did buying it to grade make money?'. They share no field name, and neither ratio is called `roi`.
          *
-         *     **`companies` is empty and `recommendation` is `null` until the analysis has an economic configuration and the worker has stored its grade predictions.** That is an empty result rather than an error because the analysis is fine — it simply has not got there. Prices come from the snapshot the analysis recorded, never a provider; with no snapshot every figure is present-and-null beside the engine's own reason. A company whose model refused appears in the comparison's `unranked` with its reason.
+         *     **`companies` is empty and `recommendation` is `null` until the analysis has an economic configuration and the worker has stored its grade predictions.** That is an empty result rather than an error because the analysis is fine — it simply has not got there. Prices come from the snapshot the analysis recorded, never a provider; with no snapshot every figure is present-and-null beside the engine's own reason. A company whose model refused is in `refused` with its stored reason, keyed by slug — and in the comparison's `unranked` too, whenever another company could be ranked.
          *
          *     `Cache-Control: no-store`: every figure here descends from prices whose confidence is discounted for age at the moment of asking.
          */
@@ -2200,7 +2200,7 @@ export interface components {
             card_id: string | null;
             /**
              * Companies
-             * @description One entry per configured company whose model predicted, in the configuration's order, each with its full distribution. **Empty until the analysis has an economic configuration and the worker has stored its grade predictions** — and empty rather than absent so a client parses the same shape either way. A company whose model refused is not here: it has no distribution to carry, and appears in `recommendation.comparison.unranked` with its reason.
+             * @description One entry per configured company whose model predicted, in the configuration's order, each with its full distribution. **Empty until the analysis has an economic configuration and the worker has stored its grade predictions** — and empty rather than absent so a client parses the same shape either way. A company whose model refused is not here: it has no distribution to carry, and is in `refused` with its reason.
              */
             companies: components["schemas"]["CompanyEconomicsResponse"][];
             /**
@@ -2215,6 +2215,16 @@ export interface components {
             market_snapshot: components["schemas"]["MarketSnapshotReference"] | null;
             /** @description Spec §44's answer, or `null` when nothing has been asked yet — no configuration, or no prediction stored. **`null` is not `insufficient_information`**: the first means nobody has asked, the second that we asked and the data did not support an answer. */
             recommendation: components["schemas"]["RecommendationResponse"] | null;
+            /**
+             * Refused
+             * @description Every configured company whose grade prediction refused, keyed by slug, each with the reason the worker stored — `condition_step_not_run`, or a model's own refusal. **With `companies`, this is every configured company.** Empty until the analysis has an economic configuration and stored predictions, and empty when every model predicted. A refused company also appears in `recommendation.comparison.unranked` whenever some other company could be ranked; when none could, `comparison` is `null` with `no_company_can_be_ranked` and this is where each reason lives.
+             * @example {
+             *       "bgs": "condition_step_not_run"
+             *     }
+             */
+            refused: {
+                [key: string]: string;
+            };
             /**
              * Status
              * @description The analysis's state, so a client can tell 'not finished yet' from 'we could not tell'. Spec §65's states; poll `GET /analyses/{id}` for it.
