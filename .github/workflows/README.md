@@ -5,7 +5,7 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 
 | Workflow | Runs on | Checks |
 | --- | --- | --- |
-| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; API image build; secret scan; dependency review |
+| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; the same journey driven through a browser at 375 px against the Compose stack; API image build; secret scan; dependency review |
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
@@ -33,6 +33,15 @@ brings up Compose's PostgreSQL beside MinIO, because
 the real worker against them — the one module that needs both, and it carries
 both markers and both skips so the migrations job passes over it.
 
+**The e2e job starts its own Compose stack** rather than joining the `compose`
+job, because that job exhausts the rate limiter on purpose part-way through and
+seeds no catalog. It brings up `web worker` — the dependency closure is the api,
+the migration, PostgreSQL, MinIO and Redis; the annotation tool is not part of
+the journey — seeds the catalog and the grading rules, and runs
+`pnpm --filter @tcg/web e2e`: Playwright, Chromium only, the browser installed
+in the job and never committed. A failed test's trace is uploaded as the
+`playwright-traces` artifact.
+
 **The secret scan reads full history**, not the diff. A credential removed from
 the working tree is still leaked, and this repository is public.
 
@@ -51,7 +60,6 @@ root `README.md`. Nothing in CI is a step you cannot run yourself.
 
 ## Not here yet
 
-- E2E tests (Playwright) arrive with the results UI in M9.
 - No deployment pipeline. Publishing an image is a deployment concern; `ci.yml`
   only verifies that the image builds.
 - ML training never runs in CI.
