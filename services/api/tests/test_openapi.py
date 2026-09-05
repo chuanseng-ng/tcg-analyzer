@@ -7,6 +7,7 @@ without a response model, is a broken contract rather than a cosmetic omission.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from importlib.metadata import version
 
 from fastapi.testclient import TestClient
@@ -263,3 +264,42 @@ def test_the_configuration_endpoint_is_rate_limited_and_the_results_are_not() ->
 
     assert "429" in paths["/analyses/{analysis_id}/economic-configuration"]["post"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}/results"]["get"]["responses"]
+
+
+# ---------------------------------------------------------------------------
+# The condition assessment — spec §6, §4 (#245)
+# ---------------------------------------------------------------------------
+COORDINATES = frozenset({"bounding_box", "polygon", "x", "y", "width", "height"})
+
+
+def _references(node: object) -> Iterator[str]:
+    if isinstance(node, dict):
+        if "$ref" in node:
+            yield str(node["$ref"]).rsplit("/", 1)[-1]
+        for value in node.values():
+            yield from _references(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _references(item)
+
+
+def test_openapi_serves_the_condition_without_a_coordinate() -> None:
+    """Spec §4 excludes defect visualization; #175 forbids projecting a frame.
+
+    Walked from `ConditionResponse` through every schema it references, so a
+    coordinate smuggled in three levels down is caught as surely as one at the top.
+    """
+    schemas = create_app().openapi()["components"]["schemas"]
+    assert "condition" in schemas["ResultsResponse"]["properties"]
+
+    seen: set[str] = set()
+    pending = ["ConditionResponse"]
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        assert not COORDINATES & set(schemas[name].get("properties", {})), name
+        pending.extend(_references(schemas[name]))
+
+    assert len(seen) > 1

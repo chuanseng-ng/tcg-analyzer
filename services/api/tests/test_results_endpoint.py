@@ -47,10 +47,28 @@ from tcg_api.routers.economics import (
     ResultsResponse,
 )
 from tcg_api.storage import get_object_storage
+from tcg_domain.analysis import ImageSide
+from tcg_domain.annotation import (
+    CornerLabel,
+    CornerRegion,
+    DefectSeverity,
+    EdgeLabel,
+    EdgeRegion,
+    SurfaceLabel,
+)
 from tcg_domain.card import CardReference
-from tcg_domain.confidence import Confidence, InsufficientInformation
+from tcg_domain.condition import (
+    BoundingBox,
+    Centering,
+    ConditionAssessment,
+    Defect,
+    RegionFinding,
+    Representation,
+    SurfaceAssessment,
+)
+from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence, InsufficientInformation
 from tcg_domain.distribution import GradeDistribution
-from tcg_domain.errors import InvalidGradeDistribution
+from tcg_domain.errors import InvalidConditionAssessment, InvalidGradeDistribution
 from tcg_domain.grade import Grade, GradeBound
 from tcg_domain.money import Money
 from tcg_economic_engine import (
@@ -512,6 +530,184 @@ def test_no_refusal_leaves_the_recommendation_untouched() -> None:
 
 # ---------------------------------------------------------------------------
 # The route
+# ---------------------------------------------------------------------------
+# The condition assessment on the wire — #245
+# ---------------------------------------------------------------------------
+# Pure over #187's stored document, as the prediction tests above are over
+# #227's: what the step wrote is what a client reads, labels and severities
+# only, with every refusal in the tree kept as the one-key object it was stored as.
+
+COORDINATES = frozenset({"bounding_box", "polygon", "x", "y", "width", "height"})
+
+
+def a_condition_document(**outcome: Any) -> dict[str, Any]:
+    """What #187's step stored: version and thresholds first, then the outcome."""
+    return {"version": "condition-v0", "thresholds": {}, **outcome}
+
+
+def a_damaged_assessment() -> ConditionAssessment:
+    """One finding of every kind, carrying the spatial data the wire must drop.
+
+    A whitened front corner with a box, a refused back edge axis, a stain with
+    a box and a polygon beside a class-level refusal, a refused back surface,
+    one refused centering ratio and a manufacturing defect from the edges.
+    """
+    sure = Confidence(0.9)
+    clean_corners = {
+        region: RegionFinding(label=CornerLabel.CLEAN, confidence=sure) for region in CornerRegion
+    }
+    clean_edges = {
+        region: RegionFinding(label=EdgeLabel.CLEAN, confidence=sure) for region in EdgeRegion
+    }
+    return ConditionAssessment(
+        centering=Centering(
+            front_horizontal=0.55,
+            front_vertical=0.48,
+            back_horizontal=InsufficientInformation("borderless_axis"),
+            back_vertical=0.5,
+            confidence=Confidence(0.7),
+        ),
+        corners={
+            ImageSide.FRONT: {
+                **clean_corners,
+                CornerRegion.TOP_LEFT: RegionFinding(
+                    label=CornerLabel.WHITENING,
+                    confidence=Confidence(0.8),
+                    severity=DefectSeverity.MINOR,
+                    bounding_box=BoundingBox(x=0.0, y=0.0, width=0.1, height=0.1),
+                ),
+            },
+            ImageSide.BACK: clean_corners,
+        },
+        edges={
+            ImageSide.FRONT: clean_edges,
+            ImageSide.BACK: InsufficientInformation("no_card_frame_for_back"),
+        },
+        surface={
+            ImageSide.FRONT: SurfaceAssessment(
+                findings=(
+                    Defect(
+                        type=SurfaceLabel.STAIN,
+                        confidence=Confidence(0.6),
+                        severity=DefectSeverity.MODERATE,
+                        side=ImageSide.FRONT,
+                        representation=Representation.NORMALIZED,
+                        bounding_box=BoundingBox(x=0.2, y=0.2, width=0.1, height=0.1),
+                        polygon=((0.2, 0.2), (0.3, 0.2), (0.3, 0.3)),
+                    ),
+                ),
+                not_assessed={
+                    SurfaceLabel.SCRATCH: InsufficientInformation("fine_class_needs_original")
+                },
+            ),
+            ImageSide.BACK: InsufficientInformation("glare"),
+        },
+        manufacturing_defects=(
+            Defect(
+                type=EdgeLabel.ROUGH_CUT,
+                confidence=Confidence(0.5),
+                severity=DefectSeverity.MINOR,
+                side=ImageSide.FRONT,
+                representation=Representation.NORMALIZED,
+            ),
+        ),
+        eye_appeal=INSUFFICIENT_INFORMATION,
+        confidence=Confidence(0.5),
+    )
+
+
+def test_a_stored_assessment_reaches_the_wire_per_axis() -> None:
+    """Every finding on the wire is the stored one, on the side and region it was stored under."""
+    stored = a_damaged_assessment()
+
+    body = economics._condition(a_condition_document(assessment=stored.as_record()))
+    payload = body.model_dump(mode="json")
+
+    assert payload["version"] == "condition-v0"
+    assert payload["confidence"] == 0.5
+    assert payload["corners"]["front"]["top_left"] == {
+        "label": "whitening",
+        "confidence": 0.8,
+        "severity": "minor",
+    }
+    assert payload["corners"]["back"]["bottom_right"] == {
+        "label": "clean",
+        "confidence": 0.9,
+        "severity": None,
+    }
+    assert payload["edges"]["front"]["top"]["label"] == "clean"
+    assert payload["centering"]["front_horizontal"] == 0.55
+    assert payload["centering"]["confidence"] == 0.7
+    assert payload["surface"]["front"]["findings"] == [
+        {"type": "stain", "confidence": 0.6, "severity": "moderate", "side": "front"}
+    ]
+    assert payload["manufacturing_defects"] == [
+        {"type": "rough_cut", "confidence": 0.5, "severity": "minor", "side": "front"}
+    ]
+
+
+def test_a_per_axis_refusal_is_served_on_that_axis_only() -> None:
+    """#186's one-key refusal, wherever it was stored: an axis, a side, a ratio, a class."""
+    stored = a_damaged_assessment()
+
+    payload = economics._condition(a_condition_document(assessment=stored.as_record())).model_dump(
+        mode="json"
+    )
+
+    assert payload["edges"]["back"] == {"insufficient_information": "no_card_frame_for_back"}
+    assert payload["surface"]["back"] == {"insufficient_information": "glare"}
+    assert payload["centering"]["back_horizontal"] == {
+        "insufficient_information": "borderless_axis"
+    }
+    # A refused class is served beside the findings, never dropped (#185).
+    assert payload["surface"]["front"]["not_assessed"] == {
+        "scratch": {"insufficient_information": "fine_class_needs_original"}
+    }
+    assert payload["eye_appeal"] == {"insufficient_information": None}
+
+
+def test_no_coordinate_leaves_the_service() -> None:
+    """Spec §4 excludes defect visualization, and #175 forbids projecting a frame."""
+    stored = a_damaged_assessment()
+
+    payload = economics._condition(a_condition_document(assessment=stored.as_record())).model_dump(
+        mode="json"
+    )
+
+    assert not COORDINATES & set(_every_key(payload))
+    assert "representation" not in set(_every_key(payload))
+
+
+def test_a_refused_step_wears_its_reason_on_every_axis() -> None:
+    """The step ran and declined — spec §2.7 makes that a result, not `null`."""
+    payload = economics._condition(
+        a_condition_document(insufficient_information="no_axis_measured")
+    ).model_dump(mode="json")
+
+    refusal = {"insufficient_information": "no_axis_measured"}
+    assert payload["version"] == "condition-v0"
+    assert payload["confidence"] is None
+    assert payload["centering"] == refusal
+    assert payload["corners"] == {"front": refusal, "back": refusal}
+    assert payload["edges"] == {"front": refusal, "back": refusal}
+    assert payload["surface"] == {"front": refusal, "back": refusal}
+    assert payload["manufacturing_defects"] == refusal
+    assert payload["eye_appeal"] == refusal
+
+
+def test_a_malformed_document_is_a_failure_not_a_refusal() -> None:
+    """#227's rule at the read boundary: a corrupt record propagates, never a partial result."""
+    off_the_vocabulary = a_damaged_assessment().as_record()
+    off_the_vocabulary["corners"]["front"]["top_left"]["label"] = "scratched"  # type: ignore[index]
+    missing_an_axis = a_damaged_assessment().as_record()
+    del missing_an_axis["corners"]
+
+    with pytest.raises(InvalidConditionAssessment):
+        economics._condition(a_condition_document(assessment=off_the_vocabulary))
+    with pytest.raises(InvalidConditionAssessment):
+        economics._condition(a_condition_document(assessment=missing_an_axis))
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -1015,3 +1211,69 @@ def test_the_results_model_keeps_the_two_figures_apart_at_the_top_level() -> Non
     assert "refused" in ResultsResponse.model_fields
     assert "recommendation" in ResultsResponse.model_fields
     assert "expected_profit" not in ResultsResponse.model_fields
+
+
+# ---------------------------------------------------------------------------
+# The condition assessment over HTTP — #245
+# ---------------------------------------------------------------------------
+
+
+def assessed(analysis_id: str, document: dict[str, Any]) -> None:
+    """What #187's step stored, written straight: the document is the contract."""
+    executing(
+        "UPDATE analyses SET condition_details = CAST(:document AS jsonb) WHERE id = :id",
+        document=json.dumps(document),
+        id=uuid.UUID(analysis_id),
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_an_analysis_whose_condition_step_never_ran_has_no_condition(client: TestClient) -> None:
+    """`condition_details IS NULL` keeps one meaning: the step never ran."""
+    analysis_id = client.post("/analyses").json()["id"]
+
+    assert client.get(f"/analyses/{analysis_id}/results").json()["condition"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_stored_condition_reaches_the_wire_whole(client: TestClient) -> None:
+    analysis_id = client.post("/analyses").json()["id"]
+    assessed(analysis_id, a_condition_document(assessment=a_damaged_assessment().as_record()))
+
+    condition = client.get(f"/analyses/{analysis_id}/results").json()["condition"]
+
+    assert condition["corners"]["front"]["top_left"]["label"] == "whitening"
+    assert condition["edges"]["back"] == {"insufficient_information": "no_card_frame_for_back"}
+    assert condition["confidence"] == 0.5
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_refused_condition_step_is_an_answer_rather_than_null(client: TestClient) -> None:
+    analysis_id = client.post("/analyses").json()["id"]
+    assessed(analysis_id, a_condition_document(insufficient_information="no_axis_measured"))
+
+    condition = client.get(f"/analyses/{analysis_id}/results").json()["condition"]
+
+    assert condition["confidence"] is None
+    assert condition["centering"] == {"insufficient_information": "no_axis_measured"}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_corrupt_condition_record_is_a_500() -> None:
+    """A stored document off the domain's shape is a failure, and the envelope says so."""
+    corrupt = a_damaged_assessment().as_record()
+    corrupt["corners"]["front"]["top_left"]["label"] = "scratched"  # type: ignore[index]
+    for cached in CACHES:
+        cached.cache_clear()
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
+        analysis_id = client.post("/analyses").json()["id"]
+        assessed(analysis_id, a_condition_document(assessment=corrupt))
+
+        response = client.get(f"/analyses/{analysis_id}/results")
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal_error"

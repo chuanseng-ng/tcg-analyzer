@@ -383,9 +383,10 @@ async def read_condition(db: AsyncSession, analysis_id: UUID) -> dict[str, objec
     """The condition step's document for `analysis_id`, or `None` if it never ran — #227.
 
     The whole document, as stored: the grading step reads it (never the
-    analyzers) and rehydrates the assessment itself. No session in the `WHERE`
-    clause, on :func:`record_condition`'s terms — this is the worker inside
-    its claim, not the HTTP surface.
+    analyzers) and rehydrates the assessment itself, and since #245 the results
+    route does the same to put it on the wire. No session in the `WHERE`
+    clause: ownership is the caller's — the worker inside its claim, or a route
+    for which `read_analysis` has already established it.
     """
     statement = sa.select(analyses.c.condition_details).where(analyses.c.id == analysis_id)
     result = await execute(db, statement)
