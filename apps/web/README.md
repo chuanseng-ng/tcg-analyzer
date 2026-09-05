@@ -23,18 +23,18 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 ## Layout
 
-| Path             | Contents                                                                                                                                                                                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`           | App Router routes. `/` is the landing page                                                                                                                                                                                                           |
-| `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                                                                                      |
-| `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                        |
-| `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                        |
-| `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                                                                                |
-| `app/results/`   | `/results` — the recommendation, the expected economic outcome, each company's grade distribution and the company comparison (spec §49, §44, §41, §2.1, §43)                                                                                         |
-| `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                           |
-| `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
-| `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                               |
-| `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                                                                                    |
+| Path             | Contents                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`           | App Router routes. `/` is the landing page                                                                                                                                                                                                                                |
+| `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                                                                                                           |
+| `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                                             |
+| `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                                             |
+| `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                                                                                                     |
+| `app/results/`   | `/results` — the recommendation, the expected economic outcome, each company's grade distribution, the company comparison and the condition assessment (spec §49, §44, §41, §2.1, §43, §6)                                                                                |
+| `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                                                |
+| `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `condition-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
+| `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                                                    |
+| `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                                                                                                         |
 
 ## Styling
 
@@ -226,11 +226,10 @@ throughout, and `/results` on its own after four seconds — `/identify`'s patte
 
 ## The results screen
 
-`/results` is where the product finally answers — spec §49's first three
-priorities, the recommendation, the expected economic outcome and the grade
-distribution, then its second screen, the company comparison, in that order.
-The condition block has its place held below and arrives with its own issue.
-Eight decisions shape it:
+`/results` is where the product finally answers — spec §49's first four
+priorities, the recommendation, the expected economic outcome, the grade
+distribution and the condition, with its second screen, the company comparison,
+between the last two. Nine decisions shape it:
 
 - **The analysis is read first, and the results once.** `GET /analyses/{id}` is
   the endpoint §65 says a client polls, and `completed` means every input the
@@ -295,6 +294,24 @@ Eight decisions shape it:
   the section is the admission plus one line per company whose model refused,
   and an empty `refused` beside it is said as "nothing was priced", which is
   what it means, rather than as "nothing was refused".
+- **The condition is shown as the predictors read it, refusals included.**
+  Spec §6's block is rendered from `condition` on the results, per side, front
+  then back: centering as the measured ratios in spec §50's `57/43` form, each
+  corner and edge with its label and severity in words, and the surface as its
+  findings counted per class and severity — the V1 analyzer reports every
+  stain it segments as its own finding, and with the coordinates rightly kept
+  off the wire a count is what a person can read — beside every class the
+  analyzer did not look for, grouped by the reason it gave, so an empty finding
+  list is never read as a clean card. The manufacturing derivation and eye
+  appeal show their refusals. Condition confidence is a percent, and "Not
+  measured" when the step ran and declined — never `0%`; no "low" is decided
+  on the client, because no threshold for it is on the wire. `condition: null`
+  is "not assessed yet", the step that never ran, and is visibly not a
+  refusal. The labels are `lib/condition-copy.ts`'s, typed over the generated
+  unions so a new class is a type error; the reasons are `lib/results-copy.ts`'s
+  — the analyzers store most of them as sentences rather than codes, and they
+  are keyed exactly as stored, with an unmet one named. Nothing on the block is
+  a coordinate, an overlay or a score.
 - **`failed` is explained from the photographs.** The poll endpoint carries no
   error envelope; `confirm-card` decides between `image_quality_failure` and
   `analysis_failed` by whether any photograph is `unusable`, and this screen
