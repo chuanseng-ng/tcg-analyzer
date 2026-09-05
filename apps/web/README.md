@@ -30,7 +30,7 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 | `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                        |
 | `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                        |
 | `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                                                                                |
-| `app/results/`   | `/results` — the recommendation and the expected economic outcome (spec §49, §44, §41)                                                                                                                                                               |
+| `app/results/`   | `/results` — the recommendation, the expected economic outcome and each company's grade distribution (spec §49, §44, §41, §2.1)                                                                                                                      |
 | `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                           |
 | `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
 | `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                               |
@@ -226,10 +226,11 @@ throughout, and `/results` on its own after four seconds — `/identify`'s patte
 
 ## The results screen
 
-`/results` is where the product finally answers — spec §49's first two
-priorities, the recommendation and the expected economic outcome, in that order.
-The grade chart, the company comparison and the condition block each have their
-place held below and arrive with their own issues. Six decisions shape it:
+`/results` is where the product finally answers — spec §49's first three
+priorities, the recommendation, the expected economic outcome and the grade
+distribution, in that order. The company comparison and the condition block
+each have their place held below and arrive with their own issues. Seven
+decisions shape it:
 
 - **The analysis is read first, and the results once.** `GET /analyses/{id}` is
   the endpoint §65 says a client polls, and `completed` means every input the
@@ -262,6 +263,22 @@ place held below and arrive with their own issues. Six decisions shape it:
 - **Every figure sits beside its date.** The market snapshot's date and version
   are stamped under the companies (ADR 0006), and when the analysis recorded no
   snapshot the screen says so rather than showing an undated figure.
+- **The grade distribution is drawn whole, and the chart is the table.** Spec
+  §2.1 insists the distribution be kept, not collapsed to a grade, so each
+  company gets horizontal bars for every grade on the wire, in the wire's order
+  — `9.5` where a company issues one, a collapsed tail as `≤ 7` — with nothing
+  sorted, bucketed or renormalised on the client. Spec §6 prints the block as
+  two columns, so the chart is one `<table>` per company: the grade is the row
+  header, the bar and its percent are the cell, and a screen reader hears the
+  same ladder a sighted reader sees. Every bar is labelled to the whole percent;
+  a probability that rounds to zero but is not zero reads `<1%` and keeps a
+  visible bar. The design follows the `dataviz` skill: one series, one hue,
+  thin bars from a hairline baseline, no legend, no tooltip because nothing is
+  left unlabelled, and no charting library. The colour is `--color-series-1`
+  in `styles/tokens.css`, validated in both colour schemes against this app's
+  own surfaces — the accent was tried and fails the dark-mode lightness band —
+  and the component carries no colour literal. The grading model's confidence
+  sits beside each chart as the one number, in the copy table's words.
 - **`failed` is explained from the photographs.** The poll endpoint carries no
   error envelope; `confirm-card` decides between `image_quality_failure` and
   `analysis_failed` by whether any photograph is `unusable`, and this screen
