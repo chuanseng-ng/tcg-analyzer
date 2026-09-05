@@ -51,10 +51,11 @@ client more.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated, Any, Final
 from uuid import UUID
 
@@ -62,9 +63,24 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
-from tcg_domain.analysis import AnalysisStatus
+from tcg_domain.analysis import V1_SIDES, AnalysisStatus, ImageSide
+from tcg_domain.annotation import (
+    CornerLabel,
+    CornerRegion,
+    DefectSeverity,
+    EdgeLabel,
+    EdgeRegion,
+    SurfaceLabel,
+)
 from tcg_domain.catalog import CardId
-from tcg_domain.confidence import Confidence, InsufficientInformation
+from tcg_domain.condition import (
+    Centering,
+    ConditionAssessment,
+    Defect,
+    RegionFinding,
+    SurfaceAssessment,
+)
+from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
 from tcg_domain.distribution import GradeDistribution
 from tcg_domain.errors import CatalogUnavailable, InvalidMoney
 from tcg_domain.grade import Grade
@@ -89,6 +105,7 @@ from tcg_api.analysis.sessions import (
     AnalysisRecord,
     AnalysisStoreUnavailable,
     read_analysis,
+    read_condition,
     read_grade_predictions,
     resolve_session,
 )
@@ -109,6 +126,7 @@ logger = structlog.get_logger(__name__)
 
 __all__ = [
     "CompanyEconomicsResponse",
+    "ConditionResponse",
     "EconomicConfigurationRequest",
     "EconomicConfigurationResponse",
     "RecommendationResponse",
@@ -695,6 +713,118 @@ class MarketSnapshotReference(BaseModel):
     )
 
 
+class ConditionRefusalResponse(BaseModel):
+    """#186's one-key refusal, as the one typed shape it takes wherever it appears.
+
+    An axis, a side, a ratio or a class the analyzers could not answer for is
+    this object wearing the stored reason — never a default, never dropped. A
+    reader tells an answer from a refusal by this key's presence, exactly as the
+    stored document is read.
+    """
+
+    insufficient_information: str | None = Field(
+        description="Why nothing was measured here, as the worker stored it. May be `null`.",
+        examples=["no_card_frame_for_back"],
+    )
+
+
+class RegionFindingResponse(BaseModel):
+    """What the analyzer concluded about one corner or one edge — spec §14, §15.
+
+    Which corner or edge, and on which side, is its position in the owning
+    mapping. No coordinate travels: spec §4 excludes defect visualization from
+    V1 and #175 forbids projecting one between frames.
+    """
+
+    label: CornerLabel | EdgeLabel = Field(examples=["whitening"])
+    confidence: float = Field(ge=0.0, le=1.0)
+    severity: DefectSeverity | None = Field(
+        description="#158's ordinal. `null` for `clean` and `unknown`, which rate nothing.",
+    )
+
+
+class CenteringResponse(BaseModel):
+    """Spec §13's centering block: four ratios and a confidence.
+
+    Each ratio is measured or refused on its own — a borderless axis (§21) is a
+    refusal on that ratio, never an average of the ones that were measured.
+    """
+
+    front_horizontal: float | ConditionRefusalResponse
+    front_vertical: float | ConditionRefusalResponse
+    back_horizontal: float | ConditionRefusalResponse
+    back_vertical: float | ConditionRefusalResponse
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DefectResponse(BaseModel):
+    """One defect on one side — spec §17's fields, less every spatial one.
+
+    `bounding_box`, `polygon` and the frame they were fractions of stay in the
+    stored record; nothing that could be drawn leaves the service (§4, #175).
+    """
+
+    type: SurfaceLabel | EdgeLabel = Field(examples=["stain"])
+    confidence: float = Field(ge=0.0, le=1.0)
+    severity: DefectSeverity | None = Field(
+        description="`null` only for `unknown` — damage seen but not nameable is not rated.",
+    )
+    side: ImageSide
+
+
+class SurfaceResponse(BaseModel):
+    """What surface analysis concluded for one side — spec §16."""
+
+    findings: list[DefectResponse] = Field(
+        description="A clean surface is an empty list: §16 has no `clean` class.",
+    )
+    not_assessed: dict[SurfaceLabel, ConditionRefusalResponse] = Field(
+        description=(
+            "The classes the analyzer refused to answer for, each with its reason "
+            "(#185). **An empty `findings` beside a full `not_assessed` is not a clean "
+            "surface** — it is one that was barely looked at."
+        ),
+    )
+
+
+class ConditionResponse(BaseModel):
+    """Spec §6's condition block — the neutral assessment the worker stored (#187).
+
+    Labels and severities only, one level at a time as the domain holds it:
+    every axis is its assessment or the one-key refusal. Nothing here is a grade
+    and nothing here is a score — that separation is the master architectural
+    rule, and this is the wire's copy of it.
+    """
+
+    version: str = Field(
+        description="The composed condition version the assessment was produced under.",
+        examples=["condition-compose-v0.1.0"],
+    )
+    confidence: float | None = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "The assessment's overall confidence. **`null` only when the step ran and "
+            "declined outright** — every axis then wears the reason, and there is "
+            "nothing to be confident about."
+        ),
+    )
+    centering: CenteringResponse | ConditionRefusalResponse
+    corners: dict[
+        ImageSide, dict[CornerRegion, RegionFindingResponse] | ConditionRefusalResponse
+    ] = Field(description="Per side, all four corners — or the side refused.")
+    edges: dict[ImageSide, dict[EdgeRegion, RegionFindingResponse] | ConditionRefusalResponse] = (
+        Field(description="Per side, all four edges — or the side refused.")
+    )
+    surface: dict[ImageSide, SurfaceResponse | ConditionRefusalResponse]
+    manufacturing_defects: list[DefectResponse] | ConditionRefusalResponse = Field(
+        description="Derived from the surface and edge findings, or refused.",
+    )
+    eye_appeal: ConditionRefusalResponse = Field(
+        description="Spec §13 names it and nothing in V1 measures it: always the refusal.",
+    )
+
+
 class ResultsResponse(BaseModel):
     """The body of `GET /analyses/{analysis_id}/results` — spec §64, §6, §41, §44."""
 
@@ -714,6 +844,16 @@ class ResultsResponse(BaseModel):
         description=(
             "The snapshot recorded on this analysis, or `null` when nothing had been "
             "ingested when it ran."
+        ),
+    )
+    condition: ConditionResponse | None = Field(
+        description=(
+            "Spec §6's condition block, as the worker's condition step stored it — "
+            "labels and severities only, no coordinate. **`null` means the step never "
+            "ran**: the gate refused, or the worker has not reached it. A step that ran "
+            "and declined is not `null`; it is a `ConditionResponse` whose every axis "
+            "wears the stored reason and whose `confidence` is `null`, because spec "
+            "§2.7 makes 'insufficient image quality to assess' a result."
         ),
     )
     companies: list[CompanyEconomicsResponse] = Field(
@@ -978,6 +1118,114 @@ def _recommendation(recommendation: Recommendation) -> RecommendationResponse:
         failed_gates=[_reason(gate) for gate in recommendation.failed_gates],
         comparison=None if comparison is None else _comparison(comparison),
         comparison_reason=_reason_of(recommendation.comparison),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stored condition → wire — #245
+# ---------------------------------------------------------------------------
+# Pure over #187's document, `_outlooks`' sibling one stage earlier: rehydrated
+# through the domain's own reader so the route validates nothing the
+# constructors do not, walked one level at a time, and nothing spatial kept.
+
+
+def _refusal(refusal: InsufficientInformation) -> ConditionRefusalResponse:
+    return ConditionRefusalResponse(insufficient_information=refusal.reason)
+
+
+def _uncertain[ValueT, RenderedT](
+    value: Uncertain[ValueT], render: Callable[[ValueT], RenderedT]
+) -> RenderedT | ConditionRefusalResponse:
+    """The value rendered, or the refusal as itself — `_answer`'s rule for this tree."""
+    return _refusal(value) if isinstance(value, InsufficientInformation) else render(value)
+
+
+def _finding(finding: RegionFinding) -> RegionFindingResponse:
+    return RegionFindingResponse(
+        label=finding.label, confidence=finding.confidence.value, severity=finding.severity
+    )
+
+
+def _defect(defect: Defect) -> DefectResponse:
+    return DefectResponse(
+        type=defect.type,
+        confidence=defect.confidence.value,
+        severity=defect.severity,
+        side=defect.side,
+    )
+
+
+def _defects(defects: tuple[Defect, ...]) -> list[DefectResponse]:
+    return [_defect(defect) for defect in defects]
+
+
+def _regions[RegionT: StrEnum](
+    axis: Mapping[ImageSide, Uncertain[Mapping[RegionT, RegionFinding]]],
+) -> dict[ImageSide, dict[RegionT, RegionFindingResponse] | ConditionRefusalResponse]:
+    def findings(answer: Mapping[RegionT, RegionFinding]) -> dict[RegionT, RegionFindingResponse]:
+        return {region: _finding(finding) for region, finding in answer.items()}
+
+    return {side: _uncertain(answer, findings) for side, answer in axis.items()}
+
+
+def _surface(face: SurfaceAssessment) -> SurfaceResponse:
+    return SurfaceResponse(
+        findings=_defects(face.findings),
+        not_assessed={label: _refusal(verdict) for label, verdict in face.not_assessed.items()},
+    )
+
+
+def _centering(centering: Centering) -> CenteringResponse:
+    def ratio(value: Uncertain[float]) -> float | ConditionRefusalResponse:
+        return _uncertain(value, lambda measured: measured)
+
+    return CenteringResponse(
+        front_horizontal=ratio(centering.front_horizontal),
+        front_vertical=ratio(centering.front_vertical),
+        back_horizontal=ratio(centering.back_horizontal),
+        back_vertical=ratio(centering.back_vertical),
+        confidence=centering.confidence.value,
+    )
+
+
+def _condition(document: Mapping[str, Any]) -> ConditionResponse:
+    """#187's document as a client reads it: the step's answer, or its refusal on every axis.
+
+    `predict_grades`' own discrimination (#227): an `assessment` key means the
+    step answered, and the record goes through `ConditionAssessment.from_record`
+    — the domain's inverse of its writer — so a label off its vocabulary or a
+    missing member fails as the corrupt record it is rather than being served
+    thin. No key means the step ran and declined, and the reason is worn on
+    every axis because nothing was measured; `confidence` is `null` there
+    rather than a fabricated zero (#91).
+    """
+    version = str(document["version"])
+    if "assessment" in document:
+        assessment = ConditionAssessment.from_record(document["assessment"])
+        return ConditionResponse(
+            version=version,
+            confidence=assessment.confidence.value,
+            centering=_uncertain(assessment.centering, _centering),
+            corners=_regions(assessment.corners),
+            edges=_regions(assessment.edges),
+            surface={side: _uncertain(face, _surface) for side, face in assessment.surface.items()},
+            manufacturing_defects=_uncertain(assessment.manufacturing_defects, _defects),
+            eye_appeal=_refusal(assessment.eye_appeal),
+        )
+
+    reason = document.get("insufficient_information")
+    refused = ConditionRefusalResponse(
+        insufficient_information=reason if isinstance(reason, str) else None
+    )
+    return ConditionResponse(
+        version=version,
+        confidence=None,
+        centering=refused,
+        corners=dict.fromkeys(V1_SIDES, refused),
+        edges=dict.fromkeys(V1_SIDES, refused),
+        surface=dict.fromkeys(V1_SIDES, refused),
+        manufacturing_defects=refused,
+        eye_appeal=refused,
     )
 
 
@@ -1330,6 +1578,10 @@ async def _load_predictions(
         "model refused is in `refused` with its stored reason, keyed by slug — and in "
         "the comparison's `unranked` too, whenever another company could be "
         "ranked.\n\n"
+        "**`condition` is spec §6's condition block** as the worker's condition step "
+        "stored it — labels and severities only, never a coordinate (§4). `null` "
+        "means the step never ran; a step that ran and declined is an object whose "
+        "every axis wears the stored reason.\n\n"
         "`Cache-Control: no-store`: every figure here descends from prices whose "
         "confidence is discounted for age at the moment of asking."
     ),
@@ -1371,7 +1623,8 @@ async def read_results(
     The recommendation needs three things and is `null` without any of them: a
     configuration (the mode and the thresholds), a stored prediction, and an
     assessed photograph (§44's third confidence source). `companies` needs the
-    first two.
+    first two. `condition` needs none of them: it is the condition step's own
+    document (#187), served whenever that step ran.
     """
     record = await _owned_analysis(db, request, analysis_id)
 
@@ -1396,6 +1649,12 @@ async def read_results(
     except MarketSnapshotUnavailable as error:
         logger.warning("economics.snapshot_could_not_be_read", exc_info=True)
         raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
+
+    try:
+        condition_document = await read_condition(db, record.id)
+    except AnalysisStoreUnavailable as error:
+        logger.warning("economics.condition_could_not_be_read", exc_info=True)
+        raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
 
     predicted = (
         None
@@ -1462,6 +1721,7 @@ async def read_results(
                 data_version=str(snapshot.data_version),
             )
         ),
+        condition=None if condition_document is None else _condition(condition_document),
         companies=[_company_economics(outlook) for outlook in outlooks],
         refused=refused,
         recommendation=None if recommendation is None else _recommendation(recommendation),
