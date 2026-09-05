@@ -29,6 +29,7 @@ import {
 } from "@/lib/results-copy";
 import { classifyResultsFailure, type ResultsFailure } from "@/lib/results-errors";
 
+import { CompanyComparison } from "./CompanyComparison";
 import { GradeDistribution } from "./GradeDistribution";
 import styles from "./page.module.css";
 
@@ -263,11 +264,11 @@ function Unavailable({
 
 /**
  * Spec §49's order: the recommendation, then the expected economic outcome, then
- * each company's grade distribution (#247), then room held for the comparison
- * (#248) and the condition (#249). The market snapshot sits under the figures it
+ * each company's grade distribution (#247), then the comparison (#248), then room
+ * held for the condition (#249). The market snapshot sits under the figures it
  * priced, so no figure is ever shown without its date (ADR 0006). A refused
  * company has no distribution to chart and is named, with its reason, among the
- * figures above.
+ * figures above and again apart from the ranked companies below.
  */
 function Ready({
   results,
@@ -352,10 +353,22 @@ function Ready({
           ))}
         </section>
       )}
-      <Placeholder heading="Company comparison">
-        The companies side by side, in the order the chosen way of ranking produced, arrives with
-        #248.
-      </Placeholder>
+      {/* Spec §49's second screen (#248). Nothing to compare, and no reason
+          either, until something has been asked. */}
+      {results.recommendation !== null && (
+        <section className={styles.section} aria-labelledby="comparison">
+          <h2 className={styles.sectionHeading} id="comparison">
+            Company comparison
+          </h2>
+          <CompanyComparison
+            comparison={results.recommendation.comparison}
+            reason={results.recommendation.comparison_reason}
+            refused={refused}
+            currency={results.currency}
+            displayName={displayName}
+          />
+        </section>
+      )}
       <Placeholder heading="Condition">
         What was read off the card&apos;s centering, corners, edges and surface arrives with #249.
       </Placeholder>
@@ -442,10 +455,6 @@ function Recommendation({
             <PhotographFaults image={image} />
           </div>
         ))}
-
-      {recommendation.comparison_reason !== null && (
-        <p className={styles.footnote}>{reasonCopy(recommendation.comparison_reason)}</p>
-      )}
     </div>
   );
 }

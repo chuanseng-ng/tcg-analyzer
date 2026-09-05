@@ -285,12 +285,15 @@ describe("spec §49 priority 1 — the recommendation", () => {
     expect(screen.getByText("How much of the likely grade range has no price")).toBeInTheDocument();
   });
 
-  it("says when no company could be compared", async () => {
+  it("says, in the comparison's own place, when no company could be compared", async () => {
     await shown();
 
+    const section = screen.getByRole("region", { name: "Company comparison" });
     expect(
-      screen.getByText(/No company could be compared: none had the figure/),
+      within(section).getByText(/No company could be compared: none had the figure/),
     ).toBeInTheDocument();
+    // Once, where the comparison would be — not repeated under the recommendation.
+    expect(screen.getAllByText(/No company could be compared/)).toHaveLength(1);
   });
 
   it("shows the confidence and the photograph quality as percents", async () => {
@@ -533,9 +536,8 @@ describe("spec §49 priority 3 — the grade distribution", () => {
       within(section).getAllByText("How far the grading model trusts its own grades"),
     ).toHaveLength(2);
     expect(within(section).getAllByText("35%")).toHaveLength(2);
-    // The chart replaced its placeholder; the two after it are still held.
+    // The chart replaced its placeholder; the condition's is still held.
     expect(screen.queryByText(/arrive with #247/)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Company comparison" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Condition" })).toBeInTheDocument();
   });
 
@@ -555,6 +557,83 @@ describe("spec §49 priority 3 — the grade distribution", () => {
     await shown();
 
     expect(screen.queryByRole("region", { name: "Grade probabilities" })).not.toBeInTheDocument();
+  });
+});
+
+describe("spec §49's second screen — the company comparison", () => {
+  it("ranks the companies in the engine's order under the chosen mode, with the unranked apart", async () => {
+    readResultsMock.mockResolvedValue(
+      results({
+        companies: [company(), company({ company: "psa" })],
+        refused: { bgs: "condition_step_not_run" },
+        recommendation: admission({
+          recommended_action: "grade",
+          recommended_company: "tag",
+          reason: {
+            code: "profit_clears_margin",
+            figure: "incremental_profit",
+            value: "24.00",
+            threshold: "5.00",
+          },
+          failed_gates: [],
+          comparison: {
+            mode: "expected_profit",
+            label: "Most profit",
+            ranked: [
+              { company: "tag", value: "24.00", confidence: 0.6, figure: "incremental_profit" },
+              { company: "psa", value: "18.50", confidence: 0.6, figure: "incremental_profit" },
+            ],
+            unranked: [{ company: "bgs", reason: "condition_step_not_run" }],
+            tied_at_the_top: [],
+          },
+          comparison_reason: null,
+        }),
+      }),
+    );
+
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Company comparison" });
+    expect(screen.queryByText(/arrives with #248/)).not.toBeInTheDocument();
+    const order = within(section).getByRole("list", { name: "Most profit" });
+    expect(
+      within(order)
+        .getAllByRole("listitem")
+        .map((item) => within(item).getByRole("heading").textContent),
+    ).toEqual(["TAG", "PSA"]);
+    const apart = within(section).getByRole("list", { name: "Could not be compared" });
+    expect(within(apart).getByRole("heading", { name: "BGS" })).toBeInTheDocument();
+    // Between the grade distribution and the condition, in §49's order.
+    const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+    expect(headings.indexOf("Company comparison")).toBeGreaterThan(
+      headings.indexOf("Grade probabilities"),
+    );
+    expect(headings.indexOf("Condition")).toBeGreaterThan(headings.indexOf("Company comparison"));
+  });
+
+  it("names the companies whose model refused when nothing could be ranked", async () => {
+    readResultsMock.mockResolvedValue(results({ refused: { bgs: "condition_step_not_run" } }));
+
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Company comparison" });
+    expect(within(section).getByRole("heading", { name: "BGS" })).toBeInTheDocument();
+    expect(within(section).queryByText(/nothing was priced/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing was priced when nothing could be ranked and no model refused", async () => {
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Company comparison" });
+    expect(within(section).getByText(/nothing was priced/)).toBeInTheDocument();
+  });
+
+  it("holds no comparison when nothing has been asked", async () => {
+    readResultsMock.mockResolvedValue(results({ companies: [], recommendation: null }));
+
+    await shown();
+
+    expect(screen.queryByRole("region", { name: "Company comparison" })).not.toBeInTheDocument();
   });
 });
 
@@ -591,11 +670,14 @@ describe("refused companies", () => {
 
     await shown();
 
-    expect(screen.getByRole("heading", { name: "BGS" })).toBeInTheDocument();
+    const economics = screen.getByRole("region", { name: "What grading is expected to come to" });
+    expect(within(economics).getByRole("heading", { name: "BGS" })).toBeInTheDocument();
     expect(
-      screen.getByText("The card's condition was never assessed, so no grade could be predicted."),
+      within(economics).getByText(
+        "The card's condition was never assessed, so no grade could be predicted.",
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "PSA" })).toBeInTheDocument();
+    expect(within(economics).getByRole("heading", { name: "PSA" })).toBeInTheDocument();
   });
 
   it("falls back to the slug when the company list cannot be read", async () => {

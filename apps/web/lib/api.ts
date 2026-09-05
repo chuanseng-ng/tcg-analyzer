@@ -113,6 +113,15 @@ export type CompanyEconomicsResponse = components["schemas"]["CompanyEconomicsRe
 /** One term of a grade distribution — spec §2.1's `P(g)`, keyed as `GET /grading-companies` spells the grade. */
 export type GradeProbabilityResponse = components["schemas"]["GradeProbabilityResponse"];
 
+/** Spec §49's compare table under the chosen mode (#63): the engine's order, and the unranked beside it. */
+export type CompanyComparisonResponse = components["schemas"]["CompanyComparisonResponse"];
+
+/** One company's standing under one mode — the figure it was ranked on, never `roi`. */
+export type RankedCompanyResponse = components["schemas"]["RankedCompanyResponse"];
+
+/** A company with no place in the order, wearing its reason. Unranked, not last. */
+export type UnrankedCompanyResponse = components["schemas"]["UnrankedCompanyResponse"];
+
 /** The snapshot the figures were priced against — what ADR 0006 requires the UI to date-stamp. */
 export type MarketSnapshotReference = components["schemas"]["MarketSnapshotReference"];
 
