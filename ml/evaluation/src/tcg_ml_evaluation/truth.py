@@ -15,6 +15,10 @@ Three rules, all decided during #181 and binding on every reader
 * **A reader filters by declared frame and never converts** (#175): the
   normalized artifact and the original photograph relate by a projective
   warp, so a fraction of one means nothing in the other.
+
+And one for the target (#220): **the newest outcome per company is the
+grade that company issued.** A copy cracked and resubmitted to the same
+company has one current slab; two companies are two answers, never merged.
 """
 
 from __future__ import annotations
@@ -22,9 +26,10 @@ from __future__ import annotations
 from tcg_domain.annotation import AnnotationKind
 from tcg_domain.condition import Representation
 
+from tcg_ml_evaluation.grading import IssuedGrade
 from tcg_ml_evaluation.manifest import CorpusAnnotation, CorpusCentering, CorpusMember
 
-__all__ = ["current_view", "is_worked_on", "newest_centering", "surface_truth"]
+__all__ = ["current_view", "is_worked_on", "issued_grades", "newest_centering", "surface_truth"]
 
 
 def is_worked_on(member: CorpusMember) -> bool:
@@ -53,6 +58,19 @@ def surface_truth(
         for marker in sorted(member.annotations, key=lambda row: (row.created_at, str(row.id)))
         if marker.kind is AnnotationKind.SURFACE and marker.representation is representation
     )
+
+
+def issued_grades(member: CorpusMember) -> dict[str, IssuedGrade]:
+    """What each company issued for this image's copy — the newest slab per company.
+
+    The shape `GradeSubject.outcomes` takes, keyed by company slug.
+    """
+    grades: dict[str, IssuedGrade] = {}
+    for outcome in sorted(member.grading_outcomes, key=lambda row: (row.created_at, str(row.id))):
+        grades[outcome.company] = IssuedGrade(
+            company=outcome.company, grade=outcome.grade, designation=outcome.designation
+        )
+    return grades
 
 
 def newest_centering(member: CorpusMember) -> CorpusCentering | None:

@@ -39,6 +39,7 @@ from tcg_api.datasets.tables import (
     centering_measurements,
     dataset_members,
     dataset_versions,
+    grading_outcomes,
     image_annotations,
     physical_copies,
     training_images,
@@ -50,6 +51,7 @@ from tcg_api.datasets.versioning import (
     ManifestMember,
     MemberAnnotation,
     MemberCentering,
+    MemberOutcome,
     create_version,
     manifest_path,
     read_manifest,
@@ -75,6 +77,7 @@ def _member(
     *,
     annotations: tuple[MemberAnnotation, ...] = (),
     centering: tuple[MemberCentering, ...] = (),
+    grading_outcomes: tuple[MemberOutcome, ...] = (),
 ) -> ManifestMember:
     return ManifestMember(
         training_image_id=uuid.UUID(identifier),
@@ -86,6 +89,7 @@ def _member(
         original_uri=f"training/{identifier}.png",
         annotations=annotations,
         centering=centering,
+        grading_outcomes=grading_outcomes,
     )
 
 
@@ -120,6 +124,25 @@ def _measurement(identifier: str, *, minute: int = 0) -> MemberCentering:
         vertical=None,
         confidence=0.9,
         created_at=datetime(2026, 8, 30, 9, minute, tzinfo=UTC),
+    )
+
+
+def _outcome(
+    identifier: str,
+    *,
+    company: str = "psa",
+    certification_number: str = "12345678",
+    grade: str | None = "9",
+    designation: str | None = None,
+    minute: int = 0,
+) -> MemberOutcome:
+    return MemberOutcome(
+        id=uuid.UUID(identifier),
+        company=company,
+        certification_number=certification_number,
+        grade=grade,
+        designation=designation,
+        created_at=datetime(2026, 9, 30, 9, minute, tzinfo=UTC),
     )
 
 
@@ -219,7 +242,75 @@ def test_no_image_bytes_reach_the_manifest() -> None:
         "original_uri",
         "annotations",
         "centering",
+        "grading_outcomes",
     }
+
+
+# ---------------------------------------------------------------------------
+# The target rides on the member too — #220, the same shape as #188
+# ---------------------------------------------------------------------------
+def test_an_ungraded_member_renders_an_empty_outcome_list() -> None:
+    """Empty, never absent: silence would read as an unlabelled corpus."""
+    entry = json.loads(render_manifest(_manifest(_member("00000000-0000-0000-0000-0000000000aa"))))[
+        "members"
+    ][0]
+
+    assert entry["grading_outcomes"] == []
+
+
+def test_a_rendered_outcome_is_its_identity_and_the_grade_and_nothing_else() -> None:
+    """No subgrades and no `returned_at`: nothing reads them yet, and a field is
+    a regeneration away when something does (#188's rule)."""
+    member = _member(
+        "00000000-0000-0000-0000-0000000000aa",
+        grading_outcomes=(_outcome("00000000-0000-0000-0000-00000000f001"),),
+    )
+
+    (outcome,) = json.loads(render_manifest(_manifest(member)))["members"][0]["grading_outcomes"]
+
+    assert outcome == {
+        "id": "00000000-0000-0000-0000-00000000f001",
+        "company": "psa",
+        "certification_number": "12345678",
+        "grade": "9",
+        "created_at": "2026-09-30T09:00:00+00:00",
+    }
+
+
+def test_a_designation_renders_and_the_absent_grade_stays_absent() -> None:
+    """PSA issues Authentic *in place of* a number — the `as_record()` convention."""
+    member = _member(
+        "00000000-0000-0000-0000-0000000000aa",
+        grading_outcomes=(
+            _outcome("00000000-0000-0000-0000-00000000f001", grade=None, designation="authentic"),
+        ),
+    )
+
+    (outcome,) = json.loads(render_manifest(_manifest(member)))["members"][0]["grading_outcomes"]
+
+    assert "grade" not in outcome
+    assert outcome["designation"] == "authentic"
+
+
+def test_two_companies_outcomes_both_render_ordered_by_company() -> None:
+    """#165 allows one copy two submissions; neither shadows the other."""
+    psa = _outcome("00000000-0000-0000-0000-00000000f001", company="psa")
+    bgs = _outcome(
+        "00000000-0000-0000-0000-00000000f002",
+        company="bgs",
+        certification_number="0001",
+        grade="9.5",
+    )
+    one_way = _member("00000000-0000-0000-0000-0000000000aa", grading_outcomes=(psa, bgs))
+    other_way = _member("00000000-0000-0000-0000-0000000000aa", grading_outcomes=(bgs, psa))
+
+    assert render_manifest(_manifest(one_way)) == render_manifest(_manifest(other_way))
+
+    listed = json.loads(render_manifest(_manifest(one_way)))["members"][0]["grading_outcomes"]
+    assert [(outcome["company"], outcome["grade"]) for outcome in listed] == [
+        ("bgs", "9.5"),
+        ("psa", "9"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +536,7 @@ def empty_tables() -> Iterator[None]:
     if not DATABASE_URL:
         yield
         return
-    tables = "dataset_members, dataset_versions, training_images, physical_copies"
+    tables = "dataset_members, dataset_versions, grading_outcomes, training_images, physical_copies"
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
@@ -463,14 +554,16 @@ def execute(statement: Any) -> None:
     run(scenario)
 
 
-def store(*, copy: uuid.UUID | None = None, source: str = "first_party") -> uuid.UUID:
+def store(
+    *, copy: uuid.UUID | None = None, source: str = "first_party", side: str = "front"
+) -> uuid.UUID:
     """One provenance-clean training image."""
     image_id = uuid.uuid4()
     execute(
         sa.insert(training_images).values(
             id=image_id,
             physical_copy_id=copy,
-            side="front",
+            side=side,
             original_uri=f"training/{image_id}.png",
             sha256=f"{image_id.hex}{image_id.hex}",
             mime_type="image/png",
@@ -492,6 +585,19 @@ def copy_row() -> uuid.UUID:
     copy_id = uuid.uuid4()
     execute(sa.insert(physical_copies).values(id=copy_id))
     return copy_id
+
+
+def grade(copy: uuid.UUID) -> None:
+    """One PSA 9, the row `tcg-record-grading-outcome` leaves."""
+    execute(
+        sa.insert(grading_outcomes).values(
+            id=uuid.uuid4(),
+            physical_copy_id=copy,
+            grading_company="psa",
+            certification_number="12345678",
+            grade="9",
+        )
+    )
 
 
 def publish(version: str, *, seed: int = SEED) -> Manifest:
@@ -615,6 +721,52 @@ def test_an_annotated_member_carries_its_rows_and_regenerates_identically(
     first = write_manifest(manifest, tmp_path).read_bytes()
     second = write_manifest(regenerate(VERSION), tmp_path).read_bytes()
     assert first == second
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_graded_copys_photographs_both_carry_its_outcome_and_regenerate_identically(
+    tmp_path: Path,
+) -> None:
+    """#220: the label belongs to the copy, so front and back carry the same row."""
+    copy = copy_row()
+    store(copy=copy, side="front")
+    store(copy=copy, side="back")
+    grade(copy)
+
+    manifest = publish(VERSION)
+
+    front, back = manifest.members
+    assert front.grading_outcomes == back.grading_outcomes
+    (outcome,) = front.grading_outcomes
+    assert (outcome.company, outcome.certification_number, outcome.grade) == (
+        "psa",
+        "12345678",
+        "9",
+    )
+    assert outcome.designation is None
+    first = write_manifest(manifest, tmp_path).read_bytes()
+    second = write_manifest(regenerate(VERSION), tmp_path).read_bytes()
+    assert first == second
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_recording_an_outcome_after_publication_changes_exactly_that_copys_members() -> None:
+    """Same database state, same bytes; a new outcome is a regeneration to re-commit."""
+    graded, other = copy_row(), copy_row()
+    graded_image = store(copy=graded)
+    store(copy=other)
+    publish(VERSION)
+    before = json.loads(render_manifest(regenerate(VERSION)))["members"]
+
+    grade(graded)
+
+    after = json.loads(render_manifest(regenerate(VERSION)))["members"]
+    changed = [entry for entry, was in zip(after, before, strict=True) if entry != was]
+    assert [entry["training_image_id"] for entry in changed] == [str(graded_image)]
+    (outcome,) = changed[0]["grading_outcomes"]
+    assert (outcome["company"], outcome["grade"]) == ("psa", "9")
 
 
 @pytest.mark.integration

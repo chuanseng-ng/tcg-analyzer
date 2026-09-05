@@ -35,6 +35,32 @@ same-database-state → same-bytes: annotating an image after its version was
 published changes the next render, which is a regeneration to re-commit, not
 drift.
 
+**Each member also carries its physical copy's grading outcomes** (#220): every
+`grading_outcomes` row for the copy the image is of — `id`, `company`,
+`certification_number`, `grade` *or* `designation` (an absent key where the
+company issued the other), `created_at` — ordered by `(company,
+certification_number)` and repeated on the front and the back, because the
+label belongs to the card and the manifest is keyed by image. That repetition
+is the price of a member that describes itself: the file still names no
+`physical_copy_id`, and a top-level map keyed by copy would have needed one.
+The newest outcome per company being the issued grade is again the reader's
+rule (`tcg_ml_evaluation.truth.issued_grades`). The four BGS subgrades and
+`returned_at` are deliberately not rendered — nothing reads them, and a field
+is a regeneration away when something does. An old file is refused on key
+presence rather than read as an unlabelled corpus.
+
+**A grade is publishable under ADR 0008, and this is the determination #165
+deferred.** `redistribution_allowed` is `false` on every approved source because
+the *artwork* on the photograph is not ours; a grade reproduces no artwork and
+no text. It is a fact about property this project owns — what a company issued,
+to us, for our card — for approved classes 1 and 2, and for class 3 it is a fact
+the contributor supplied under the grant, whose template already asks for the
+certification company and number so the grade can be verified on the issuing
+company's own public lookup. Class 4 has no physical copy and therefore no
+outcome. The certification number carries no more than the slab prints on its
+face and the company publishes in its lookup. Nothing here changes the answer
+for the image bytes: those stay in object storage and out of git.
+
 **This is what a dataset version may leave behind, and all of it.** ADR 0008
 makes `redistribution_allowed` false on every approved source, including the
 photographs this project took itself, so no dataset produced under it is ever

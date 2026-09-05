@@ -18,6 +18,7 @@ import textwrap
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -67,6 +68,7 @@ from tcg_ml_evaluation.manifest import (
     CorpusAnnotation,
     CorpusCentering,
     CorpusMember,
+    CorpusOutcome,
     EvaluationCorpus,
     load_manifest,
 )
@@ -85,7 +87,15 @@ from tcg_ml_evaluation.report import (
     PredictedCentering,
     evaluate,
 )
-from tcg_ml_evaluation.truth import current_view, is_worked_on, newest_centering, surface_truth
+from tcg_ml_evaluation.truth import (
+    current_view,
+    is_worked_on,
+    issued_grades,
+    newest_centering,
+    surface_truth,
+)
+
+MANIFESTS_DIR = Path(__file__).resolve().parents[3] / "datasets" / "manifests"
 
 
 def _manifest_payload() -> dict[str, object]:
@@ -123,6 +133,15 @@ def _manifest_payload() -> dict[str, object]:
                         "created_at": "2026-08-30T09:00:00+00:00",
                     }
                 ],
+                "grading_outcomes": [
+                    {
+                        "id": "00000000-0000-0000-0000-00000000f001",
+                        "company": "psa",
+                        "certification_number": "12345678",
+                        "grade": "9",
+                        "created_at": "2026-09-30T09:00:00+00:00",
+                    }
+                ],
             },
             {
                 "training_image_id": "00000000-0000-0000-0000-0000000000ab",
@@ -134,6 +153,7 @@ def _manifest_payload() -> dict[str, object]:
                 "original_uri": "training/ab.png",
                 "annotations": [],
                 "centering": [],
+                "grading_outcomes": [],
             },
         ],
     }
@@ -161,10 +181,29 @@ def _annotation(
     )
 
 
+def _outcome(
+    *,
+    company: str = "psa",
+    grade: str | None = "9",
+    designation: str | None = None,
+    minute: int = 0,
+    identifier: str = "00000000-0000-0000-0000-00000000f001",
+) -> CorpusOutcome:
+    return CorpusOutcome(
+        id=uuid.UUID(identifier),
+        company=company,
+        certification_number="12345678",
+        grade=None if grade is None else Grade.parse(grade),
+        designation=designation,
+        created_at=datetime(2026, 9, 30, 9, minute, tzinfo=UTC),
+    )
+
+
 def _corpus_member(
     *,
     annotations: tuple[CorpusAnnotation, ...] = (),
     centering: tuple[CorpusCentering, ...] = (),
+    grading_outcomes: tuple[CorpusOutcome, ...] = (),
 ) -> CorpusMember:
     return CorpusMember(
         training_image_id=uuid.UUID("00000000-0000-0000-0000-0000000000aa"),
@@ -176,6 +215,7 @@ def _corpus_member(
         original_uri="training/aa.png",
         annotations=annotations,
         centering=centering,
+        grading_outcomes=grading_outcomes,
     )
 
 
@@ -197,7 +237,10 @@ def test_a_manifest_round_trips_into_typed_members() -> None:
     (measurement,) = annotated.centering
     assert measurement.horizontal == 0.55
     assert measurement.vertical is None
+    (outcome,) = annotated.grading_outcomes
+    assert (outcome.company, outcome.grade, outcome.designation) == ("psa", Grade.parse("9"), None)
     assert bare.annotations == ()
+    assert bare.grading_outcomes == ()
 
 
 def test_a_manifest_with_no_members_is_refused() -> None:
@@ -214,14 +257,86 @@ def test_a_manifest_rendered_before_the_annotation_fields_is_refused() -> None:
     for member in payload["members"]:  # type: ignore[union-attr]
         del member["annotations"]
         del member["centering"]
+        del member["grading_outcomes"]
 
     with pytest.raises(ValueError, match="regenerate"):
         load_manifest(json.dumps(payload))
 
 
+def test_two_companies_outcomes_round_trip_and_neither_shadows_the_other() -> None:
+    payload = _manifest_payload()
+    payload["members"][0]["grading_outcomes"].append(  # type: ignore[index]
+        {
+            "id": "00000000-0000-0000-0000-00000000f002",
+            "company": "bgs",
+            "certification_number": "0001",
+            "grade": "9.5",
+            "created_at": "2026-09-30T09:00:00+00:00",
+        }
+    )
+
+    graded, _ = load_manifest(json.dumps(payload)).members
+
+    assert [(outcome.company, outcome.grade) for outcome in graded.grading_outcomes] == [
+        ("psa", Grade.parse("9")),
+        ("bgs", Grade.parse("9.5")),
+    ]
+
+
+def test_a_designation_round_trips_with_no_numeric_grade() -> None:
+    """PSA Authentic: a designation, and `grade` is `None` rather than a widened `Grade`."""
+    payload = _manifest_payload()
+    payload["members"][0]["grading_outcomes"] = [  # type: ignore[index]
+        {
+            "id": "00000000-0000-0000-0000-00000000f001",
+            "company": "psa",
+            "certification_number": "12345678",
+            "designation": "authentic",
+            "created_at": "2026-09-30T09:00:00+00:00",
+        }
+    ]
+
+    graded, _ = load_manifest(json.dumps(payload)).members
+
+    (outcome,) = graded.grading_outcomes
+    assert outcome.grade is None
+    assert outcome.designation == "authentic"
+
+
+def test_a_manifest_rendered_before_the_target_field_is_refused() -> None:
+    """The committed v0.1.0 predates #220; silence is not an unlabelled corpus."""
+    text = (MANIFESTS_DIR / "pokemon-condition-v0.1.0.json").read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="grading outcomes"):
+        load_manifest(text)
+
+
 # ---------------------------------------------------------------------------
 # The truth protocol: newest row wins, absence is clean only when worked on
 # ---------------------------------------------------------------------------
+def test_issued_grades_answers_per_company_and_the_newest_submission_wins() -> None:
+    """A copy resubmitted to one company has one current slab; two companies, two."""
+    older = _outcome(grade="8", minute=0)
+    newer = _outcome(grade="9", minute=1, identifier="00000000-0000-0000-0000-00000000f002")
+    bgs = _outcome(company="bgs", grade="9.5", identifier="00000000-0000-0000-0000-00000000f003")
+
+    grades = issued_grades(_corpus_member(grading_outcomes=(newer, bgs, older)))
+
+    assert grades == {
+        "psa": IssuedGrade(company="psa", grade=Grade.parse("9")),
+        "bgs": IssuedGrade(company="bgs", grade=Grade.parse("9.5")),
+    }
+
+
+def test_issued_grades_carries_a_designation_and_is_empty_for_an_ungraded_copy() -> None:
+    graded = _corpus_member(grading_outcomes=(_outcome(grade=None, designation="authentic"),))
+
+    assert issued_grades(graded) == {
+        "psa": IssuedGrade(company="psa", grade=None, designation="authentic")
+    }
+    assert issued_grades(_corpus_member()) == {}
+
+
 def test_an_image_with_any_row_is_worked_on_and_one_with_none_is_not() -> None:
     assert not is_worked_on(_corpus_member())
     assert is_worked_on(_corpus_member(annotations=(_annotation(),)))
@@ -564,6 +679,7 @@ def test_splits_are_scored_separately_and_never_pooled() -> None:
         original_uri="training/ab.png",
         annotations=(_annotation(identifier="00000000-0000-0000-0000-00000000a003"),),
         centering=(),
+        grading_outcomes=(),
     )
     predictions = {
         test_member.training_image_id: _predictions(corners=_corner_predictions()),

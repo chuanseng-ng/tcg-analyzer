@@ -407,6 +407,17 @@ uv run tcg-record-grading-outcome --physical-copy <id> --company psa \
     --certification-number 12345678 --grade 9 --returned-at 2026-09-30
 ```
 
+### Reaching `ml/*`
+
+The manifest carries it (#220): every member — both photographs of the copy —
+renders the copy's rows as `grading_outcomes`, each `id`, `company`,
+`certification_number`, `grade` or `designation`, and `created_at`, ordered by
+`(company, certification_number)`. The subgrades and `returned_at` are not
+rendered. `ml/evaluation` reads the target off the member and never the table,
+and its `issued_grades` takes the newest row per company as the issued grade.
+Why a grade may leave the database at all is
+[the manifests README](../manifests/README.md).
+
 The copy identifier is the one `tcg-ingest-training-images` printed. The
 certification is written onto that copy where the copy carries none; where it
 already carries a *different* one — a card cross-graded by a second company —
