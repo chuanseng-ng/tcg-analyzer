@@ -199,6 +199,30 @@ the engine's own admissions; when every configured company refused there is no
 comparison to carry it, `comparison` is `null` with `no_company_can_be_ranked`,
 and `refused` is where each reason lives.
 
+**`condition` is spec §6's condition block** (#245): the neutral assessment the
+worker's condition step stored (#187), rehydrated through the domain's own
+reader and laid out one level at a time — centering's four ratios, the four
+corners and four edges per side, each side's surface findings beside the classes
+the analyzer refused to answer for (#185), the derived manufacturing defects,
+and the assessment's confidence. Sides, regions and classes are object keys
+spelled as the domain spells them (`front`/`back`; `top_left` … `bottom_right`;
+`top`/`right`/`bottom`/`left`; §16's class names), and every label and severity
+is one of the vocabulary values the OpenAPI schema enumerates, so a client keys
+its copy off the schema rather than a list of its own. **Labels and severities only**: no bounding
+box, polygon or coordinate of any kind leaves the service, because spec §4
+excludes defect visualization from V1 and #175 forbids projecting a coordinate
+between the artifact frame and the original photograph. Every refusal in the
+tree is the one-key `{"insufficient_information": reason}` object, wherever it
+sits — an axis, a side, a ratio or a class — so a client tells an answer from a
+refusal by that key's presence and nothing else. "Nothing here" means two
+different things: **`condition: null` means the step never ran** (the gate
+refused the photographs, or the worker has not reached it), while a step that
+ran and declined is a `condition` object whose every axis wears the stored
+reason and whose `confidence` is `null` — spec §2.7 makes "insufficient image
+quality to assess" a result, not an absence. A stored document that no longer
+matches the domain's writer is a 500, never a partial `condition`: a corrupt
+record is a failure, not a refusal.
+
 With the V1 heuristic predictors every recommendation is
 `insufficient_information` on `grade_confidence_below_threshold`: ADR 0011's
 declared confidence of 0.35 sits below the provisional `minimum_grade_confidence`

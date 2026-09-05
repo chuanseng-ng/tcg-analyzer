@@ -133,6 +133,8 @@ export interface paths {
          *
          *     **`companies` is empty and `recommendation` is `null` until the analysis has an economic configuration and the worker has stored its grade predictions.** That is an empty result rather than an error because the analysis is fine — it simply has not got there. Prices come from the snapshot the analysis recorded, never a provider; with no snapshot every figure is present-and-null beside the engine's own reason. A company whose model refused is in `refused` with its stored reason, keyed by slug — and in the comparison's `unranked` too, whenever another company could be ranked.
          *
+         *     **`condition` is spec §6's condition block** as the worker's condition step stored it — labels and severities only, never a coordinate (§4). `null` means the step never ran; a step that ran and declined is an object whose every axis wears the stored reason.
+         *
          *     `Cache-Control: no-store`: every figure here descends from prices whose confidence is discounted for age at the moment of asking.
          */
         get: operations["read_results_analyses__analysis_id__results_get"];
@@ -1109,6 +1111,25 @@ export interface components {
             vertical?: number | null;
         };
         /**
+         * CenteringResponse
+         * @description Spec §13's centering block: four ratios and a confidence.
+         *
+         *     Each ratio is measured or refused on its own — a borderless axis (§21) is a
+         *     refusal on that ratio, never an average of the ones that were measured.
+         */
+        CenteringResponse: {
+            /** Back Horizontal */
+            back_horizontal: number | components["schemas"]["ConditionRefusalResponse"];
+            /** Back Vertical */
+            back_vertical: number | components["schemas"]["ConditionRefusalResponse"];
+            /** Confidence */
+            confidence: number;
+            /** Front Horizontal */
+            front_horizontal: number | components["schemas"]["ConditionRefusalResponse"];
+            /** Front Vertical */
+            front_vertical: number | components["schemas"]["ConditionRefusalResponse"];
+        };
+        /**
          * CompanyComparisonResponse
          * @description Spec §49's compare table, in the order the chosen mode produced.
          */
@@ -1176,6 +1197,76 @@ export interface components {
              * @description `acquisition_cost_not_supplied` when the user did not say what they paid — ADR 0007's own string, and never a zero standing in for it.
              */
             investment_roi_reason: string | null;
+        };
+        /**
+         * ConditionRefusalResponse
+         * @description #186's one-key refusal, as the one typed shape it takes wherever it appears.
+         *
+         *     An axis, a side, a ratio or a class the analyzers could not answer for is
+         *     this object wearing the stored reason — never a default, never dropped. A
+         *     reader tells an answer from a refusal by this key's presence, exactly as the
+         *     stored document is read.
+         */
+        ConditionRefusalResponse: {
+            /**
+             * Insufficient Information
+             * @description Why nothing was measured here, as the worker stored it. May be `null`.
+             * @example no_card_frame_for_back
+             */
+            insufficient_information: string | null;
+        };
+        /**
+         * ConditionResponse
+         * @description Spec §6's condition block — the neutral assessment the worker stored (#187).
+         *
+         *     Labels and severities only, one level at a time as the domain holds it:
+         *     every axis is its assessment or the one-key refusal. Nothing here is a grade
+         *     and nothing here is a score — that separation is the master architectural
+         *     rule, and this is the wire's copy of it.
+         */
+        ConditionResponse: {
+            /** Centering */
+            centering: components["schemas"]["CenteringResponse"] | components["schemas"]["ConditionRefusalResponse"];
+            /**
+             * Confidence
+             * @description The assessment's overall confidence. **`null` only when the step ran and declined outright** — every axis then wears the reason, and there is nothing to be confident about.
+             */
+            confidence: number | null;
+            /**
+             * Corners
+             * @description Per side, all four corners — or the side refused.
+             */
+            corners: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["RegionFindingResponse"];
+                } | components["schemas"]["ConditionRefusalResponse"];
+            };
+            /**
+             * Edges
+             * @description Per side, all four edges — or the side refused.
+             */
+            edges: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["RegionFindingResponse"];
+                } | components["schemas"]["ConditionRefusalResponse"];
+            };
+            /** @description Spec §13 names it and nothing in V1 measures it: always the refusal. */
+            eye_appeal: components["schemas"]["ConditionRefusalResponse"];
+            /**
+             * Manufacturing Defects
+             * @description Derived from the surface and edge findings, or refused.
+             */
+            manufacturing_defects: components["schemas"]["DefectResponse"][] | components["schemas"]["ConditionRefusalResponse"];
+            /** Surface */
+            surface: {
+                [key: string]: components["schemas"]["SurfaceResponse"] | components["schemas"]["ConditionRefusalResponse"];
+            };
+            /**
+             * Version
+             * @description The composed condition version the assessment was produced under.
+             * @example condition-compose-v0.1.0
+             */
+            version: string;
         };
         /**
          * ConditionVerdict
@@ -1295,6 +1386,25 @@ export interface components {
             /** Return Shipping */
             return_shipping: string;
             selling_fee: components["schemas"]["SellingFeeResponse"];
+        };
+        /**
+         * DefectResponse
+         * @description One defect on one side — spec §17's fields, less every spatial one.
+         *
+         *     `bounding_box`, `polygon` and the frame they were fractions of stay in the
+         *     stored record; nothing that could be drawn leaves the service (§4, #175).
+         */
+        DefectResponse: {
+            /** Confidence */
+            confidence: number;
+            /** @description `null` only for `unknown` — damage seen but not nameable is not rated. */
+            severity: components["schemas"]["DefectSeverity"] | null;
+            side: components["schemas"]["ImageSide"];
+            /**
+             * Type
+             * @example stain
+             */
+            type: components["schemas"]["SurfaceLabel"] | components["schemas"]["EdgeLabel"];
         };
         /**
          * DefectSeverity
@@ -2124,6 +2234,25 @@ export interface components {
             sets: number;
         };
         /**
+         * RegionFindingResponse
+         * @description What the analyzer concluded about one corner or one edge — spec §14, §15.
+         *
+         *     Which corner or edge, and on which side, is its position in the owning
+         *     mapping. No coordinate travels: spec §4 excludes defect visualization from
+         *     V1 and #175 forbids projecting one between frames.
+         */
+        RegionFindingResponse: {
+            /** Confidence */
+            confidence: number;
+            /**
+             * Label
+             * @example whitening
+             */
+            label: components["schemas"]["CornerLabel"] | components["schemas"]["EdgeLabel"];
+            /** @description #158's ordinal. `null` for `clean` and `unknown`, which rate nothing. */
+            severity: components["schemas"]["DefectSeverity"] | null;
+        };
+        /**
          * ReproducibilityResponse
          * @description What this analysis was computed against — spec §57's record, whole.
          *
@@ -2203,6 +2332,8 @@ export interface components {
              * @description One entry per configured company whose model predicted, in the configuration's order, each with its full distribution. **Empty until the analysis has an economic configuration and the worker has stored its grade predictions** — and empty rather than absent so a client parses the same shape either way. A company whose model refused is not here: it has no distribution to carry, and is in `refused` with its reason.
              */
             companies: components["schemas"]["CompanyEconomicsResponse"][];
+            /** @description Spec §6's condition block, as the worker's condition step stored it — labels and severities only, no coordinate. **`null` means the step never ran**: the gate refused, or the worker has not reached it. A step that ran and declined is not `null`; it is a `ConditionResponse` whose every axis wears the stored reason and whose `confidence` is `null`, because spec §2.7 makes 'insufficient image quality to assess' a result. */
+            condition: components["schemas"]["ConditionResponse"] | null;
             /**
              * Currency
              * @description ISO 4217 code for every amount below.
@@ -2416,6 +2547,24 @@ export interface components {
              * @example minor
              */
             severity?: components["schemas"]["DefectSeverity"] | null;
+        };
+        /**
+         * SurfaceResponse
+         * @description What surface analysis concluded for one side — spec §16.
+         */
+        SurfaceResponse: {
+            /**
+             * Findings
+             * @description A clean surface is an empty list: §16 has no `clean` class.
+             */
+            findings: components["schemas"]["DefectResponse"][];
+            /**
+             * Not Assessed
+             * @description The classes the analyzer refused to answer for, each with its reason (#185). **An empty `findings` beside a full `not_assessed` is not a clean surface** — it is one that was barely looked at.
+             */
+            not_assessed: {
+                [key: string]: components["schemas"]["ConditionRefusalResponse"];
+            };
         };
         /** UnrankedCompanyResponse */
         UnrankedCompanyResponse: {
