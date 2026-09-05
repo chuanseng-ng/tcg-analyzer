@@ -28,6 +28,23 @@ const KNOWN_CODES = [
   "no_normalized_artifact_for_back",
   "no_card_frame_for_front",
   "no_card_frame_for_back",
+  // The condition step's own refusals (#249): three codes, and the analyzers'
+  // stored reasons, which are sentences keyed exactly as stored.
+  "no_axis_measured",
+  "manufacturing_classes_not_assessed",
+  "eye_appeal_not_measured_in_v1",
+  "the artifact could not be decoded",
+  "the card frame names a region too small to classify",
+  "the card frame names a region too small to measure",
+  "no printed border frame was found — a full-art, borderless or unrecognised template is not measured against a frame it does not have",
+  "the frame touches the card edge on this axis, so there is no border to ratio",
+  "the frame found implies an implausibly thick border, so it is an artwork window rather than the card's border",
+  "below the sampling limit of the 12 px/mm artifact (ADR 0010)",
+  "a depth signal one normalized view does not carry",
+  "no reference image to compare against (ADR 0004)",
+  "no print template to measure registration against",
+  "a manufacturing judgement this baseline cannot make",
+  "the face's own texture is indistinguishable from defect texture in this signal",
 ];
 
 describe("reasonCopy", () => {

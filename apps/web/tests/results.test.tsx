@@ -536,9 +536,7 @@ describe("spec §49 priority 3 — the grade distribution", () => {
       within(section).getAllByText("How far the grading model trusts its own grades"),
     ).toHaveLength(2);
     expect(within(section).getAllByText("35%")).toHaveLength(2);
-    // The chart replaced its placeholder; the condition's is still held.
     expect(screen.queryByText(/arrive with #247/)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Condition" })).toBeInTheDocument();
   });
 
   it("keeps the recommendation and the economic outcome above the distribution", async () => {
@@ -557,6 +555,67 @@ describe("spec §49 priority 3 — the grade distribution", () => {
     await shown();
 
     expect(screen.queryByRole("region", { name: "Grade probabilities" })).not.toBeInTheDocument();
+  });
+});
+
+describe("spec §49's fourth priority — the condition", () => {
+  it("says the step has not run when the condition is null, in its own section last", async () => {
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Condition" });
+    expect(screen.queryByText(/arrives with #249/)).not.toBeInTheDocument();
+    expect(within(section).getByText(/not been assessed yet/)).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+    expect(headings.indexOf("Condition")).toBeGreaterThan(headings.indexOf("Company comparison"));
+  });
+
+  it("renders the stored assessment per side with its confidence", async () => {
+    const clean = { label: "clean", severity: null, confidence: 0.8 } as const;
+    const refused = { insufficient_information: "manufacturing_classes_not_assessed" };
+    readResultsMock.mockResolvedValue(
+      results({
+        condition: {
+          version: "condition-compose-v0.1.0",
+          confidence: 0.84,
+          centering: {
+            front_horizontal: 0.57,
+            front_vertical: 0.5,
+            back_horizontal: 0.5,
+            back_vertical: 0.5,
+            confidence: 0.9,
+          },
+          corners: {
+            front: {
+              top_left: { label: "whitening", severity: "minor", confidence: 0.7 },
+              top_right: clean,
+              bottom_left: clean,
+              bottom_right: clean,
+            },
+            back: { top_left: clean, top_right: clean, bottom_left: clean, bottom_right: clean },
+          },
+          edges: {
+            front: { top: clean, right: clean, bottom: clean, left: clean },
+            back: { top: clean, right: clean, bottom: clean, left: clean },
+          },
+          surface: {
+            front: { findings: [], not_assessed: {} },
+            back: { findings: [], not_assessed: {} },
+          },
+          manufacturing_defects: refused,
+          eye_appeal: { insufficient_information: "eye_appeal_not_measured_in_v1" },
+        },
+      }),
+    );
+
+    await shown();
+
+    const section = screen.getByRole("region", { name: "Condition" });
+    expect(within(section).getByText("Condition confidence").nextElementSibling).toHaveTextContent(
+      "84%",
+    );
+    expect(within(section).getByText("Whitening, minor")).toBeInTheDocument();
+    expect(within(section).getByText("57/43")).toBeInTheDocument();
+    expect(within(section).getByRole("region", { name: "Back" })).toBeInTheDocument();
   });
 });
 
