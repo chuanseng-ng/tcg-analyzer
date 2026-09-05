@@ -30,7 +30,7 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 | `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                        |
 | `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                        |
 | `app/configure/` | `/configure` — the economic configuration screen (spec §45, §46, §43)                                                                                                                                                                                |
-| `app/results/`   | `/results` — the recommendation, the expected economic outcome and each company's grade distribution (spec §49, §44, §41, §2.1)                                                                                                                      |
+| `app/results/`   | `/results` — the recommendation, the expected economic outcome, each company's grade distribution and the company comparison (spec §49, §44, §41, §2.1, §43)                                                                                       |
 | `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                           |
 | `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
 | `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                               |
@@ -228,9 +228,9 @@ throughout, and `/results` on its own after four seconds — `/identify`'s patte
 
 `/results` is where the product finally answers — spec §49's first three
 priorities, the recommendation, the expected economic outcome and the grade
-distribution, in that order. The company comparison and the condition block
-each have their place held below and arrive with their own issues. Seven
-decisions shape it:
+distribution, then its second screen, the company comparison, in that order.
+The condition block has its place held below and arrives with its own issue.
+Eight decisions shape it:
 
 - **The analysis is read first, and the results once.** `GET /analyses/{id}` is
   the endpoint §65 says a client polls, and `completed` means every input the
@@ -279,6 +279,22 @@ decisions shape it:
   own surfaces — the accent was tried and fails the dark-mode lightness band —
   and the component carries no colour literal. The grading model's confidence
   sits beside each chart as the one number, in the copy table's words.
+- **The comparison is the engine's order, and the markup says so.** Spec
+  §49's "Compare PSA / TAG / BGS" is rendered from `recommendation.comparison`
+  under the label the wire supplies for the mode chosen on `/configure` — the
+  page never keeps its own copy of §43's five names. The ranked companies are
+  an ordered list, each with the figure it was ranked on under the copy table's
+  label (money or a percent by figure, never `roi`) and its confidence; the
+  companies with no place in the order — no priced ladder, or a model that
+  refused — are an unordered list apart, each with its reason in words, and
+  are never appended as the last rows. There is no table, because the figure
+  can differ per company under one mode (`P(10)` beside `P(9_or_higher)`) and
+  a single column header would say otherwise. A tie at the top is said in a
+  sentence, because the alphabetical order among tied companies means nothing.
+  When nothing could be ranked — every V1 analysis, since nothing is priced —
+  the section is the admission plus one line per company whose model refused,
+  and an empty `refused` beside it is said as "nothing was priced", which is
+  what it means, rather than as "nothing was refused".
 - **`failed` is explained from the photographs.** The poll endpoint carries no
   error envelope; `confirm-card` decides between `image_quality_failure` and
   `analysis_failed` by whether any photograph is `unusable`, and this screen
