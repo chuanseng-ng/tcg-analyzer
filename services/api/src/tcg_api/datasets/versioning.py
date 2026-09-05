@@ -60,6 +60,7 @@ from tcg_api.datasets.tables import (
     centering_measurements,
     dataset_members,
     dataset_versions,
+    grading_outcomes,
     image_annotations,
     training_images,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "ManifestMember",
     "MemberAnnotation",
     "MemberCentering",
+    "MemberOutcome",
     "create_version",
     "main",
     "manifest_path",
@@ -165,6 +167,27 @@ class MemberCentering:
 
 
 @dataclass(frozen=True, slots=True)
+class MemberOutcome:
+    """One `grading_outcomes` row, as the manifest carries it — #220.
+
+    The target: what one company issued for the physical copy this image is
+    of. `grade` is ``None`` where a designation replaced it (PSA's Authentic),
+    and a designation is never a value on a scale (#165). The four BGS
+    subgrades and `returned_at` stay out — nothing reads them, and a field is
+    a regeneration away when something does. The certification number rides
+    along because it is the row's identity and §32's grouping key, printed on
+    a slab this project owns and verifiable on the company's own lookup.
+    """
+
+    id: uuid.UUID
+    company: str
+    certification_number: str
+    grade: str | None
+    designation: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ManifestMember:
     """One image's line in a manifest.
 
@@ -180,6 +203,14 @@ class ManifestMember:
     image after its version was published changes the next render, so the
     byte-identity invariant is same-database-state → same-bytes, and a
     post-publication annotation earns a regenerated, re-committed file.
+
+    Since #220 the copy's grading outcomes ride here as well, **repeated on
+    every photograph of the copy**: the label belongs to the physical card and
+    the manifest is keyed by image, and a member that carries its own target
+    keeps `CorpusMember` self-describing where a top-level map keyed by copy
+    would not — so the file still names no `physical_copy_id`. Same
+    byte-identity rule: recording an outcome changes the next render, which
+    is a regeneration to re-commit.
     """
 
     training_image_id: uuid.UUID
@@ -191,6 +222,7 @@ class ManifestMember:
     original_uri: str
     annotations: tuple[MemberAnnotation, ...] = ()
     centering: tuple[MemberCentering, ...] = ()
+    grading_outcomes: tuple[MemberOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +449,40 @@ async def read_manifest(connection: AsyncConnection, *, version: str) -> Manifes
             )
         )
 
+    # The outcome is the copy's, so it is joined onto every member image of
+    # that copy rather than looked up per image.
+    outcomes = await connection.execute(
+        sa.select(
+            training_images.c.id.label("training_image_id"),
+            grading_outcomes.c.id,
+            grading_outcomes.c.grading_company,
+            grading_outcomes.c.certification_number,
+            grading_outcomes.c.grade,
+            grading_outcomes.c.designation,
+            grading_outcomes.c.created_at,
+        )
+        .select_from(
+            grading_outcomes.join(
+                training_images,
+                grading_outcomes.c.physical_copy_id == training_images.c.physical_copy_id,
+            )
+        )
+        .where(training_images.c.id.in_(member_of))
+        .order_by(grading_outcomes.c.grading_company, grading_outcomes.c.certification_number)
+    )
+    outcomes_by_image: dict[uuid.UUID, list[MemberOutcome]] = collections.defaultdict(list)
+    for outcome in outcomes:
+        outcomes_by_image[outcome.training_image_id].append(
+            MemberOutcome(
+                id=outcome.id,
+                company=outcome.grading_company,
+                certification_number=outcome.certification_number,
+                grade=outcome.grade,
+                designation=outcome.designation,
+                created_at=outcome.created_at,
+            )
+        )
+
     return Manifest(
         version=DatasetVersion(
             id=row.id,
@@ -436,6 +502,7 @@ async def read_manifest(connection: AsyncConnection, *, version: str) -> Manifes
                 original_uri=member.original_uri,
                 annotations=tuple(annotations_by_image.get(member.training_image_id, ())),
                 centering=tuple(centering_by_image.get(member.training_image_id, ())),
+                grading_outcomes=tuple(outcomes_by_image.get(member.training_image_id, ())),
             )
             for member in members
         ),
@@ -489,6 +556,14 @@ def render_manifest(manifest: Manifest) -> str:
                         key=lambda measurement: (measurement.created_at, str(measurement.id)),
                     )
                 ],
+                # `(company, certification_number)` is the row's own unique key.
+                "grading_outcomes": [
+                    _outcome_entry(outcome)
+                    for outcome in sorted(
+                        member.grading_outcomes,
+                        key=lambda outcome: (outcome.company, outcome.certification_number),
+                    )
+                ],
             }
             for member in sorted(manifest.members, key=lambda member: str(member.training_image_id))
         ],
@@ -527,6 +602,21 @@ def _centering_entry(measurement: MemberCentering) -> dict[str, object]:
         entry["horizontal"] = measurement.horizontal
     if measurement.vertical is not None:
         entry["vertical"] = measurement.vertical
+    return entry
+
+
+def _outcome_entry(outcome: MemberOutcome) -> dict[str, object]:
+    """One outcome as JSON — a grade replaced by a designation is an absent key."""
+    entry: dict[str, object] = {
+        "id": str(outcome.id),
+        "company": outcome.company,
+        "certification_number": outcome.certification_number,
+        "created_at": outcome.created_at.isoformat(),
+    }
+    if outcome.grade is not None:
+        entry["grade"] = outcome.grade
+    if outcome.designation is not None:
+        entry["designation"] = outcome.designation
     return entry
 
 
