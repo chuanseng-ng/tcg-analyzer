@@ -194,14 +194,20 @@ jobs:
         run: uv run pytest -m integration
 
   storage:
-    name: Storage — signed URLs against MinIO
+    name: Storage — MinIO, PostgreSQL and the anonymous journey
     runs-on: ubuntu-latest
 
     # Not a `services:` block: MinIO needs `server /data`, and a service
     # container cannot supply a command. Running the Compose file instead has a
     # second benefit — it makes that file a tested artifact rather than one
     # nobody exercises until a developer clones the repository.
+    #
+    # PostgreSQL comes from the same file, because #250's journey test needs
+    # both: the upload writes a photograph the worker then reads back out of
+    # the store. It is the one pytest module carrying both markers, and this
+    # is the one job where it runs rather than skips.
     env:
+      TCG_API_DATABASE_URL: postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
       TCG_API_STORAGE_ENDPOINT_URL: http://localhost:9000
       TCG_API_STORAGE_BUCKET: tcg-local
       TCG_API_STORAGE_ACCESS_KEY_ID: tcg
@@ -218,17 +224,20 @@ jobs:
 
       - run: uv sync --all-packages --frozen
 
-      # `--wait` blocks until MinIO's healthcheck passes, so the first signed
-      # request does not race the store's startup.
-      - name: Start MinIO
+      # `--wait` blocks until both healthchecks pass, so the first signed
+      # request does not race the store's startup and the first migration
+      # does not race the database's.
+      - name: Start MinIO and PostgreSQL
         run: >-
           docker compose -f infrastructure/local/docker-compose.yml
-          up -d --wait minio
+          up -d --wait postgres minio
 
-      - name: Object-storage tests
+      - run: uv run alembic upgrade head
+
+      - name: Object-storage tests, and the anonymous journey
         run: uv run pytest -m object_storage
 
-      - name: Stop MinIO
+      - name: Stop MinIO and PostgreSQL
         if: always()
         run: docker compose -f infrastructure/local/docker-compose.yml down -v
 
@@ -574,9 +583,9 @@ jobs:
           test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = good
 
       # Spec §54, the acceptance criterion of #41: expired photographs are gone
-      # from BOTH stores. This is the only place that claim can be made — the
-      # `integration` and `object_storage` pytest markers run in jobs that have
-      # PostgreSQL and MinIO respectively, and never both.
+      # from BOTH stores. This is the only place that claim is made — the
+      # `storage` job has both stores too since #250, but its tests delete
+      # their own objects, and the sweep is only ever run here.
       - name: An expired session's photographs are deleted from object storage
         run: |
           psql() { $COMPOSE exec -T postgres psql -tAqX -U tcg -d tcg "$@"; }

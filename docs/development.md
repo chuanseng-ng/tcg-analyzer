@@ -93,6 +93,23 @@ because the two need different services:
 uv run pytest -m object_storage   # requires MinIO to be running
 ```
 
+One module needs both. `services/api/tests/test_anonymous_journey.py` drives an
+anonymous analysis through every endpoint — real photographs into the store,
+the real worker reading them back, the results at the end — and carries both
+markers, so it runs only where PostgreSQL and MinIO are both reachable:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
+uv run alembic upgrade head
+uv run pytest -m "integration and object_storage"
+```
+
+It seeds only idempotent rows and deletes its own sessions and objects
+afterwards, so it is safe to point at a developer's `tcg` database. It refuses
+`tcg_corpus`, as every integration test does.
+
 ## Background jobs
 
 Analysis is asynchronous: `POST /analyses/{id}/run` hands the work to a Celery
