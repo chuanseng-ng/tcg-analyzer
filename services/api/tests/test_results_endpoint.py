@@ -787,7 +787,8 @@ def test_results_answer_the_same_on_completed_and_on_analyzing(client: TestClien
             )
         bodies.append(client.get(f"/analyses/{analysis_id}/results").json())
 
-    assert [body.pop("status") for body in bodies] == ["completed", "analyzing"]
+    statuses = [body.pop("status") for body in bodies]
+    assert statuses == ["completed", "analyzing"]
     for body in bodies:
         body.pop("analysis_id")
         body["economic_configuration"].pop("id")
