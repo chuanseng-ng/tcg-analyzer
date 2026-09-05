@@ -124,3 +124,10 @@ def test_written_bytes_use_line_feeds_on_every_platform(tmp_path: Path) -> None:
     write_experiment('{\n  "a": 1\n}\n', target)
 
     assert b"\r" not in target.read_bytes()
+
+
+def test_a_second_harness_names_its_own_record_family() -> None:
+    """The grade runner (#242) shares this path but not this version constant."""
+    path = experiment_path("pokemon-condition-v0.2.0", harness="grade-evaluation-v0.1.0")
+
+    assert path == EXPERIMENTS_DIR / "pokemon-condition-v0.2.0+grade-evaluation-v0.1.0.json"

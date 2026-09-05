@@ -46,7 +46,13 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 from tcg_domain.analysis import ImageSide
 from tcg_domain.annotation import CornerRegion, EdgeRegion
-from tcg_domain.condition import BoundingBox, RegionFinding, SurfaceAssessment, card_frame_of
+from tcg_domain.condition import (
+    BoundingBox,
+    ConditionAssessment,
+    RegionFinding,
+    SurfaceAssessment,
+    card_frame_of,
+)
 from tcg_domain.confidence import InsufficientInformation, Uncertain
 from tcg_ml_centering import DEFAULT_CENTERING_THRESHOLDS, SideCentering, centering_of, measure
 from tcg_ml_condition import CONDITION_VERSION, compose
@@ -56,6 +62,7 @@ from tcg_ml_edges import DEFAULT_EDGE_THRESHOLDS
 from tcg_ml_edges import classify as classify_edges
 from tcg_ml_evaluation import (
     EVALUATION_VERSION,
+    EvaluationCorpus,
     ImagePredictions,
     PredictedCentering,
     evaluate,
@@ -74,9 +81,14 @@ from tcg_api.logging import configure_logging
 from tcg_api.storage import create_object_storage
 
 __all__ = [
+    "ANALYZER_THRESHOLDS",
     "EXPERIMENTS_DIR",
+    "AnalyzedVersion",
     "AnalyzerOutputs",
+    "analyze_version",
+    "compose_pair",
     "experiment_path",
+    "git_commit",
     "main",
     "pair_copies",
     "predict_or_exclude",
@@ -95,8 +107,9 @@ EXPERIMENTS_DIR: Final = Path(__file__).resolve().parents[5] / "ml" / "evaluatio
 #: The four analyzers' default thresholds, merged — the same record
 #: `tcg_api.analysis.condition` stores beside every worker document, restated
 #: here because importing that module would pull §19's gate into a pass that
-#: deliberately does not gate (`normalization.py`'s reasoning).
-_THRESHOLDS_RECORD: Final[dict[str, float]] = {
+#: deliberately does not gate (`normalization.py`'s reasoning). The grade
+#: runner (#242) records it too: its predictions are reached through these.
+ANALYZER_THRESHOLDS: Final[dict[str, float]] = {
     **DEFAULT_CENTERING_THRESHOLDS.as_record(),
     **DEFAULT_CORNER_THRESHOLDS.as_record(),
     **DEFAULT_EDGE_THRESHOLDS.as_record(),
@@ -127,9 +140,15 @@ def pair_copies(
     ]
 
 
-def experiment_path(version: str, directory: Path = EXPERIMENTS_DIR) -> Path:
-    """`{dataset version}+{harness version}.json` — both inputs in the name."""
-    return directory / f"{version}+{EVALUATION_VERSION}.json"
+def experiment_path(
+    version: str, directory: Path = EXPERIMENTS_DIR, *, harness: str = EVALUATION_VERSION
+) -> Path:
+    """`{dataset version}+{harness version}.json` — both inputs in the name.
+
+    `harness` is the record family: this harness's `EVALUATION_VERSION` by
+    default, `GRADE_EVALUATION_VERSION` for the grade runner (#242).
+    """
+    return directory / f"{version}+{harness}.json"
 
 
 def render_experiment(report: Mapping[str, object], *, commit: str) -> str:
@@ -145,7 +164,7 @@ def render_experiment(report: Mapping[str, object], *, commit: str) -> str:
     payload = {
         **report,
         "condition_version": CONDITION_VERSION,
-        "analyzer_thresholds": _THRESHOLDS_RECORD,
+        "analyzer_thresholds": ANALYZER_THRESHOLDS,
         "git_commit": commit,
     }
     return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
@@ -159,10 +178,16 @@ def write_experiment(text: str, path: Path) -> Path:
     return path
 
 
-async def score_version(
+async def analyze_version(
     engine: AsyncEngine, storage: ObjectStorage, *, version: str
-) -> dict[str, object]:
-    """Render the manifest, run the analyzers, and score the outputs."""
+) -> AnalyzedVersion:
+    """Render the manifest and run the four analyzers over every member.
+
+    The pass both runners share: the condition benchmark scores these outputs
+    per image, the grade benchmark (#242) composes them per copy and predicts.
+    `sides` carries **every** row, excluded or not, so a caller can name the
+    copy an exclusion belongs to.
+    """
     async with engine.connect() as connection:
         manifest = await read_manifest(connection, version=version)
         rows = (
@@ -190,9 +215,10 @@ async def score_version(
 
     predictions: dict[uuid.UUID, ImagePredictions] = {}
     excluded: dict[uuid.UUID, str] = {}
-    ran: dict[uuid.UUID, tuple[str, uuid.UUID | None]] = {}
+    sides: dict[uuid.UUID, tuple[str, uuid.UUID | None]] = {}
     outputs: dict[uuid.UUID, AnalyzerOutputs] = {}
     for row in rows:
+        sides[row.id] = (row.side, row.physical_copy_id)
         if row.normalized_uri is None:
             excluded[row.id] = "no_normalized_artifact"
             continue
@@ -215,21 +241,36 @@ async def score_version(
         raw, scored = answered
         predictions[row.id] = scored
         outputs[row.id] = raw
-        ran[row.id] = (row.side, row.physical_copy_id)
 
-    composed = []
-    for front_id, back_id in pair_copies(ran):
-        front, back = outputs[front_id], outputs[back_id]
-        composed.append(
-            compose(
-                centering=centering_of(front.centering, back.centering),
-                corners={ImageSide.FRONT: front.corners, ImageSide.BACK: back.corners},
-                edges={ImageSide.FRONT: front.edges, ImageSide.BACK: back.edges},
-                surface={ImageSide.FRONT: front.surface, ImageSide.BACK: back.surface},
-            )
-        )
+    return AnalyzedVersion(corpus, sides, outputs, predictions, excluded)
 
-    return evaluate(corpus, predictions=predictions, composed=composed, excluded=excluded)
+
+async def score_version(
+    engine: AsyncEngine, storage: ObjectStorage, *, version: str
+) -> dict[str, object]:
+    """Render the manifest, run the analyzers, and score the outputs."""
+    analyzed = await analyze_version(engine, storage, version=version)
+    ran = {image_id: analyzed.sides[image_id] for image_id in analyzed.outputs}
+    composed = [
+        compose_pair(analyzed.outputs[front_id], analyzed.outputs[back_id])
+        for front_id, back_id in pair_copies(ran)
+    ]
+    return evaluate(
+        analyzed.corpus,
+        predictions=analyzed.predictions,
+        composed=composed,
+        excluded=analyzed.excluded,
+    )
+
+
+def compose_pair(front: AnalyzerOutputs, back: AnalyzerOutputs) -> Uncertain[ConditionAssessment]:
+    """Replay the public `compose` over one copy's two sides."""
+    return compose(
+        centering=centering_of(front.centering, back.centering),
+        corners={ImageSide.FRONT: front.corners, ImageSide.BACK: back.corners},
+        edges={ImageSide.FRONT: front.edges, ImageSide.BACK: back.edges},
+        surface={ImageSide.FRONT: front.surface, ImageSide.BACK: back.surface},
+    )
 
 
 class AnalyzerOutputs(NamedTuple):
@@ -244,6 +285,17 @@ class AnalyzerOutputs(NamedTuple):
     corners: Uncertain[Mapping[CornerRegion, RegionFinding]]
     edges: Uncertain[Mapping[EdgeRegion, RegionFinding]]
     surface: Uncertain[SurfaceAssessment]
+
+
+class AnalyzedVersion(NamedTuple):
+    """One dataset version after the analyzer pass, before either scorer."""
+
+    corpus: EvaluationCorpus
+    #: ``{training_image_id: (side, physical_copy_id)}`` for every member row.
+    sides: dict[uuid.UUID, tuple[str, uuid.UUID | None]]
+    outputs: dict[uuid.UUID, AnalyzerOutputs]
+    predictions: dict[uuid.UUID, ImagePredictions]
+    excluded: dict[uuid.UUID, str]
 
 
 def predict_or_exclude(
@@ -294,7 +346,7 @@ def _predict(
     return AnalyzerOutputs(centering, corners, edges, surface), scored
 
 
-def _git_commit(fallback: str | None) -> str:
+def git_commit(fallback: str | None) -> str:
     """The commit the run scored — `git rev-parse`, or `--commit` where there
     is no checkout (the worker container)."""
     git = shutil.which("git")
@@ -327,7 +379,7 @@ async def run(*, version: str, output: Path | None, commit: str | None) -> Path:
     finally:
         await engine.dispose()
 
-    text = render_experiment(report, commit=_git_commit(commit))
+    text = render_experiment(report, commit=git_commit(commit))
     path = write_experiment(text, output or experiment_path(version))
     logger.info("experiment record written to %s", path)
     return path

@@ -101,9 +101,9 @@ worker = [
     "tcg-ml-condition",
     "tcg-ml-corners",
     "tcg-ml-edges",
-    # The one member that brings no OpenCV itself: it rides in the worker
-    # extra because `tcg_api.datasets.evaluation` (a worker-image command)
-    # is its importer, and the API image has no caller for it.
+    # Brings no OpenCV itself: it rides in the worker extra because its
+    # importers — `tcg_api.datasets.evaluation` and `grade_evaluation`, both
+    # worker-image commands — do, and the API image has no caller for it.
     "tcg-ml-evaluation",
     # The three per-company grade predictors (#227) — no OpenCV either; the
     # worker builds the predicting adapters from them (ADR 0011 decision 5).
@@ -163,6 +163,11 @@ tcg-record-grading-outcome = "tcg_api.datasets.outcomes:main"
 # the experiment record into ml/evaluation/experiments/. Worker image only:
 # it runs the analyzers, which bring OpenCV.
 tcg-evaluate-condition = "tcg_api.datasets.evaluation:main"
+# Scores the three per-company grade predictors against a dataset version
+# (#242, ADR 0011's third closing condition) and writes the experiment record
+# into ml/evaluation/experiments/. Worker image only, for the same reason: a
+# `ConditionAssessment` is reached by running the analyzers.
+tcg-evaluate-grading = "tcg_api.datasets.grade_evaluation:main"
 # Fingerprints every training image that has none and reports the near-duplicate
 # groups spec §32's splitter must not break apart. Exact duplicates are already
 # unrepresentable (uq_training_images_sha256), so this is only the near half.

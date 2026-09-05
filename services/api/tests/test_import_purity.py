@@ -319,6 +319,32 @@ def test_the_evaluation_runner_is_the_module_that_binds_the_benchmark() -> None:
     } <= set(stages), stages
 
 
+def test_the_grade_runner_binds_the_analyzers_and_all_three_predictors() -> None:
+    """Guard the guard for #242's runner, on the condition runner's terms.
+
+    `tcg_api.datasets.grade_evaluation` reaches a `ConditionAssessment` the
+    way the condition runner does — the four analyzers, so OpenCV — and then
+    hands it to the three predictors, so all three `tcg_ml_grading_*` packages
+    must actually load or the worker-image CI assertion about them would be
+    asserting an installation this command never exercises.
+    """
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.grade_evaluation")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.grade_evaluation")
+
+    assert "cv2" in cv
+    assert {
+        "tcg_ml_centering",
+        "tcg_ml_condition",
+        "tcg_ml_corners",
+        "tcg_ml_edges",
+        "tcg_ml_evaluation",
+        "tcg_ml_grading_bgs",
+        "tcg_ml_grading_psa",
+        "tcg_ml_grading_tag",
+        "tcg_ml_surface",
+    } <= set(stages), stages
+
+
 def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
     """#159's read layer serves stored columns and a stored object, and nothing else.
 

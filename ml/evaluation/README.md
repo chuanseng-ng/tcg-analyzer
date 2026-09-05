@@ -28,7 +28,10 @@ this package to stdlib + `tcg-domain`). `evaluate` scores the analyzers'
 outputs, which the caller produces: `tcg-evaluate-condition` in
 `services/api` is the worker-image command that resolves bytes and card
 frames, runs the four analyzers and the public `compose`, and writes one
-report per run into `experiments/`.
+report per run into `experiments/`. `evaluate_grades` scores the three
+predictors' distributions the same way: `tcg-evaluate-grading` runs the same
+pass, predicts per physical copy, fills each subject's issued grades from its
+manifest member, and writes the grade family's record (#242).
 
 ## Scoring rules
 

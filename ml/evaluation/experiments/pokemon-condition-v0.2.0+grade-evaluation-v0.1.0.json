@@ -1,0 +1,300 @@
+{
+  "analyzer_thresholds": {
+    "centering_approx_epsilon": 0.02,
+    "centering_max_aspect": 0.9,
+    "centering_max_border_fraction": 0.15,
+    "centering_max_frame_area_fraction": 0.95,
+    "centering_min_aspect": 0.5,
+    "centering_min_axis_border_px": 2.0,
+    "centering_min_frame_area_fraction": 0.55,
+    "centering_min_rectangularity": 0.85,
+    "corners_clean_max_area_mm2": 0.25,
+    "corners_corner_radius_px": 30.0,
+    "corners_corner_size_px": 84.0,
+    "corners_edge_band_px": 12.0,
+    "corners_edge_inset_px": 2.0,
+    "corners_max_white_saturation": 60.0,
+    "corners_min_white_value": 190.0,
+    "corners_moderate_min_area_mm2": 1.5,
+    "corners_severe_min_area_mm2": 4.0,
+    "corners_white_border_fraction": 0.5,
+    "edges_clean_max_area_mm2": 0.5,
+    "edges_corner_exclusion_px": 84.0,
+    "edges_edge_band_px": 12.0,
+    "edges_edge_inset_px": 2.0,
+    "edges_max_white_saturation": 60.0,
+    "edges_min_white_value": 190.0,
+    "edges_moderate_min_area_mm2": 4.0,
+    "edges_severe_min_area_mm2": 10.0,
+    "edges_white_border_fraction": 0.5,
+    "surface_border_exclusion_px": 26.0,
+    "surface_context_busy_fraction": 0.25,
+    "surface_context_margin_px": 12.0,
+    "surface_face_busy_fraction": 0.35,
+    "surface_laplacian_threshold": 24.0,
+    "surface_max_white_saturation": 60.0,
+    "surface_min_defect_area_mm2": 1.0,
+    "surface_min_white_value": 190.0,
+    "surface_moderate_min_area_mm2": 10.0,
+    "surface_severe_min_area_mm2": 25.0,
+    "surface_stain_max_value": 60.0
+  },
+  "condition_version": "condition-compose-v0.1.0+centering-opencv-v0.1.0+corners-opencv-v0.1.0+edges-opencv-v0.1.0+surface-opencv-v0.1.0",
+  "dataset_version": "pokemon-condition-v0.2.0",
+  "git_commit": "124fbab47819c870b565a57c95a585f7f6e29e6a",
+  "grade_evaluation_version": "grade-evaluation-v0.1.0",
+  "grading_version": "grading-bgs-heuristic-v0.1.0+grading-psa-heuristic-v0.1.0+grading-tag-heuristic-v0.1.0",
+  "predictor_thresholds": {
+    "grading_bgs_base_sigma": 0.6,
+    "grading_bgs_centering_full_penalty": 12.0,
+    "grading_bgs_centering_tolerance_offset": 0.4,
+    "grading_bgs_confidence_ceiling": 0.35,
+    "grading_bgs_minor_penalty": 0.75,
+    "grading_bgs_moderate_penalty": 1.75,
+    "grading_bgs_severe_penalty": 3.0,
+    "grading_bgs_unmeasured_sigma": 3.0,
+    "grading_bgs_unmeasured_subgrade": 7.0,
+    "grading_psa_base_sigma_steps": 1.2,
+    "grading_psa_centering_full_penalty_offset": 0.4,
+    "grading_psa_centering_weight_steps": 3.0,
+    "grading_psa_confidence_ceiling": 0.35,
+    "grading_psa_corners_saturation_damage": 6.0,
+    "grading_psa_corners_weight_steps": 5.0,
+    "grading_psa_edges_saturation_damage": 6.0,
+    "grading_psa_edges_weight_steps": 3.0,
+    "grading_psa_front_centering_share": 0.75,
+    "grading_psa_minor_damage": 0.5,
+    "grading_psa_moderate_damage": 1.5,
+    "grading_psa_severe_damage": 3.0,
+    "grading_psa_surface_saturation_damage": 6.0,
+    "grading_psa_surface_weight_steps": 4.0,
+    "grading_psa_unmeasured_centre_ratio": 0.5,
+    "grading_psa_unmeasured_sigma_steps": 4.0,
+    "grading_tag_band_curvature": 1.25,
+    "grading_tag_base_sigma_score": 30.0,
+    "grading_tag_centering_full_deduction": 700.0,
+    "grading_tag_centering_tolerance_offset": 0.4,
+    "grading_tag_centering_weight": 1.0,
+    "grading_tag_confidence_ceiling": 0.35,
+    "grading_tag_corners_weight": 1.0,
+    "grading_tag_edges_weight": 1.0,
+    "grading_tag_minor_deduction": 40.0,
+    "grading_tag_moderate_deduction": 110.0,
+    "grading_tag_severe_deduction": 220.0,
+    "grading_tag_surface_weight": 1.0,
+    "grading_tag_unmeasured_score": 620.0,
+    "grading_tag_unmeasured_sigma_score": 200.0
+  },
+  "split_seed": 1,
+  "splits": {
+    "test": {
+      "bgs": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-bgs-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "psa": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-psa-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "tag": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-tag-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      }
+    },
+    "train": {
+      "bgs": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-bgs-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 10,
+        "unscorable": {
+          "no_issued_grade": 10
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "psa": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-psa-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 10,
+        "unscorable": {
+          "no_issued_grade": 10
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "tag": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-tag-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 10,
+        "unscorable": {
+          "no_issued_grade": 10
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      }
+    },
+    "validation": {
+      "bgs": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-bgs-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "psa": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-psa-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      },
+      "tag": {
+        "abstained": {},
+        "confusion": {},
+        "exact_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        },
+        "excluded": {},
+        "model_versions": [
+          "grading-tag-heuristic-v0.1.0"
+        ],
+        "probability_quality": {
+          "insufficient_information": "no_events"
+        },
+        "scored": 0,
+        "subjects": 2,
+        "unscorable": {
+          "no_issued_grade": 2
+        },
+        "within_one_accuracy": {
+          "insufficient_information": "no_scored_predictions"
+        }
+      }
+    }
+  },
+  "thresholds": {
+    "calibration_bins": 10,
+    "wilson_z": 1.959963984540054,
+    "within_one_target": 0.8
+  }
+}

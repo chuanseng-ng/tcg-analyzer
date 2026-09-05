@@ -70,7 +70,7 @@ from tcg_ml_grading_tag import predict as predict_tag
 
 from tcg_api.analysis.sessions import read_condition, record_grade_predictions
 
-__all__ = ["GRADING_VERSION", "PREDICTING_ADAPTERS", "predict_grades"]
+__all__ = ["GRADING_VERSION", "PREDICTING_ADAPTERS", "PREDICTOR_THRESHOLDS", "predict_grades"]
 
 logger = structlog.get_logger(__name__)
 
@@ -93,8 +93,9 @@ PREDICTING_ADAPTERS: Final[Mapping[str, GradingCompanyAdapter]] = MappingProxyTy
 
 #: The three predictors' thresholds, merged into the one record stored beside
 #: every document — `condition.py`'s pattern; each ``as_record()`` prefixes
-#: its keys with its package name, so the merge cannot collide.
-_THRESHOLDS_RECORD: Final[dict[str, float]] = {
+#: its keys with its package name, so the merge cannot collide. The grade
+#: benchmark's runner (#242) records the same merge on its envelope.
+PREDICTOR_THRESHOLDS: Final[dict[str, float]] = {
     **DEFAULT_PSA_GRADING_THRESHOLDS.as_record(),
     **DEFAULT_TAG_GRADING_THRESHOLDS.as_record(),
     **DEFAULT_BGS_GRADING_THRESHOLDS.as_record(),
@@ -204,7 +205,7 @@ async def _record(
     )
     document: dict[str, object] = {
         "version": GRADING_VERSION,
-        "thresholds": _THRESHOLDS_RECORD,
+        "thresholds": PREDICTOR_THRESHOLDS,
         "predictions": {slug: _entry(answer) for slug, answer in answers.items()},
     }
     await record_grade_predictions(db, analysis_id, details=document)
