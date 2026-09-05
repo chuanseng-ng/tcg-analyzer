@@ -25,8 +25,8 @@ export const metadata: Metadata = {
  * This is the step after the confirmation gate: spec §5 puts the economics
  * behind a confirmed card, and `POST /analyses/{id}/economic-configuration`
  * accepts them only while the analysis is `analyzing`, which is the state
- * confirming the card reaches. What comes after is the results screen, which
- * arrives with M9.
+ * confirming the card reaches — and recording them is what completes the
+ * analysis (#244), so the recorded view leads on to `/results`.
  */
 export default function ConfigurePage() {
   return (

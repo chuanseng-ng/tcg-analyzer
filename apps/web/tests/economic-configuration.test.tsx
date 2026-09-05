@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EconomicConfiguration } from "@/app/configure/EconomicConfiguration";
@@ -17,6 +17,11 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   getGradingCompanies: vi.fn(),
   configureEconomics: vi.fn(),
+}));
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
 }));
 
 const { getGradingCompanies, configureEconomics } = await import("@/lib/api");
@@ -99,6 +104,7 @@ beforeEach(() => {
   getGradingCompaniesMock.mockResolvedValue(companies());
   configureEconomicsMock.mockReset();
   configureEconomicsMock.mockResolvedValue(stored());
+  push.mockReset();
 });
 
 describe("what you paid", () => {
@@ -339,6 +345,48 @@ describe("once the figures are recorded", () => {
 
     await screen.findByRole("heading", { name: "These are the figures the analysis will use." });
     expect(screen.queryByRole("button", { name: /Use these figures/ })).not.toBeInTheDocument();
+  });
+
+  it("leads on to the results, and goes there on its own after a pause", async () => {
+    // Recording the configuration is what completes the analysis (#244), so the
+    // results exist from this moment; the link is live throughout for anyone
+    // who would rather not wait, and the pause is long enough to read the
+    // figures back.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await form();
+      fireEvent.click(submitButton());
+      await screen.findByRole("heading", { name: "These are the figures the analysis will use." });
+
+      expect(screen.getByRole("link", { name: "See the results" })).toHaveAttribute(
+        "href",
+        "/results",
+      );
+      expect(screen.queryByText(/still being built/)).not.toBeInTheDocument();
+      expect(push).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(push).toHaveBeenCalledWith("/results");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not navigate a screen the user has already left", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await form();
+      fireEvent.click(submitButton());
+      await screen.findByRole("heading", { name: "These are the figures the analysis will use." });
+
+      cleanup();
+      await vi.advanceTimersByTimeAsync(4_000);
+
+      expect(push).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

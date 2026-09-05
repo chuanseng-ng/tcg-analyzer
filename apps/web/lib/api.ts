@@ -91,6 +91,29 @@ export type EconomicConfigurationRequest = components["schemas"]["EconomicConfig
 export type EconomicConfigurationResponse = components["schemas"]["EconomicConfigurationResponse"];
 
 /**
+ * `GET /analyses/{id}/results` — what the analysis has arrived at (spec §41, §44, §49).
+ *
+ * `companies` is `[]` and `recommendation` is `null` until a configuration and a
+ * stored prediction exist, and that `null` is deliberately not
+ * `insufficient_information` (#65): the first means nobody has asked, the second
+ * that the engine was asked and declined. `refused` and `companies` together are
+ * every configured company (#238).
+ */
+export type ResultsResponse = components["schemas"]["ResultsResponse"];
+
+/** Spec §44's answer, once something has been asked. */
+export type RecommendationResponse = components["schemas"]["RecommendationResponse"];
+
+/** `code`/`figure`/`value`/`threshold` and no sentence (#64) — the copy is this app's. */
+export type ReasonResponse = components["schemas"]["ReasonResponse"];
+
+/** Every M5 figure for one company, each present-and-null beside its own reason. */
+export type CompanyEconomicsResponse = components["schemas"]["CompanyEconomicsResponse"];
+
+/** The snapshot the figures were priced against — what ADR 0006 requires the UI to date-stamp. */
+export type MarketSnapshotReference = components["schemas"]["MarketSnapshotReference"];
+
+/**
  * Which view of the card an upload is.
  *
  * Taken from the operation rather than restated, so a side the server starts or
@@ -254,6 +277,21 @@ function isEconomicConfigurationResponse(
     typeof payload.optimization_mode === "string" &&
     typeof payload.currency === "string" &&
     Array.isArray(payload.grading_companies)
+  );
+}
+
+function isResultsResponse(payload: unknown): payload is ResultsResponse {
+  if (!isRecord(payload) || !isRecord(payload.refused)) {
+    return false;
+  }
+  // `recommendation`, `condition`, `market_snapshot` and `economic_configuration`
+  // are nullable rather than optional, so none of them narrows this: `null` in
+  // each is the "nothing asked yet" result #65 makes a 200, not a bad payload.
+  return (
+    typeof payload.analysis_id === "string" &&
+    typeof payload.status === "string" &&
+    typeof payload.currency === "string" &&
+    Array.isArray(payload.companies)
   );
 }
 
@@ -601,6 +639,31 @@ export async function readAnalysis(
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     isPayload: isAnalysisResponse,
     payloadName: "analysis",
+  });
+}
+
+/**
+ * `GET /analyses/{id}/results` — the economics and the recommendation, composed
+ * from what the analysis recorded (spec §41, §44, §49).
+ *
+ * Answers 200 in every state, with `[]` and `null` where nothing has been asked
+ * yet; a client that wants a finished answer waits for `completed` on
+ * {@link readAnalysis} first (#244) and reads once. Not rate-limited, and the
+ * same bare 404 as every other analysis route. `no-store` server-side, because
+ * every confidence in the body is discounted for the prices' age at the moment
+ * of asking.
+ */
+export async function readResults(
+  analysisId: string,
+  signal?: AbortSignal,
+): Promise<ResultsResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/results`,
+    credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isResultsResponse,
+    payloadName: "results",
   });
 }
 

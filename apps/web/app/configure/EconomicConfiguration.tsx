@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -70,6 +71,15 @@ const MODES = [
 ] as const;
 
 const DEFAULT_MODE = MODES[0].mode;
+
+/**
+ * How long the recorded figures stay on screen before the results.
+ *
+ * `/identify`'s pause, for the same reason: long enough to read the figures
+ * back — this is the only place the standard costs are ever seen — rather than
+ * a flash on the way past. The link below is live the whole time.
+ */
+const ADVANCE_AFTER_MS = 4_000;
 
 /**
  * Five of spec §46's six line items. The sixth, the selling fee, is asked for
@@ -666,12 +676,20 @@ function Recorded({
   readonly companies: readonly GradingCompanyResponse[];
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const router = useRouter();
 
   // The form unmounts with the submit button, so without this a keyboard user
   // is dropped back at the top of the document with nothing announced.
   useEffect(() => {
     heading.current?.focus();
   }, []);
+
+  // Recording the configuration completed the analysis (#244), so the results
+  // exist from this moment: the next step is real, and the screen goes there.
+  useEffect(() => {
+    const timer = setTimeout(() => router.push("/results"), ADVANCE_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [router]);
 
   const displayName = (slug: string) =>
     companies.find((company) => company.company === slug)?.display_name ?? slug;
@@ -737,12 +755,20 @@ function Recorded({
       </section>
 
       <p className={styles.body}>
-        Nothing has been worked out yet. Reading this card&apos;s condition, the likely grades from
-        each company and what the two answers come to are still being built.
+        Everything the results need is now recorded. Next is the recommendation, and what grading
+        this card is expected to come to with each company.
       </p>
       <p className={styles.footnote}>
         These figures cannot be changed — photographing the card again is what starts over.
       </p>
+
+      <div className={styles.actions}>
+        <Link className={styles.submit} href="/results">
+          See the results
+        </Link>
+      </div>
+
+      <p className={styles.footnote}>Taking you there in a moment.</p>
     </div>
   );
 }

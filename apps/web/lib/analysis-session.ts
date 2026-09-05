@@ -2,7 +2,7 @@
  * Which analysis this browser tab is working on.
  *
  * The identifier has to survive `/analyze → /cards → /cards/[cardId] →
- * /identify`, and `sessionStorage` is the whole mechanism: carrying it as a
+ * /identify → /configure → /results`, and `sessionStorage` is the whole mechanism: carrying it as a
  * query parameter would mean re-emitting it from the search form, the pager,
  * every result row and the detail page's link, and it would buy nothing. An
  * analysis id is worthless without the HTTP-only `tcg_session` cookie that
