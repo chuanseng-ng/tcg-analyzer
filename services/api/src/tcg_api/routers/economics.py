@@ -42,9 +42,11 @@ cut; the engine does the rest. `companies` is `[]` and `recommendation` is
 that `null` still means nobody has asked — a third thing from §44's
 `insufficient_information`, which is the engine having been asked and declined.
 A company whose model refused cannot be a `companies` entry, because it has no
-distribution to carry; it rides on the comparison's `unranked` with its stored
-reason instead. The alternative to the empty answer was a 409 until `completed`;
-an empty result that names the analysis's own status tells a client more.
+distribution to carry; it is in `refused` with its stored reason, and in the
+comparison's `unranked` beside the engine's own admissions whenever there is a
+comparison to carry it (#238). The alternative to the empty answer was a 409
+until `completed`; an empty result that names the analysis's own status tells a
+client more.
 """
 
 from __future__ import annotations
@@ -720,9 +722,22 @@ class ResultsResponse(BaseModel):
             "the analysis has an economic configuration and the worker has stored "
             "its grade predictions** — and empty rather than absent so a client "
             "parses the same shape either way. A company whose model refused is not "
-            "here: it has no distribution to carry, and appears in "
-            "`recommendation.comparison.unranked` with its reason."
+            "here: it has no distribution to carry, and is in `refused` with its reason."
         ),
+    )
+    refused: dict[str, str] = Field(
+        description=(
+            "Every configured company whose grade prediction refused, keyed by slug, "
+            "each with the reason the worker stored — `condition_step_not_run`, or a "
+            "model's own refusal. **With `companies`, this is every configured "
+            "company.** Empty until the analysis has an economic configuration and "
+            "stored predictions, and empty when every model predicted. A refused "
+            "company also appears in `recommendation.comparison.unranked` whenever "
+            "some other company could be ranked; when none could, `comparison` is "
+            "`null` with `no_company_can_be_ranked` and this is where each reason "
+            "lives."
+        ),
+        examples=[{"bgs": "condition_step_not_run"}],
     )
     recommendation: RecommendationResponse | None = Field(
         description=(
@@ -1071,9 +1086,8 @@ def _with_refusals(
     §43's rule, one layer up: an undefined figure is unranked with its reason,
     never sorted last and never dropped. Nothing is recomputed — the order and
     the winner are the engine's. When nothing at all could be ranked the
-    comparison is the engine's admission and stays so; the per-company reasons
-    have no field to travel in then, which is a contract gap, not one to patch
-    here.
+    comparison is the engine's admission and stays so; `ResultsResponse.refused`
+    is what carries the per-company reasons then (#238).
     """
     comparison = recommendation.comparison
     if not refusals or not isinstance(comparison, CompanyComparison):
@@ -1297,7 +1311,9 @@ async def _load_predictions(
         "analysis is fine — it simply has not got there. Prices come from the "
         "snapshot the analysis recorded, never a provider; with no snapshot every "
         "figure is present-and-null beside the engine's own reason. A company whose "
-        "model refused appears in the comparison's `unranked` with its reason.\n\n"
+        "model refused is in `refused` with its stored reason, keyed by slug — and in "
+        "the comparison's `unranked` too, whenever another company could be "
+        "ranked.\n\n"
         "`Cache-Control: no-store`: every figure here descends from prices whose "
         "confidence is discounted for age at the moment of asking."
     ),
@@ -1379,6 +1395,7 @@ async def read_results(
     )
 
     outlooks: tuple[CompanyOutlook, ...] = ()
+    refusals: dict[str, InsufficientInformation] = {}
     recommendation: Recommendation | None = None
     if configuration is not None and predicted is not None:
         outlooks, refusals = predicted
@@ -1410,6 +1427,7 @@ async def read_results(
             market_snapshot_id=None if snapshot is None else str(snapshot.id),
         )
 
+    refused = {company: admission.reason for company, admission in refusals.items()}
     response.headers["Cache-Control"] = _CACHE_CONTROL
     return ResultsResponse(
         analysis_id=record.id,
@@ -1429,5 +1447,6 @@ async def read_results(
             )
         ),
         companies=[_company_economics(outlook) for outlook in outlooks],
+        refused=refused,
         recommendation=None if recommendation is None else _recommendation(recommendation),
     )

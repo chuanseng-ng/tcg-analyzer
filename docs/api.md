@@ -173,10 +173,13 @@ not been asked. A deployment that has never ingested (ADR 0006) still answers
 200: every priced figure is present-and-null beside the engine's own reason,
 and the recommendation is `insufficient_information` with
 `comparison_reason: no_company_can_be_ranked`. A company whose model refused has
-no distribution to carry and is not a `companies` entry; it appears in
-`recommendation.comparison.unranked` with its stored reason — except when every
-configured company refused, where the engine's `no_company_can_be_ranked` is the
-whole answer and the per-company reasons are not on the wire.
+no distribution to carry and is not a `companies` entry; it is in `refused`,
+keyed by slug with the reason the worker stored (#238), so `companies` and
+`refused` together are every configured company. Whenever some other company
+could be ranked it also appears in `recommendation.comparison.unranked` beside
+the engine's own admissions; when every configured company refused there is no
+comparison to carry it, `comparison` is `null` with `no_company_can_be_ranked`,
+and `refused` is where each reason lives.
 
 With the V1 heuristic predictors every recommendation is
 `insufficient_information` on `grade_confidence_below_threshold`: ADR 0011's
