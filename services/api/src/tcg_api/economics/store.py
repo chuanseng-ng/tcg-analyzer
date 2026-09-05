@@ -14,6 +14,17 @@ a race between them, and two submissions arriving together is exactly the race a
 mobile client's double-tap produces. `rowcount == 1` means "this caller is the
 one that set it".
 
+**Recording a configuration is what completes the analysis** (#244, spec §65).
+After #228 nothing asynchronous remains between a configuration and its results
+— the predictions were stored at the worker's claim and the results are composed
+on read — so the configuration is the last input the results need, and the same
+transaction that links it moves the analysis `analyzing → calculating →
+completed` through `tcg_api.analysis.state.transition`, twice. `calculating` is
+passed through and never held, exactly as `queued` is a transport word no row
+ever carries; §65 lists nine states and the chain is the contract, so there is no
+`analyzing → completed` edge to take instead. `completed` means "every input the
+results need is recorded", not "a results row exists".
+
 **This is not `record_reproducibility`, deliberately.** That function runs
 inside the worker's claim and writes the versions in force *when the analysis
 ran*; a configuration is user input that does not exist at claim time, so a
@@ -49,6 +60,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
+from tcg_domain.analysis import AnalysisStatus
 from tcg_domain.confidence import Confidence
 from tcg_domain.money import Currency, Money
 from tcg_economic_engine import (
@@ -58,6 +70,7 @@ from tcg_economic_engine import (
     SellingFee,
 )
 
+from tcg_api.analysis.state import transition
 from tcg_api.analysis.tables import analyses
 from tcg_api.database import execute as _execute
 from tcg_api.economics.tables import economic_configurations
@@ -189,23 +202,31 @@ async def create_configuration(
     companies: Sequence[str],
     optimization_mode: str,
 ) -> EconomicConfiguration | None:
-    """Store a configuration and attach it to `analysis_id`.
+    """Store a configuration, attach it to `analysis_id`, and complete the analysis.
 
-    Returns the stored configuration, or `None` if the analysis already has one —
-    which the caller answers with a 409, because a configuration is immutable and
-    re-running with different costs is a new analysis.
+    Returns the stored configuration, or `None` if nothing was recorded: the
+    analysis already has one — which the caller answers with a 409, because a
+    configuration is immutable and re-running with different costs is a new
+    analysis — or it is not `analyzing`, so the link won and the move could not.
+    The caller's state check makes the second case a race rather than a path,
+    and the rollback answers both the same way.
 
     The INSERT comes first: the foreign key is checked when the analysis row is
     updated, so the configuration has to exist by then. A caller that gets `None`
     back must roll the transaction back, which drops the row the link never
     reached; this function does not commit, so that is one statement in the
-    caller rather than a compensating delete here.
+    caller rather than a compensating delete here. The two transitions ride in
+    the same transaction, so an analysis is never `completed` without its
+    configuration and never linked without being `completed`.
 
     Thresholds are written from :data:`DEFAULT_THRESHOLDS` and are deliberately
     not a parameter — see the module docstring.
 
     Raises:
-        EconomicConfigurationUnavailable: If the store could not be reached.
+        EconomicConfigurationUnavailable: If the configuration store could not
+            be reached.
+        AnalysisStoreUnavailable: If the analysis row could not be moved —
+            `transition` speaks for the analysis store, not this one.
     """
     identifier = uuid4()
     currency = costs.grading_fee.currency
@@ -247,7 +268,16 @@ async def create_configuration(
     # produces a `CursorResult`, which is the only kind that counts rows. The
     # cast target is unquoted deliberately, for `analysis/state.py`'s reason.
     result = cast(sa.CursorResult[Any], await execute(db, link))
-    return stored if result.rowcount == 1 else None
+    if result.rowcount != 1:
+        return None
+
+    # Two moves, not one: `TRANSITIONS` is a linear chain and `transition`
+    # enforces the legal predecessor. Either refusing means the analysis was not
+    # `analyzing`, and the caller's rollback drops the row and the link together.
+    completed = await transition(
+        db, analysis_id, to=AnalysisStatus.CALCULATING
+    ) and await transition(db, analysis_id, to=AnalysisStatus.COMPLETED)
+    return stored if completed else None
 
 
 async def read_configuration(

@@ -761,10 +761,39 @@ def test_a_configuration_without_predictions_answers_as_before(client: TestClien
 
     body = client.get(f"/analyses/{analysis_id}/results").json()
 
-    assert body["status"] == "analyzing"
+    assert body["status"] == "completed"
     assert body["companies"] == []
     assert body["refused"] == {}
     assert body["recommendation"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_results_answer_the_same_on_completed_and_on_analyzing(client: TestClient) -> None:
+    """#244 drew the line: a configuration completes the analysis. The route
+    composes from stored pieces and does not care which side of it it reads
+    from, so the same inputs answer the same body either way."""
+    bodies: list[dict[str, Any]] = []
+    for rewound in (False, True):
+        analysis_id = analyzing(client)
+        configured(client, analysis_id, "bgs", "psa")
+        predicted(analysis_id, bgs=BGS_ENTRY, psa=STORED_PSA_ENTRY, tag=REFUSED)
+        photographed(analysis_id, score=0.9)
+        if rewound:
+            # `status` and `completed_at` are outside the immutability trigger.
+            executing(
+                "UPDATE analyses SET status = 'analyzing', completed_at = NULL WHERE id = :id",
+                id=uuid.UUID(analysis_id),
+            )
+        bodies.append(client.get(f"/analyses/{analysis_id}/results").json())
+
+    assert [body.pop("status") for body in bodies] == ["completed", "analyzing"]
+    for body in bodies:
+        body.pop("analysis_id")
+        body["economic_configuration"].pop("id")
+        body["economic_configuration"].pop("created_at")
+    assert bodies[0] == bodies[1]
+    assert bodies[0]["recommendation"] is not None
 
 
 @pytest.mark.integration

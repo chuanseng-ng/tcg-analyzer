@@ -32,10 +32,11 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from tcg_api.app import create_app
 from tcg_api.config import get_settings
-from tcg_api.database import get_engine, get_session_factory
+from tcg_api.database import create_session_factory, get_engine, get_session_factory
+from tcg_api.economics.store import EconomicConfiguration, create_configuration
 from tcg_api.storage import get_object_storage
 from tcg_economic_engine import DEFAULT_THRESHOLDS, CostConfiguration
 
@@ -498,3 +499,135 @@ def test_every_supported_grading_company_is_accepted(client: TestClient) -> None
 
     assert response.status_code == 201
     assert response.json()["grading_companies"] == sorted(ADAPTERS)
+
+
+# ---------------------------------------------------------------------------
+# Completing the analysis — #244, spec §65
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_recording_a_configuration_completes_the_analysis(client: TestClient) -> None:
+    """Spec §65's last state is written here: the configuration is the last input
+    the results need, and #228 composes them on read. `calculating` is passed
+    through inside the one transaction — no row is ever observed in it."""
+    analysis_id = configurable(client)
+
+    stored = client.post(f"/analyses/{analysis_id}/economic-configuration", json=FULL).json()
+
+    polled = client.get(f"/analyses/{analysis_id}").json()
+    assert polled["status"] == "completed"
+    assert polled["completed_at"] is not None
+    assert polled["reproducibility"]["economic_configuration_id"] == stored["id"]
+    assert (
+        querying("SELECT status FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id))
+        == "completed"
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_second_configuration_finds_the_analysis_completed(client: TestClient) -> None:
+    """Still a 409 — the state guard now says which state it found."""
+    analysis_id = configurable(client)
+    client.post(f"/analyses/{analysis_id}/economic-configuration", json=FULL)
+
+    second = client.post(f"/analyses/{analysis_id}/economic-configuration", json=MINIMAL)
+
+    assert second.status_code == 409
+    assert "completed" in second.json()["detail"]
+
+
+async def _create(db: AsyncSession, analysis_id: str) -> EconomicConfiguration | None:
+    """`create_configuration` on the route's terms: commit a win, roll back a refusal."""
+    stored = await create_configuration(
+        db,
+        uuid.UUID(analysis_id),
+        costs=CostConfiguration(),
+        acquisition_cost=None,
+        companies=("psa",),
+        optimization_mode="roi",
+    )
+    if stored is None:
+        await db.rollback()
+    else:
+        await db.commit()
+    return stored
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_failed_transition_rolls_the_configuration_back(client: TestClient) -> None:
+    """The link can win where the move cannot; then nothing is recorded.
+
+    Unreachable over HTTP — the route's state guard answers first — so the
+    function is called straight, on an analysis that has no configuration and
+    is not `analyzing`.
+    """
+    analysis_id = client.post("/analyses").json()["id"]
+    executing(
+        "UPDATE analyses SET status = 'awaiting_confirmation' WHERE id = :id",
+        id=uuid.UUID(analysis_id),
+    )
+    before = querying("SELECT count(*) FROM economic_configurations")
+
+    async def scenario() -> EconomicConfiguration | None:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with create_session_factory(engine)() as db:
+                return await _create(db, analysis_id)
+        finally:
+            await engine.dispose()
+
+    assert run(scenario) is None
+    assert querying("SELECT count(*) FROM economic_configurations") == before
+    assert (
+        querying("SELECT status FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id))
+        == "awaiting_confirmation"
+    )
+    assert (
+        querying(
+            "SELECT economic_configuration_id FROM analyses WHERE id = :id",
+            id=uuid.UUID(analysis_id),
+        )
+        is None
+    )
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_two_concurrent_configurations_produce_one_winner(client: TestClient) -> None:
+    """A mobile double-tap: both requests read `analyzing`, and the conditional
+    `UPDATE` settles it rather than the state read before it. The loser's row is
+    dropped by its own rollback, and the winner's is what completed the analysis."""
+    analysis_id = configurable(client)
+    before = querying("SELECT count(*) FROM economic_configurations")
+
+    async def both() -> list[EconomicConfiguration | None]:
+        engine = create_async_engine(DATABASE_URL or "")
+        factory = create_session_factory(engine)
+        try:
+
+            async def attempt() -> EconomicConfiguration | None:
+                async with factory() as db:
+                    return await _create(db, analysis_id)
+
+            return list(await asyncio.gather(attempt(), attempt()))
+        finally:
+            await engine.dispose()
+
+    winners = [stored for stored in run(both) if stored is not None]
+
+    assert len(winners) == 1
+    assert querying("SELECT count(*) FROM economic_configurations") == before + 1
+    assert (
+        querying("SELECT status FROM analyses WHERE id = :id", id=uuid.UUID(analysis_id))
+        == "completed"
+    )
+    assert str(
+        querying(
+            "SELECT economic_configuration_id FROM analyses WHERE id = :id",
+            id=uuid.UUID(analysis_id),
+        )
+    ) == str(winners[0].id)
