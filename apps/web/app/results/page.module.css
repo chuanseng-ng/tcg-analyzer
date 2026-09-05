@@ -247,6 +247,27 @@
   white-space: nowrap;
 }
 
+/* ------------------------------------------------------------- comparison */
+
+/*
+ * The companies side by side (#248): the ranked ones as an ordered list, the
+ * unranked apart as an unordered one, both laid out as the `.facts` grid is —
+ * three cards across a desktop, one column at 375px. No colour by value.
+ */
+.modeHeading {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.ranking {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 /* ---------------------------------------------------------------- actions */
 
 .actions {
