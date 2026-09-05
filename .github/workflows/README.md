@@ -5,7 +5,7 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 
 | Workflow | Runs on | Checks |
 | --- | --- | --- |
-| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO; API image build; secret scan; dependency review |
+| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; API image build; secret scan; dependency review |
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
@@ -20,14 +20,18 @@ Dependency updates are configured in [`../dependabot.yml`](../dependabot.yml).
 ## Notes
 
 **`/health` and `/readiness` are checked separately** because they answer
-different questions — see `services/api`. The migrations job is the only one
-with a database and the storage job the only one with MinIO, so the Python job
-deselects both `-m integration` and `-m object_storage`.
+different questions — see `services/api`. The migrations job has a database and
+no MinIO, the storage job has both, and the Python job deselects `-m integration`
+and `-m object_storage` alike.
 
 **The storage job runs the local Compose file** rather than a service container,
 because MinIO needs a `server /data` command and a service container cannot
 supply one. It also means `infrastructure/local/docker-compose.yml` is exercised
-on every PR instead of only when someone clones the repository.
+on every PR instead of only when someone clones the repository. Since #250 it
+brings up Compose's PostgreSQL beside MinIO, because
+`services/api/tests/test_anonymous_journey.py` uploads real photographs and runs
+the real worker against them — the one module that needs both, and it carries
+both markers and both skips so the migrations job passes over it.
 
 **The secret scan reads full history**, not the diff. A credential removed from
 the working tree is still leaked, and this repository is public.
