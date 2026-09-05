@@ -336,18 +336,3 @@
   font-weight: var(--weight-medium);
   cursor: pointer;
 }
-
-/* ------------------------------------------------------------ placeholders */
-
-/* Room held for #247, #248 and #249: a heading and one sentence, so the order
-   spec §49 fixes is visible before the pieces arrive. */
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-md);
-  color: var(--color-muted);
-  font-size: var(--text-sm);
-}

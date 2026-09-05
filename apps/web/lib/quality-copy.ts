@@ -55,6 +55,9 @@ const SIDE_COPY: Readonly<Record<UploadSide, string>> = {
   surface_back: "back surface",
 };
 
+/** Every side the wire can name, in the vocabulary's order — front first. */
+export const SIDES: readonly UploadSide[] = Object.keys(SIDE_COPY) as UploadSide[];
+
 export function nameOf(side: UploadSide): string {
   return SIDE_COPY[side] ?? side;
 }

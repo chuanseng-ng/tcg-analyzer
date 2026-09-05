@@ -30,6 +30,8 @@ import {
 import { classifyResultsFailure, type ResultsFailure } from "@/lib/results-errors";
 
 import { CompanyComparison } from "./CompanyComparison";
+import { ConditionAssessment } from "./ConditionAssessment";
+import { Fact } from "./Fact";
 import { GradeDistribution } from "./GradeDistribution";
 import styles from "./page.module.css";
 
@@ -52,7 +54,7 @@ type State =
     };
 
 /**
- * The results screen — spec §49's first two priorities, issue #246.
+ * The results screen — spec §49, issue #246 and the three that filled it in.
  *
  * **The analysis is read first, and the results once.** `GET /analyses/{id}` is
  * the endpoint §65 says a client polls, and `completed` — which the
@@ -264,11 +266,11 @@ function Unavailable({
 
 /**
  * Spec §49's order: the recommendation, then the expected economic outcome, then
- * each company's grade distribution (#247), then the comparison (#248), then room
- * held for the condition (#249). The market snapshot sits under the figures it
- * priced, so no figure is ever shown without its date (ADR 0006). A refused
- * company has no distribution to chart and is named, with its reason, among the
- * figures above and again apart from the ranked companies below.
+ * each company's grade distribution (#247), then the comparison (#248), then the
+ * condition the predictors read (#249). The market snapshot sits under the
+ * figures it priced, so no figure is ever shown without its date (ADR 0006). A
+ * refused company has no distribution to chart and is named, with its reason,
+ * among the figures above and again apart from the ranked companies below.
  */
 function Ready({
   results,
@@ -369,9 +371,13 @@ function Ready({
           />
         </section>
       )}
-      <Placeholder heading="Condition">
-        What was read off the card&apos;s centering, corners, edges and surface arrives with #249.
-      </Placeholder>
+      {/* Spec §49's fourth priority (#249): what the predictors above read. */}
+      <section className={styles.section} aria-labelledby="condition">
+        <h2 className={styles.sectionHeading} id="condition">
+          Condition
+        </h2>
+        <ConditionAssessment condition={results.condition} />
+      </section>
     </div>
   );
 }
@@ -578,25 +584,6 @@ function Unpriced({
   );
 }
 
-function Fact({
-  term,
-  value,
-  supplied = true,
-}: {
-  readonly term: string;
-  readonly value: string;
-  readonly supplied?: boolean;
-}) {
-  return (
-    <div className={styles.fact}>
-      <dt className={styles.term}>{term}</dt>
-      <dd className={styles.value} data-supplied={supplied}>
-        {value}
-      </dd>
-    </div>
-  );
-}
-
 /** A figure, or the reason there is none. An unknown reason is still named. */
 function Figure({
   term,
@@ -639,22 +626,5 @@ function MarketStamp({ snapshot }: { readonly snapshot: MarketSnapshotReference 
       Prices are from the market snapshot of {snapshot.data_version}, taken{" "}
       <time dateTime={snapshot.generated_at}>{taken}</time>.
     </p>
-  );
-}
-
-function Placeholder({
-  heading,
-  children,
-}: {
-  readonly heading: string;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <section className={styles.placeholder} aria-labelledby={`placeholder-${heading}`}>
-      <h2 className={styles.sectionHeading} id={`placeholder-${heading}`}>
-        {heading}
-      </h2>
-      <p>{children}</p>
-    </section>
   );
 }

@@ -38,11 +38,12 @@ export function actionHeadline(action: string): string {
 }
 
 /**
- * Every reason code the results can carry, from three writers: the engine's
- * gates (#64), the engine's figure admissions (#59–#62, on the wire as each
- * company's `*_reason`), and the worker's refusals (#187, #227, in `refused`).
- * One table, because the codes are disjoint and a screen reads them the same
- * way — beside the thing they explain.
+ * Every reason the results can carry, from four writers: the engine's gates
+ * (#64), the engine's figure admissions (#59–#62, on the wire as each
+ * company's `*_reason`), the worker's refusals (#187, #227, in `refused`), and
+ * the condition step's, on every axis it declined (#245, in `condition`). One
+ * table, because the codes are disjoint and a screen reads them the same way
+ * — beside the thing they explain.
  */
 const REASON_COPY: Readonly<Record<string, string>> = {
   // §44's gates, in the order the engine checks them.
@@ -76,6 +77,38 @@ const REASON_COPY: Readonly<Record<string, string>> = {
     "The front photograph could not be measured, so the card's condition could not be read.",
   no_card_frame_for_back:
     "The back photograph could not be measured, so the card's condition could not be read.",
+  // The condition step's own refusals (#249). Three are codes; the rest are
+  // the analyzers' stored reasons, which are sentences, keyed exactly as
+  // stored — M7 made those strings vocabulary, and the fallback below still
+  // names one this table has not met.
+  no_reason_given: "No reason was given.",
+  no_axis_measured: "Nothing on the card could be measured from these photographs.",
+  manufacturing_classes_not_assessed:
+    "The classes a manufacturing defect would come from were not looked for.",
+  eye_appeal_not_measured_in_v1: "Eye appeal is not measured yet.",
+  "the artifact could not be decoded": "The photograph could not be decoded.",
+  "the card frame names a region too small to classify":
+    "The card is too small in the photograph to classify.",
+  "the card frame names a region too small to measure":
+    "The card is too small in the photograph to measure.",
+  "no printed border frame was found — a full-art, borderless or unrecognised template is not measured against a frame it does not have":
+    "No printed border was found, so a full-art, borderless or unrecognised design is not measured against a border it does not have.",
+  "the frame touches the card edge on this axis, so there is no border to ratio":
+    "The border meets the card's edge on this axis, so there is no ratio to measure.",
+  "the frame found implies an implausibly thick border, so it is an artwork window rather than the card's border":
+    "What looked like the border is too thick to be one, so it was read as an artwork window and not measured.",
+  "below the sampling limit of the 12 px/mm artifact (ADR 0010)":
+    "Too fine for the photograph to resolve.",
+  "a depth signal one normalized view does not carry":
+    "Depth cannot be read from one flat photograph.",
+  "no reference image to compare against (ADR 0004)":
+    "There is no reference image of this card to compare its colours against.",
+  "no print template to measure registration against":
+    "No print template exists to check the registration against.",
+  "a manufacturing judgement this baseline cannot make":
+    "Whether a flaw came from the factory is a judgement this analysis cannot make.",
+  "the face's own texture is indistinguishable from defect texture in this signal":
+    "The card's own foil or artwork cannot be told from wear in this photograph.",
 };
 
 export function reasonCopy(code: string): string {

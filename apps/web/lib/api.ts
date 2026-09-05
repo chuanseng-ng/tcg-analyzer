@@ -122,6 +122,14 @@ export type RankedCompanyResponse = components["schemas"]["RankedCompanyResponse
 /** A company with no place in the order, wearing its reason. Unranked, not last. */
 export type UnrankedCompanyResponse = components["schemas"]["UnrankedCompanyResponse"];
 
+/** Spec §6's condition block (#245): labels and severities only, every refusal one typed shape. */
+export type ConditionResponse = components["schemas"]["ConditionResponse"];
+export type ConditionRefusalResponse = components["schemas"]["ConditionRefusalResponse"];
+export type CenteringResponse = components["schemas"]["CenteringResponse"];
+export type RegionFindingResponse = components["schemas"]["RegionFindingResponse"];
+export type SurfaceResponse = components["schemas"]["SurfaceResponse"];
+export type DefectResponse = components["schemas"]["DefectResponse"];
+
 /** The snapshot the figures were priced against — what ADR 0006 requires the UI to date-stamp. */
 export type MarketSnapshotReference = components["schemas"]["MarketSnapshotReference"];
 
