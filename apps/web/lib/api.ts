@@ -663,8 +663,9 @@ export async function getGradingCompanies(signal?: AbortSignal): Promise<Grading
  * `acquisition_cost` — or sending `null` — is how "I don't know what I paid" is
  * said. `"0.00"` is a real acquisition cost and reaches a different answer.
  *
- * Written once, while the analysis is `analyzing`: a second call is a 409, and
- * so is one made in any other state. Rate-limited, sharing one bucket with the
+ * Written once, while the analysis is `analyzing`, and recording it is what
+ * completes the analysis: a second call finds `completed` and is a 409, and so
+ * is one made in any other state. Rate-limited, sharing one bucket with the
  * other analysis writes (ADR 0005).
  */
 export async function configureEconomics(

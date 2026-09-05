@@ -515,12 +515,13 @@ def test_running_a_malformed_identifier_is_a_validation_error(client: TestClient
 def test_a_run_reaches_the_confirmation_gate_and_stops(
     client: TestClient, enqueued: list[uuid.UUID]
 ) -> None:
-    """Where an analysis rests, and deliberately not `completed`.
+    """Where a run rests, and deliberately not `completed`.
 
     Spec §20 forbids acting on an identification the user has not confirmed, and
-    nothing in this milestone produces a candidate — so the honest end of this
-    pipeline is the gate. Advancing further would report a finished analysis
-    whose every result column is NULL.
+    nothing in this milestone produces a candidate — so the honest end of the
+    worker's pipeline is the gate. Advancing further here would report a finished
+    analysis whose economics nobody configured; `completed` is written by
+    `POST /analyses/{id}/economic-configuration` (#244), not by the worker.
     """
     created = client.post("/analyses").json()
     uploaded(created["id"])
@@ -872,12 +873,18 @@ def test_a_confirmed_analysis_reports_its_card_when_polled(client: TestClient) -
 
 @pytest.mark.integration
 @requires_postgres
-@pytest.mark.parametrize("state", ["created", "uploading", "uploaded", "analyzing"])
+@pytest.mark.parametrize("state", ["created", "uploading", "uploaded", "analyzing", "completed"])
 def test_only_an_analysis_waiting_for_a_card_takes_one(client: TestClient, state: str) -> None:
-    """Spec §20 makes confirmation a step, not something available at any moment."""
+    """Spec §20 makes confirmation a step, not something available at any moment.
+
+    `completed` is what the economic configuration leaves behind (#244), and
+    `awaiting_confirmation` is the only state a confirmation may be recorded
+    from — so a finished analysis refuses one with no new code.
+    """
     created = client.post("/analyses").json()
     executing(
-        "UPDATE analyses SET status = :state WHERE id = :id",
+        "UPDATE analyses SET status = :state, completed_at = "
+        "CASE WHEN :state IN ('completed', 'failed') THEN now() END WHERE id = :id",
         state=state,
         id=uuid.UUID(created["id"]),
     )

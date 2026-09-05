@@ -134,7 +134,15 @@ A configuration is accepted **only while the analysis is `analyzing`** — spec
 §5's position for this step, which `confirm-card` is what reaches — and **exactly
 once**. A second submission is a 409, and the arbiter is a conditional `UPDATE`
 rather than the state read before it, so two concurrent submissions cannot both
-win. Spec §44's five recommendation thresholds are **stored and reported but
+win. **Recording a configuration completes the analysis**: the same transaction
+moves it `analyzing → calculating → completed` and sets `completed_at`, so the
+201 and `completed` are one fact. `calculating` is passed through and never
+held — like `queued`, a word no row is ever observed in — and `completed` means
+every input the results need is recorded, not that a results row exists; the
+predictions were stored at the worker's claim and the results are composed on
+read. Nothing writes `completed` but this route: a run rests at
+`awaiting_confirmation`, `confirm-card` writes `analyzing`, and the second
+submission that finds `completed` is the same 409. Spec §44's five recommendation thresholds are **stored and reported but
 never accepted**: no client gets to gate its own recommendation. A malformed
 request — a negative amount, a selling-fee rate outside `[0, 1]`, an unknown
 company, an unknown mode — is FastAPI's own 422, validated by the economic engine
@@ -159,6 +167,16 @@ the frontend's to write from those four fields. The response echoes the analysis
 own spec §57 record, including the market snapshot it was computed against, which
 is what ADR 0006 requires the UI to date-stamp. `Cache-Control: no-store`, for
 the same reason `GET /cards/{id}/market` is.
+
+The route answers on `completed` exactly as it does on `analyzing`: it
+composes from the stored pieces and does not care which side of that line it
+reads from. Spec §57's record is complete once the analysis is: `analysis_id`
+from `POST /analyses`; `application_version`, `model_bundle_version`,
+`card_database_version`, `grading_rules_version` and `market_snapshot_id` at
+the worker's claim; `economic_configuration_id` from the configuration route;
+and the input image hashes from each upload. `market_snapshot_id` is null until
+market ingestion first generates a snapshot (#54) — the record says null rather
+than inventing a cut.
 
 **`companies` and `recommendation` fill in from what the worker stored** (#228).
 Once an analysis has an economic configuration and the worker has recorded its

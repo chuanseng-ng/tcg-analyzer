@@ -134,7 +134,8 @@ _CATALOG_UNREACHABLE: Final = "The card catalog could not be reached."
 #: The one state a configuration may be recorded from. Spec §5's journey puts
 #: *Economic Configuration* immediately after *User Confirmation*, and §65 gives
 #: that step of the pipeline a state: `POST /analyses/{id}/confirm-card` is what
-#: puts an analysis here.
+#: puts an analysis here, and recording the configuration is what takes it out
+#: — to `completed` (#244).
 _CONFIGURABLE: Final = AnalysisStatus.ANALYZING
 
 _ALREADY_CONFIGURED: Final = (
@@ -1146,10 +1147,16 @@ async def _owned_analysis(db: AsyncSession, request: Request, analysis_id: UUID)
         "say, and the investment figures are then reported as `null` with "
         '`acquisition_cost_not_supplied`. `"0.00"` is a real acquisition cost. '
         "Nothing infers one.\n\n"
-        "**A configuration is written once.** Spec §5 puts this step immediately "
-        "after card confirmation, so an analysis takes one while it is `analyzing`; "
-        "a second submission is a 409, and pricing the card differently is a new "
-        "analysis rather than an edit."
+        "**A configuration is written once, and it completes the analysis.** Spec "
+        "§5 puts this step immediately after card confirmation, so an analysis "
+        "takes one while it is `analyzing`; recording it moves the analysis "
+        "`analyzing → calculating → completed` in the same transaction and sets "
+        "`completed_at` — `calculating` is passed through, never held, and no row "
+        "is ever observed in it. `completed` means every input the results need "
+        "is recorded: `GET /analyses/{id}/results` composes them from what is "
+        "stored, on `completed` exactly as it did on `analyzing`. A second "
+        "submission finds `completed` and is a 409; pricing the card differently "
+        "is a new analysis rather than an edit."
     ),
     responses={
         status.HTTP_404_NOT_FOUND: {
@@ -1194,7 +1201,7 @@ async def configure_economics(
         Path(description="The identifier `POST /analyses` answered with."),
     ],
 ) -> EconomicConfigurationResponse:
-    """Store the configuration and attach it to the analysis.
+    """Store the configuration, attach it to the analysis, and complete it.
 
     Ownership comes from `read_analysis`, so an unknown identifier, another
     session's analysis, a missing cookie and an expired one are the one 404 the
@@ -1204,7 +1211,9 @@ async def configure_economics(
     second submission, not the state read above: two requests arriving together
     both see `analyzing` and only one sets the column. The loser's row is dropped
     by the rollback, which is why the failure path rolls back rather than
-    deleting anything.
+    deleting anything. The two state moves that complete the analysis are inside
+    the same call and the same transaction (#244), so the 201 and `completed`
+    are one fact.
     """
     record = await _owned_analysis(db, request, analysis_id)
 
@@ -1237,12 +1246,19 @@ async def configure_economics(
         raise _unreachable(
             "economic_configuration_store_unreachable", _CONFIGURATION_UNREACHABLE
         ) from error
+    except AnalysisStoreUnavailable as error:
+        # `transition` speaks for the analysis store; the configuration INSERT
+        # had already succeeded, and the session's rollback on the way out is
+        # what drops it.
+        logger.warning("economics.analysis_not_completed", exc_info=True)
+        raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
 
-    # Internal identifiers and the mode only. What a user paid for their card is
-    # theirs, and a log is not the place for it.
+    # Internal identifiers, the mode and the state only. What a user paid for
+    # their card is theirs, and a log is not the place for it.
     logger.info(
         "economics.configuration_recorded",
         analysis_id=str(record.id),
+        status=str(AnalysisStatus.COMPLETED),
         economic_configuration_id=str(stored.id),
         optimization_mode=stored.optimization_mode,
         grading_companies=list(stored.companies),

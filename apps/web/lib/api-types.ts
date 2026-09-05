@@ -85,7 +85,7 @@ export interface paths {
          *
          *     **Absent is not zero.** Omitting `acquisition_cost` means the user did not say, and the investment figures are then reported as `null` with `acquisition_cost_not_supplied`. `"0.00"` is a real acquisition cost. Nothing infers one.
          *
-         *     **A configuration is written once.** Spec §5 puts this step immediately after card confirmation, so an analysis takes one while it is `analyzing`; a second submission is a 409, and pricing the card differently is a new analysis rather than an edit.
+         *     **A configuration is written once, and it completes the analysis.** Spec §5 puts this step immediately after card confirmation, so an analysis takes one while it is `analyzing`; recording it moves the analysis `analyzing → calculating → completed` in the same transaction and sets `completed_at` — `calculating` is passed through, never held, and no row is ever observed in it. `completed` means every input the results need is recorded: `GET /analyses/{id}/results` composes them from what is stored, on `completed` exactly as it did on `analyzing`. A second submission finds `completed` and is a 409; pricing the card differently is a new analysis rather than an edit.
          */
         post: operations["configure_economics_analyses__analysis_id__economic_configuration_post"];
         delete?: never;
@@ -452,7 +452,7 @@ export interface components {
             reproducibility: components["schemas"]["ReproducibilityResponse"];
             /**
              * Status
-             * @description One of spec §65's nine states. `created` until an upload moves it. `queued` is a transport word `POST /analyses/{id}/run` answers with and is never held here.
+             * @description One of spec §65's nine states. `created` until an upload moves it; `completed` once `POST /analyses/{id}/economic-configuration` has recorded the economics. `queued` is a transport word `POST /analyses/{id}/run` answers with and is never held here, and `calculating` is passed through inside the configuration's transaction and never observed.
              * @example created
              */
             status: string;
@@ -2157,7 +2157,7 @@ export interface components {
             card_database_version: string | null;
             /**
              * Economic Configuration Id
-             * @description The fee and cost configuration used. Always null in V1: the economic engine arrives with its own milestone.
+             * @description Spec §57's `economic_configuration`: the immutable configuration `POST /analyses/{id}/economic-configuration` attached, resolved in full by `GET /analyses/{id}/results`. Null until one is recorded — and recording one is what completes the analysis.
              */
             economic_configuration_id: string | null;
             /**
@@ -2174,7 +2174,7 @@ export interface components {
             };
             /**
              * Market Snapshot Id
-             * @description The pre-ingested market snapshot the economics were computed against. Always null in V1: market data arrives with its own milestone.
+             * @description The pre-ingested market snapshot the economics were computed against, captured when the run claimed the analysis like the rest of this record. Null until market ingestion first generates a snapshot (M4's #54) — nothing in production has yet, and the record says null rather than inventing a cut. Null also for any analysis that ran before the first snapshot existed.
              */
             market_snapshot_id: string | null;
             /**
