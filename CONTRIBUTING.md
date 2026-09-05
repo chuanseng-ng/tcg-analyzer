@@ -158,6 +158,7 @@ Write the test with the change, in the same PR.
 uv run pytest                     # everything runnable without Docker
 uv run pytest -m integration      # requires PostgreSQL
 uv run pytest -m object_storage   # requires MinIO
+uv run pytest -m "integration and object_storage"   # requires both: the anonymous journey
 pnpm --filter @tcg/web test
 ```
 
