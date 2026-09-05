@@ -195,6 +195,12 @@ FORBIDDEN_SUFFIXES: frozenset[str] = frozenset(
     }
 )
 
+#: The one place an image suffix is tracked on purpose: the browser journey's
+#: fixture photographs, rendered by `services/api/tests/test_anonymous_journey.py`'s
+#: generators. They are photographs of nothing — no card, no provenance, no
+#: training value — and `.gitignore` re-includes exactly this directory.
+SYNTHETIC_FIXTURES = "apps/web/e2e/fixtures/"
+
 
 def _tracked_files() -> list[str]:
     """Every path in git's index, as repository-relative POSIX strings.
@@ -235,6 +241,7 @@ def test_no_model_weights_or_images_are_tracked() -> None:
         path
         for path in _tracked_files()
         if PurePosixPath(path).suffix.lower() in FORBIDDEN_SUFFIXES
+        and not path.startswith(SYNTHETIC_FIXTURES)
     ]
     assert offenders == []
 

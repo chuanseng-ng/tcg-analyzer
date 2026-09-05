@@ -12,3 +12,8 @@ pnpm-lock.yaml
 # it would make the generator's output and the committed file differ, and the
 # drift check compares them byte for byte.
 lib/api-types.ts
+
+# Playwright writes here on every run; the traces and the last-run record are
+# not source.
+test-results
+playwright-report
