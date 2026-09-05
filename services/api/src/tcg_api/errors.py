@@ -28,6 +28,13 @@ or a malformed query string is a transport-level failure with no §66 meaning,
 and forcing one into `internal_error` would be a lie in the one field callers
 are meant to trust. Endpoints that need those cases to speak the taxonomy raise
 `ApiError` themselves.
+
+**Where the catch-all sits.** It is middleware, not an exception handler.
+Starlette runs an `Exception` handler in `ServerErrorMiddleware`, the outermost
+layer, so its response never passes back through `CORSMiddleware` and a browser
+cannot read it — `apps/web` would see a network failure, not a 500. Added before
+CORS, the middleware sits inside it and the envelope is as CORS-visible as every
+other status.
 """
 
 from __future__ import annotations
@@ -39,6 +46,7 @@ import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 __all__ = [
     "ApiError",
@@ -142,8 +150,56 @@ class ApiError(Exception):
         return JSONResponse(status_code=self.status_code, content=body.model_dump(mode="json"))
 
 
+class _UnexpectedErrorMiddleware:
+    """The catch-all: nothing may reach a client unshaped.
+
+    An exception nobody anticipated is exactly the case where FastAPI would
+    otherwise answer with its own untyped body. This is middleware rather than
+    `@app.exception_handler(Exception)` because Starlette runs that handler in
+    its outermost layer, outside CORS (see the module docstring). It re-raises
+    after answering, exactly as `ServerErrorMiddleware` does, so the server still
+    logs the failure and `TestClient` still raises it by default.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def _send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, _send)
+        except Exception as exc:
+            # `exc_info` puts the traceback, the exception type and the message
+            # in the log — which is precisely why none of them go in the body. A
+            # client learns that the request failed; an operator learns why.
+            logger.error("api.unhandled_exception", path=scope["path"], exc_info=exc)
+            if not response_started:
+                response = ApiError(
+                    ErrorCode.INTERNAL_ERROR, GENERIC_INTERNAL_MESSAGE
+                ).as_response()
+                await response(scope, receive, send)
+            raise
+
+
 def install_error_handlers(app: FastAPI) -> None:
-    """Register the taxonomy's handlers on `app`."""
+    """Register the taxonomy's handlers on `app`.
+
+    Call this **before** `app.add_middleware(CORSMiddleware, ...)`: Starlette's
+    `add_middleware` inserts at the front of the stack, so the last middleware
+    added is the outermost, and the catch-all must be inside CORS to be readable
+    by a browser (#260).
+    """
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -155,16 +211,4 @@ def install_error_handlers(app: FastAPI) -> None:
         )
         return exc.as_response()
 
-    # Catching bare `Exception` is the point of this one: nothing may reach a
-    # client unshaped, and an exception nobody anticipated is exactly the case
-    # where FastAPI would otherwise answer with its own untyped body.
-    @app.exception_handler(Exception)
-    async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
-        # `exc_info` puts the traceback, the exception type and the message in
-        # the log — which is precisely why none of them go in the body. A client
-        # learns that the request failed; an operator learns why.
-        logger.error("api.unhandled_exception", path=request.url.path, exc_info=exc)
-        return ApiError(
-            ErrorCode.INTERNAL_ERROR,
-            GENERIC_INTERNAL_MESSAGE,
-        ).as_response()
+    app.add_middleware(_UnexpectedErrorMiddleware)

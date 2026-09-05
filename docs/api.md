@@ -237,7 +237,10 @@ uploads), `TCG_API_RATE_LIMIT_REQUESTS` per
 `TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
 runs on so the limit holds across replicas. A throttled request is a 429
 carrying `Retry-After`, deliberately outside the spec §66 error envelope —
-see [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). Polling
+see [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). A 500
+`internal_error` — the catch-all's answer to an exception nobody anticipated —
+carries CORS headers like every other status, so a browser reads it as a failure
+it can classify rather than as a network outage. Polling
 `GET /analyses/{id}` is not limited, and neither are the catalog reads. With
 `TCG_API_REDIS_URL` unset, or Redis unreachable, the limiter lets requests
 through rather than refusing them. The OpenAPI schema is at `/openapi.json`

@@ -100,6 +100,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Before CORS on purpose. `add_middleware` inserts at the front of the
+    # stack, so the last one added is the outermost; the catch-all has to sit
+    # *inside* `CORSMiddleware` or a 500 leaves without
+    # `Access-Control-Allow-Origin` and the browser reads it as a network
+    # failure rather than an error it can classify (#260).
+    install_error_handlers(app)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -115,8 +122,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # limit. Found in a browser; curl reads every header regardless.
         expose_headers=["Retry-After"],
     )
-
-    install_error_handlers(app)
 
     app.include_router(health.router, responses=ERROR_RESPONSES)
     app.include_router(readiness.router, responses=ERROR_RESPONSES)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tcg_api.app import create_app
 from tcg_api.config import Settings
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse, install_error_handlers
 from tcg_api.logging import configure_logging
@@ -184,3 +185,29 @@ def test_an_unhandled_exception_is_logged_with_its_traceback(
     assert "LookupError" in logged
     assert SECRET in logged
     assert "Traceback" in logged
+
+
+def test_an_unhandled_exception_is_readable_cross_origin() -> None:
+    """Starlette runs an `Exception` handler in its outermost layer, outside CORS.
+
+    A 500 produced there carries no `Access-Control-Allow-Origin`, so a
+    cross-origin `fetch` in `apps/web` *rejects* instead of resolving, and every
+    classifier reads the rejection as "the service could not be reached". The
+    catch-all therefore has to sit inside `CORSMiddleware` — which, because
+    `add_middleware` inserts at the front, means being added *before* it. Asserted
+    on the real application so the order in `create_app` is what is pinned.
+    """
+    app = create_app()
+
+    @app.get("/raises-anything")
+    def raises_anything() -> None:
+        raise LookupError(f"the secret is {SECRET}")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/raises-anything", headers={"Origin": "http://localhost:3000"})
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "internal_error"
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    for leak in ("LookupError", SECRET, "Traceback"):
+        assert leak not in response.text, f"the response body leaked {leak!r}"
