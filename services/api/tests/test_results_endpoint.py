@@ -574,6 +574,7 @@ def test_results_are_empty_rather_than_absent_before_anything_is_computed(
     assert body["analysis_id"] == analysis_id
     assert body["status"] == "created"
     assert body["companies"] == []
+    assert body["refused"] == {}
     assert body["recommendation"] is None
     assert body["economic_configuration"] is None
     assert body["market_snapshot"] is None
@@ -702,7 +703,39 @@ def test_a_refused_company_is_not_a_companies_entry(client: TestClient) -> None:
     body = client.get(f"/analyses/{analysis_id}/results").json()
 
     assert [company["company"] for company in body["companies"]] == ["psa"]
+    assert body["refused"] == {"bgs": "condition_step_not_run"}
     assert body["recommendation"] is not None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_every_configured_company_refused_still_answers_each_reason(
+    client: TestClient,
+) -> None:
+    """#238: with nothing to rank there is no comparison to carry a refusal.
+
+    The engine's `no_company_can_be_ranked` is still its answer, and `refused`
+    on the body is where each company's stored reason travels instead.
+    """
+    analysis_id = analyzing(client)
+    configured(client, analysis_id, "psa", "bgs")
+    predicted(analysis_id, psa=REFUSED, bgs=REFUSED, tag=REFUSED)
+    photographed(analysis_id, score=0.9)
+
+    response = client.get(f"/analyses/{analysis_id}/results")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["companies"] == []
+    assert body["refused"] == {
+        "psa": "condition_step_not_run",
+        "bgs": "condition_step_not_run",
+    }
+    recommendation = body["recommendation"]
+    assert recommendation["recommended_action"] == "insufficient_information"
+    assert recommendation["recommended_company"] is None
+    assert recommendation["comparison"] is None
+    assert recommendation["comparison_reason"] == "no_company_can_be_ranked"
 
 
 @pytest.mark.integration
@@ -730,6 +763,7 @@ def test_a_configuration_without_predictions_answers_as_before(client: TestClien
 
     assert body["status"] == "analyzing"
     assert body["companies"] == []
+    assert body["refused"] == {}
     assert body["recommendation"] is None
 
 
@@ -868,6 +902,8 @@ def test_a_priced_card_is_valued_from_its_own_snapshot(
     comparison = body["recommendation"]["comparison"]
     assert comparison["ranked"][0]["company"] == "psa"
     assert [entry["company"] for entry in comparison["unranked"]] == ["bgs"]
+    # BGS is the engine's own unranked, not a refusal: `refused` says nothing of it.
+    assert body["refused"] == {}
 
 
 @pytest.mark.integration
@@ -946,5 +982,6 @@ def test_a_malformed_analysis_id_is_a_422(client: TestClient) -> None:
 def test_the_results_model_keeps_the_two_figures_apart_at_the_top_level() -> None:
     """A client parsing the envelope alone can already tell them apart."""
     assert "companies" in ResultsResponse.model_fields
+    assert "refused" in ResultsResponse.model_fields
     assert "recommendation" in ResultsResponse.model_fields
     assert "expected_profit" not in ResultsResponse.model_fields
