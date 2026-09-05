@@ -160,6 +160,7 @@ uv run pytest -m integration      # requires PostgreSQL
 uv run pytest -m object_storage   # requires MinIO
 uv run pytest -m "integration and object_storage"   # requires both: the anonymous journey
 pnpm --filter @tcg/web test
+pnpm --filter @tcg/web e2e        # requires the Compose stack, seeded: the browser journey
 ```
 
 ## Architectural decisions

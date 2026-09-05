@@ -19,6 +19,21 @@ pnpm --filter @tcg/web test
 pnpm --filter @tcg/web build
 ```
 
+The browser journey (`apps/web/e2e/`) runs against the whole Compose stack
+rather than `pnpm dev`, because it needs the real worker behind the API:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait
+docker compose -f infrastructure/local/docker-compose.yml exec -T api tcg-seed-catalog
+docker compose -f infrastructure/local/docker-compose.yml exec -T api tcg-seed-grading-rules
+pnpm --filter @tcg/web exec playwright install chromium   # once
+pnpm --filter @tcg/web e2e
+```
+
+It is the same journey `services/api/tests/test_anonymous_journey.py` drives
+through the endpoints, walked through the screens at a 375 px viewport; a
+failed test leaves a trace under `apps/web/test-results/`.
+
 The app reads `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`),
 validated by `lib/env.ts`. Next reads env files from the app directory, so for
 `pnpm dev` copy `apps/web/.env.example` to `apps/web/.env.local`; the root

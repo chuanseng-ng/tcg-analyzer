@@ -18,6 +18,7 @@ pnpm --filter @tcg/web build
 pnpm --filter @tcg/web start
 pnpm --filter @tcg/web lint
 pnpm --filter @tcg/web test       # vitest run
+pnpm --filter @tcg/web e2e        # playwright test, against the running Compose stack
 pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 ```
 
@@ -34,6 +35,7 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 | `components/`    | `Container` and `Stack` layout primitives, and `ApiStatus`                                                                                                                                                                                                                |
 | `lib/`           | `api.ts` — the client for `services/api`; plus `card-*.ts`, `identification.ts`, `upload-*.ts`, `confirm-errors.ts`, `economics-errors.ts`, `results-errors.ts`, `results-copy.ts`, `condition-copy.ts`, `analysis-state.ts`, `amount-input.ts` and `analysis-session.ts` |
 | `styles/`        | `tokens.css` (design tokens) and `globals.css` (reset)                                                                                                                                                                                                                    |
+| `e2e/`           | Playwright — the anonymous journey through the screens' own doors, Chromium at 375px, against the Compose stack; `fixtures/` are synthetic photographs                                                                                                                    |
 | `tests/`         | Vitest + React Testing Library, jsdom environment                                                                                                                                                                                                                         |
 
 ## Styling
@@ -48,8 +50,25 @@ defined on bare `:root` and only _redefined_ under
 **Mobile-first is a requirement, not a preference** — the primary input device
 is a phone camera. Layout primitives use fluid units and `max-width` only;
 nothing declares a fixed pixel width. A `tests/layout-primitives.test.ts` check
-enforces that, standing in for a real 375px viewport assertion until E2E
-arrives.
+enforces that without a browser, and `e2e/anonymous-journey.spec.ts` asserts the
+results screen does not scroll sideways in a real one.
+
+## The browser journey
+
+`e2e/anonymous-journey.spec.ts` walks spec §5 from the landing page to the
+results with no URL typed, against the running Compose stack (start it with
+`docker compose -f infrastructure/local/docker-compose.yml up -d --wait`, then
+seed it with `docker compose -f infrastructure/local/docker-compose.yml exec -T api tcg-seed-catalog`
+and `… tcg-seed-grading-rules`; Chromium is installed once with
+`pnpm --filter @tcg/web exec playwright install chromium`). Every selector is a
+role and an accessible name, so the screens' copy is the contract. It asserts,
+in order: the gate `good` on both sides, read off the browser's own poll;
+"Not measured" and never a percent on `/identify`; a blank acquisition cost
+accepted; the admission with 35% against 50%; three grade distributions; the
+comparison's "nothing was priced"; the condition block with its counted stains;
+and no horizontal overflow at 375px. `e2e/unusable-photograph.spec.ts` keeps an
+unusable photograph on `/analyze`, naming the side. No page objects, no
+retries, no screenshots compared.
 
 ## The upload screen
 
