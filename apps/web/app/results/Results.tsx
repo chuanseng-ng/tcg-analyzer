@@ -24,6 +24,7 @@ import {
   figureLabel,
   formatFigure,
   percentOf,
+  priceAgeSentence,
   reasonCopy,
   signedAmount,
 } from "@/lib/results-copy";
@@ -320,6 +321,7 @@ function Ready({
             company={company}
             currency={results.currency}
             name={displayName(company.company)}
+            staleAfter={results.market_snapshot?.stale_after_seconds ?? null}
           />
         ))}
         {refused.map(([slug, reason]) => (
@@ -496,19 +498,32 @@ function Reason({
  * One company's §41 figures, the two questions named apart as `/configure`
  * named them (#66). Each figure is present-and-null beside its own reason on
  * the wire, and is rendered as its reason — never as a number — when null.
+ * Under them, how old the prices behind them are (#262, spec §38): "stale" is
+ * said only past the threshold the snapshot carries, and no snapshot means no
+ * prices and nothing to say.
  */
 function Company({
   company,
   currency,
   name,
+  staleAfter,
 }: {
   readonly company: CompanyEconomicsResponse;
   readonly currency: string;
   readonly name: string;
+  readonly staleAfter: number | null;
 }) {
   const decision = company.incremental_grading_decision;
   const investment = company.investment_return;
   const expected = company.expected_graded_value;
+  const ages =
+    staleAfter === null
+      ? null
+      : priceAgeSentence(
+          company.raw_price_age_seconds,
+          company.graded_price_age_seconds,
+          staleAfter,
+        );
 
   return (
     <article className={styles.company}>
@@ -564,6 +579,7 @@ function Company({
           reason={company.expected_graded_value_reason}
         />
       </dl>
+      {ages !== null && <p className={styles.footnote}>{ages}</p>}
     </article>
   );
 }

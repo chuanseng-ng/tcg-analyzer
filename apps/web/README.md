@@ -283,6 +283,12 @@ between the last two. Nine decisions shape it:
 - **Every figure sits beside its date.** The market snapshot's date and version
   are stamped under the companies (ADR 0006), and when the analysis recorded no
   snapshot the screen says so rather than showing an undated figure.
+- **Every priced figure says how old its prices are** (#262, spec §38). Under
+  each company's figures, one sentence says when the ungraded price was seen
+  and when the oldest graded price was — hours under a day, days from there —
+  and calls one "stale" only past `market_snapshot.stale_after_seconds`, the
+  threshold the wire sent; nothing here owns one. A company nothing was priced
+  for gets no sentence, because its figures already carry their reason.
 - **The grade distribution is drawn whole, and the chart is the table.** Spec
   §2.1 insists the distribution be kept, not collapsed to a grade, so each
   company gets horizontal bars for every grade on the wire, in the wire's order

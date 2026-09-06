@@ -196,3 +196,38 @@ export function signedAmount(amount: string, currency: string): string {
 export function percentOf(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
+
+/**
+ * How long ago, in words — hours under a day, days from there — through the
+ * platform's own relative-time formatter, so one day reads "yesterday" rather
+ * than "1 day ago"; under an hour is said plainly, because "this hour" is not.
+ */
+function ageInWords(seconds: number): string {
+  const words = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const hours = Math.floor(seconds / 3_600);
+  if (hours === 0) return "in the last hour";
+  if (hours < 24) return words.format(-hours, "hour");
+  return words.format(-Math.floor(hours / 24), "day");
+}
+
+/**
+ * Spec §38's `price_age`, per company, as one sentence beside the figures
+ * (#262): when the ungraded price was seen, when the oldest graded price was,
+ * and the word "stale" only past `staleAfter` — the threshold the wire sent
+ * as `market_snapshot.stale_after_seconds`, never one decided here. `null`
+ * when nothing was priced, because the figures already carry their reason.
+ */
+export function priceAgeSentence(
+  rawAge: number | null,
+  gradedAge: number | null,
+  staleAfter: number,
+): string | null {
+  const seen = (age: number) =>
+    `was seen ${ageInWords(age)}${age > staleAfter ? ", and is stale" : ""}`;
+  if (rawAge !== null && gradedAge !== null) {
+    return `The ungraded price ${seen(rawAge)}, and the oldest graded price ${seen(gradedAge)}.`;
+  }
+  if (rawAge !== null) return `The ungraded price ${seen(rawAge)}.`;
+  if (gradedAge !== null) return `The oldest graded price ${seen(gradedAge)}.`;
+  return null;
+}

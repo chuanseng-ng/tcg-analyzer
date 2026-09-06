@@ -5,6 +5,7 @@ import {
   figureLabel,
   formatFigure,
   percentOf,
+  priceAgeSentence,
   reasonCopy,
   signedAmount,
 } from "@/lib/results-copy";
@@ -139,5 +140,44 @@ describe("percentOf", () => {
   it("rounds a confidence to a whole percent", () => {
     expect(percentOf(0.35)).toBe("35%");
     expect(percentOf(0.846)).toBe("85%");
+  });
+});
+
+describe("priceAgeSentence", () => {
+  const DAY = 86_400;
+  const STALE_AFTER = 30 * DAY;
+
+  it("says nothing when nothing was priced — the figures already carry their reason", () => {
+    expect(priceAgeSentence(null, null, STALE_AFTER)).toBeNull();
+  });
+
+  it("says when each price was seen, in words a person reads", () => {
+    expect(priceAgeSentence(2 * 3_600, 3 * DAY, STALE_AFTER)).toBe(
+      "The ungraded price was seen 2 hours ago, and the oldest graded price was seen 3 days ago.",
+    );
+  });
+
+  it("says a price is stale only past the wire's threshold", () => {
+    expect(priceAgeSentence(30 * DAY, null, STALE_AFTER)).toBe(
+      "The ungraded price was seen 30 days ago.",
+    );
+    expect(priceAgeSentence(31 * DAY, null, STALE_AFTER)).toBe(
+      "The ungraded price was seen 31 days ago, and is stale.",
+    );
+  });
+
+  it("marks only the stale one of a fresh raw price and an old graded ladder", () => {
+    const sentence = priceAgeSentence(0, 45 * DAY, STALE_AFTER);
+
+    expect(sentence).toBe(
+      "The ungraded price was seen in the last hour, and the oldest graded price was seen 45 days ago, and is stale.",
+    );
+    expect(sentence?.match(/stale/g)).toHaveLength(1);
+  });
+
+  it("speaks for a graded ladder with no raw price beside it", () => {
+    expect(priceAgeSentence(null, DAY, STALE_AFTER)).toBe(
+      "The oldest graded price was seen yesterday.",
+    );
   });
 });
