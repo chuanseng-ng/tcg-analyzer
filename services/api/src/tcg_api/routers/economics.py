@@ -52,7 +52,7 @@ client more.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -98,7 +98,7 @@ from tcg_economic_engine import (
     strategy_for,
 )
 from tcg_grading_companies.companies import ADAPTERS
-from tcg_market_data import MarketSnapshot, PriceObservation, price_confidence
+from tcg_market_data import MarketSnapshot, PriceObservation, price_age, price_confidence
 
 from tcg_api.analysis.images import ImageQuality, read_quality
 from tcg_api.analysis.sessions import (
@@ -129,6 +129,7 @@ __all__ = [
     "ConditionResponse",
     "EconomicConfigurationRequest",
     "EconomicConfigurationResponse",
+    "PriceFreshness",
     "RecommendationResponse",
     "ResultsResponse",
     "router",
@@ -593,6 +594,38 @@ class CompanyEconomicsResponse(BaseModel):
             "— ADR 0007's own string, and never a zero standing in for it."
         ),
     )
+    raw_price_age_seconds: int | None = Field(
+        ge=0,
+        description=(
+            "Spec §38's `price_age` for the ungraded price the figures above were "
+            "computed from: how long before this request it was observed. `null` "
+            "when the snapshot held no raw price. Computed now, never stored, which "
+            "is why the response is `no-store`."
+        ),
+        examples=[7200],
+    )
+    graded_price_age_seconds: int | None = Field(
+        ge=0,
+        description=(
+            "Spec §38's `price_age` for **the oldest** graded price behind this "
+            "company's figures — the oldest, never a mean, because a fresh 9 beside "
+            "a six-week-old 10 is the gap that matters. `null` when the snapshot "
+            "held no price for any of this company's grades."
+        ),
+        examples=[3888000],
+    )
+    price_confidence: float | None = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Spec §38's `price_confidence`: the **weakest** of the prices behind these "
+            "figures, each discounted for its age at the moment of asking. Already "
+            "multiplied into every `confidence` above — reported here so a reader "
+            "can see how much of that was the market rather than the model, never "
+            "applied a second time. `null` when nothing was priced."
+        ),
+        examples=[0.86],
+    )
 
 
 class ReasonResponse(BaseModel):
@@ -710,6 +743,17 @@ class MarketSnapshotReference(BaseModel):
             "honest; the same numbers presented as current are not."
         ),
         examples=["2026-08-25"],
+    )
+    stale_after_seconds: int = Field(
+        gt=0,
+        description=(
+            "How old a price has to be before it is worth only the floor of its "
+            "provider's confidence — this deployment's judgement about its "
+            "ingestion cadence, not a fact about prices. A client says *stale* of a "
+            "`*_price_age_seconds` only past this number and never owns one of its "
+            "own (spec §38: stale data is identified, not hidden)."
+        ),
+        examples=[2592000],
     )
 
 
@@ -969,12 +1013,21 @@ def _configuration(configuration: EconomicConfiguration) -> EconomicConfiguratio
     )
 
 
-def _company_economics(outlook: CompanyOutlook) -> CompanyEconomicsResponse:
+def _seconds(age: timedelta | None) -> int | None:
+    """Whole seconds, `GET /cards/{id}/market`'s convention, or `None` for no price."""
+    return None if age is None else int(age.total_seconds())
+
+
+def _company_economics(
+    outlook: CompanyOutlook, freshness: PriceFreshness
+) -> CompanyEconomicsResponse:
     """One company's figures, laid out so the two §41 answers cannot be confused.
 
     Nothing is recomputed here: every number is read off the outlook, which
     computed each one once. A figure this module derived could disagree with the
-    ratio built from it, which is the drift #62 exists to prevent.
+    ratio built from it, which is the drift #62 exists to prevent. `freshness`
+    is #262's second reading of the prices the outlook was built from — their
+    ages and their weakest confidence — taken at the same moment.
     """
     expectation = _answer(outlook.graded_proceeds)
     incremental = _answer(outlook.incremental)
@@ -1055,6 +1108,9 @@ def _company_economics(outlook: CompanyOutlook) -> CompanyEconomicsResponse:
             )
         ),
         investment_roi_reason=_reason_of(outlook.investment_ratio),
+        raw_price_age_seconds=_seconds(freshness.raw_age),
+        graded_price_age_seconds=_seconds(freshness.graded_age),
+        price_confidence=None if freshness.confidence is None else freshness.confidence.value,
     )
 
 
@@ -1237,6 +1293,28 @@ def _condition(document: Mapping[str, Any]) -> ConditionResponse:
 # missing price left missing — are tested without a database.
 
 
+def _ladder(
+    observations: tuple[PriceObservation, ...], company: str
+) -> tuple[tuple[PriceObservation, ...], PriceObservation | None]:
+    """One company's graded observations and the card's raw one.
+
+    `GET /cards/{id}/market`'s keying, one company at a time; the raw price is
+    the same for every company. Both `_graded_prices` and `_freshness` read
+    through this, so the ages a user sees describe exactly the prices the
+    figures were computed from.
+    """
+    graded = tuple(
+        observation
+        for observation in observations
+        if observation.grading_company == company and observation.grade is not None
+    )
+    raw = next(
+        (observation for observation in observations if observation.grading_company is None),
+        None,
+    )
+    return graded, raw
+
+
 def _graded_prices(
     observations: tuple[PriceObservation, ...],
     company: str,
@@ -1246,10 +1324,8 @@ def _graded_prices(
 ) -> tuple[dict[Grade, GradedPrice], GradedPrice | None]:
     """One company's ladder and the raw price, as the engine takes them.
 
-    `GET /cards/{id}/market`'s keying, one company at a time; the raw price is
-    the same for every company. The confidence is #55's, discounted for age at
-    the moment of asking — which is what makes this route's `no-store` true
-    rather than cautious.
+    The confidence is #55's, discounted for age at the moment of asking — which
+    is what makes this route's `no-store` true rather than cautious.
     """
 
     def priced(observation: PriceObservation) -> GradedPrice:
@@ -1258,20 +1334,76 @@ def _graded_prices(
             price_confidence(observation, at=at, stale_after=stale_after),
         )
 
-    graded = {
-        observation.grade: priced(observation)
-        for observation in observations
-        if observation.grading_company == company and observation.grade is not None
-    }
-    raw = next(
-        (
-            priced(observation)
-            for observation in observations
-            if observation.grading_company is None
-        ),
-        None,
+    graded, raw = _ladder(observations, company)
+    return (
+        {
+            observation.grade: priced(observation)
+            for observation in graded
+            if observation.grade is not None
+        },
+        None if raw is None else priced(raw),
     )
-    return graded, raw
+
+
+@dataclass(frozen=True, slots=True)
+class PriceFreshness:
+    """Spec §38's `price_age` and `price_confidence` for one company's prices — #262.
+
+    Args:
+        raw_age: How long before the moment of asking the ungraded price was
+            observed; `None` when the snapshot held none.
+        graded_age: The **oldest** of this company's graded prices, never a
+            mean — the mean would hide exactly the gap §38 names. `None` when
+            the snapshot held no price for any of its grades.
+        confidence: The **weakest** of the prices, each discounted for its age
+            — the same numbers the engine multiplied into every figure, so this
+            is reported, never applied a second time. `None` when nothing was
+            priced.
+    """
+
+    raw_age: timedelta | None
+    graded_age: timedelta | None
+    confidence: Confidence | None
+
+
+def _freshness(
+    observations: tuple[PriceObservation, ...],
+    company: str,
+    *,
+    at: datetime,
+    stale_after: timedelta,
+) -> PriceFreshness:
+    """How old one company's prices are, and how far the weakest is trusted.
+
+    Read through `_ladder` at the same `at` and `stale_after` as
+    `_graded_prices`, so the age beside a figure and the confidence inside it
+    describe the same prices at the same moment.
+
+    ponytail: the oldest is over the company's whole ladder in the snapshot,
+    which under ADR 0011's full-ladder distributions is exactly the set the
+    expectation used. A bucketed distribution would resolve one covered price
+    and this would still count every covered one — over-stating the age, never
+    under-stating it. The upgrade is the engine reporting which prices it used.
+    """
+    graded, raw = _ladder(observations, company)
+    priced = (*graded, *(() if raw is None else (raw,)))
+    return PriceFreshness(
+        raw_age=None if raw is None else price_age(raw, at=at),
+        graded_age=(
+            None if not graded else max(price_age(observation, at=at) for observation in graded)
+        ),
+        confidence=(
+            None
+            if not priced
+            else min(
+                (
+                    price_confidence(observation, at=at, stale_after=stale_after)
+                    for observation in priced
+                ),
+                key=lambda confidence: confidence.value,
+            )
+        ),
+    )
 
 
 def _outlooks(
@@ -1523,8 +1655,11 @@ async def _load_predictions(
     *,
     at: datetime,
     stale_after: timedelta,
-) -> tuple[tuple[CompanyOutlook, ...], dict[str, InsufficientInformation]] | None:
-    """Every configured company's figures, or `None` if the prediction step never ran.
+) -> (
+    tuple[tuple[CompanyOutlook, ...], dict[str, InsufficientInformation], dict[str, PriceFreshness]]
+    | None
+):
+    """Every configured company's figures and price ages, or `None` if the step never ran.
 
     Reads what the worker stored (#227) and the prices the analysis's own
     snapshot holds for its confirmed card — never a provider (ADR 0006), never
@@ -1554,7 +1689,14 @@ async def _load_predictions(
             logger.warning("economics.prices_could_not_be_read", exc_info=True)
             raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
 
-    return _outlooks(document, configuration, observations, at=at, stale_after=stale_after)
+    outlooks, refusals = _outlooks(
+        document, configuration, observations, at=at, stale_after=stale_after
+    )
+    freshness = {
+        outlook.company: _freshness(observations, outlook.company, at=at, stale_after=stale_after)
+        for outlook in outlooks
+    }
+    return outlooks, refusals, freshness
 
 
 @router.get(
@@ -1656,6 +1798,7 @@ async def read_results(
         logger.warning("economics.condition_could_not_be_read", exc_info=True)
         raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
 
+    stale_after = timedelta(days=settings.market_stale_after_days)
     predicted = (
         None
         if configuration is None
@@ -1665,15 +1808,16 @@ async def read_results(
             configuration,
             snapshot,
             at=datetime.now(UTC),
-            stale_after=timedelta(days=settings.market_stale_after_days),
+            stale_after=stale_after,
         )
     )
 
     outlooks: tuple[CompanyOutlook, ...] = ()
     refusals: dict[str, InsufficientInformation] = {}
+    freshness: dict[str, PriceFreshness] = {}
     recommendation: Recommendation | None = None
     if configuration is not None and predicted is not None:
-        outlooks, refusals = predicted
+        outlooks, refusals, freshness = predicted
         try:
             quality = _image_quality(await read_quality(db, record.id))
         except AnalysisStoreUnavailable as error:
@@ -1719,10 +1863,11 @@ async def read_results(
                 id=snapshot.id,
                 generated_at=snapshot.generated_at,
                 data_version=str(snapshot.data_version),
+                stale_after_seconds=int(stale_after.total_seconds()),
             )
         ),
         condition=None if condition_document is None else _condition(condition_document),
-        companies=[_company_economics(outlook) for outlook in outlooks],
+        companies=[_company_economics(outlook, freshness[outlook.company]) for outlook in outlooks],
         refused=refused,
         recommendation=None if recommendation is None else _recommendation(recommendation),
     )

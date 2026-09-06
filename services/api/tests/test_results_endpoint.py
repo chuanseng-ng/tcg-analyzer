@@ -43,6 +43,7 @@ from tcg_api.routers.economics import (
     CompanyEconomicsResponse,
     IncrementalGradingDecisionResponse,
     InvestmentReturnResponse,
+    PriceFreshness,
     RecommendationResponse,
     ResultsResponse,
 )
@@ -107,6 +108,8 @@ PRICES = {
 }
 
 RAW = GradedPrice(Money.of("60.00"), Confidence(0.85))
+#: #262: the freshness of a company nothing was priced for — every field `None`.
+UNPRICED = PriceFreshness(raw_age=None, graded_age=None, confidence=None)
 PAID = Money.of("100.00")
 
 COSTS = CostConfiguration(
@@ -144,7 +147,7 @@ def outlook_for(
 
 def test_the_two_profit_figures_are_separately_named() -> None:
     """Spec §41: "This distinction is important and must be implemented rather than conflated.""" ""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
 
     assert body.incremental_grading_decision is not None
     assert body.investment_return is not None
@@ -193,7 +196,7 @@ def test_nothing_on_the_wire_is_called_roi_alone() -> None:
 
 def test_nothing_on_the_wire_is_a_cost_total() -> None:
     """#58: named line items, never a total. §47's dimensions attach per line."""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
     payload = body.model_dump()
 
     assert not [name for name in _every_key(payload) if "total" in name]
@@ -216,7 +219,7 @@ def _every_key(payload: Any) -> Iterator[str]:
 
 def test_the_full_distribution_is_returned() -> None:
     """Spec §2.1: retained in full, even when a UI shows one number."""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
 
     assert [term.grade for term in body.grade_distribution] == ["8_or_lower", "9", "10"]
     assert sum(term.probability for term in body.grade_distribution) == pytest.approx(1.0)
@@ -224,7 +227,7 @@ def test_the_full_distribution_is_returned() -> None:
 
 def test_a_ratio_is_a_four_place_decimal_string() -> None:
     """ADR 0007 fixes four places; `Money`'s two are for money, not for a ratio."""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
 
     assert body.incremental_roi is not None
     assert Decimal(body.incremental_roi.value).as_tuple().exponent == -4
@@ -232,7 +235,7 @@ def test_a_ratio_is_a_four_place_decimal_string() -> None:
 
 def test_a_ratio_carries_the_label_the_adr_gave_it() -> None:
     """So nothing can display one ratio under the other's caption."""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
 
     assert body.incremental_roi is not None
     assert body.investment_roi is not None
@@ -241,7 +244,7 @@ def test_a_ratio_carries_the_label_the_adr_gave_it() -> None:
 
 def test_an_absent_acquisition_cost_is_a_reason_and_never_a_zero() -> None:
     """ADR 0007's own string, reaching a client unchanged. §45 forbids inferring one."""
-    body = economics._company_economics(outlook_for(acquisition_cost=None))
+    body = economics._company_economics(outlook_for(acquisition_cost=None), UNPRICED)
 
     assert body.investment_return is None
     assert body.investment_reason == "acquisition_cost_not_supplied"
@@ -254,7 +257,7 @@ def test_an_absent_acquisition_cost_is_a_reason_and_never_a_zero() -> None:
 
 def test_a_missing_raw_price_admits_with_its_own_reason() -> None:
     """#60's reason, deliberately not the expectation's — which side went missing matters."""
-    body = economics._company_economics(outlook_for(raw=None))
+    body = economics._company_economics(outlook_for(raw=None), UNPRICED)
 
     assert body.incremental_grading_decision is None
     assert body.incremental_reason == "no_raw_price_available"
@@ -265,7 +268,7 @@ def test_a_missing_raw_price_admits_with_its_own_reason() -> None:
 
 def test_an_unpriced_ladder_admits_rather_than_valuing_a_grade_at_zero() -> None:
     """#59: an unpriced grade is excluded, never zero. Nothing priced is an admission."""
-    body = economics._company_economics(outlook_for(prices={}))
+    body = economics._company_economics(outlook_for(prices={}), UNPRICED)
 
     assert body.expected_graded_value is None
     assert body.expected_graded_value_reason == "no_graded_price_available"
@@ -273,7 +276,7 @@ def test_an_unpriced_ladder_admits_rather_than_valuing_a_grade_at_zero() -> None
 
 def test_every_amount_is_a_decimal_string() -> None:
     """A JSON number is a float in most clients, and this is money."""
-    body = economics._company_economics(outlook_for())
+    body = economics._company_economics(outlook_for(), UNPRICED)
 
     assert body.incremental_grading_decision is not None
     assert isinstance(body.incremental_grading_decision.incremental_profit, str)
@@ -455,7 +458,7 @@ def test_no_snapshot_answers_with_the_engines_own_reasons() -> None:
         document(psa=PSA_ENTRY), configuration_for("psa"), (), at=AT, stale_after=STALE_AFTER
     )
 
-    body = economics._company_economics(outlooks[0])
+    body = economics._company_economics(outlooks[0], UNPRICED)
     assert body.expected_graded_value_reason == "no_graded_price_available"
     assert body.incremental_reason == "no_raw_price_available"
     assert body.grade_distribution
@@ -469,6 +472,80 @@ def test_a_malformed_stored_distribution_is_refused_rather_than_served() -> None
         economics._outlooks(
             document(psa=broken), configuration_for("psa"), (), at=AT, stale_after=STALE_AFTER
         )
+
+
+# ---------------------------------------------------------------------------
+# Each price's age and confidence — #262, spec §38
+# ---------------------------------------------------------------------------
+# Pure over the same observations the figures were priced from, at the same
+# moment, so the age a user reads and the confidence the engine multiplied in
+# describe the same prices.
+
+
+def test_freshness_reads_the_ages_and_the_weakest_confidence_of_one_companys_prices() -> None:
+    """Spec §38's two numbers, per company: how old, and how far trusted."""
+    fresh = economics._freshness(OBSERVATIONS, "psa", at=AT, stale_after=STALE_AFTER)
+
+    assert fresh.raw_age == timedelta(0)
+    assert fresh.graded_age == timedelta(0)
+    assert fresh.confidence == Confidence(0.9)
+
+
+def test_the_graded_age_is_the_oldest_price_on_the_ladder_never_a_mean() -> None:
+    """The gap the market route's docstring names: a fresh 9 beside a two-month-old 10."""
+    old_ten = observation("300.00", company="psa", grade=TEN, age=timedelta(days=60))
+    fresh_nine = observation("120.00", company="psa", grade=NINE)
+
+    fresh = economics._freshness((fresh_nine, old_ten), "psa", at=AT, stale_after=STALE_AFTER)
+
+    assert fresh.graded_age == timedelta(days=60)
+    assert fresh.raw_age is None
+    # Past `stale_after`, the price is worth only the floor — and that is what is reported.
+    assert fresh.confidence is not None
+    assert fresh.confidence.value == pytest.approx(0.9 * 0.05)
+
+
+def test_a_company_with_no_ladder_has_no_graded_age_but_keeps_the_raw_price() -> None:
+    fresh = economics._freshness(OBSERVATIONS, "tag", at=AT, stale_after=STALE_AFTER)
+
+    assert fresh.raw_age == timedelta(0)
+    assert fresh.graded_age is None
+    assert fresh.confidence == Confidence(0.9)
+
+
+def test_nothing_priced_is_nothing_aged() -> None:
+    assert economics._freshness((), "psa", at=AT, stale_after=STALE_AFTER) == UNPRICED
+
+
+def test_an_unpriced_company_carries_null_ages_and_confidence() -> None:
+    """#250's shape, unchanged: present-and-null, never zero."""
+    body = economics._company_economics(outlook_for(), UNPRICED)
+
+    assert body.raw_price_age_seconds is None
+    assert body.graded_price_age_seconds is None
+    assert body.price_confidence is None
+
+
+def test_a_priced_company_carries_its_ages_in_whole_seconds_and_its_confidence() -> None:
+    """Seconds as an integer, `GET /cards/{id}/market`'s convention."""
+    fresh = PriceFreshness(
+        raw_age=timedelta(hours=2), graded_age=timedelta(days=45), confidence=Confidence(0.3)
+    )
+
+    body = economics._company_economics(outlook_for(), fresh)
+
+    assert body.raw_price_age_seconds == 7_200
+    assert body.graded_price_age_seconds == 45 * 86_400
+    assert body.price_confidence == pytest.approx(0.3)
+
+
+def test_the_new_names_keep_the_two_figures_apart() -> None:
+    """#65's rule survives #262: nothing is `roi`, nothing is a total, and neither §41 sub-model changed."""
+    fields = set(CompanyEconomicsResponse.model_fields)
+
+    assert {"raw_price_age_seconds", "graded_price_age_seconds", "price_confidence"} <= fields
+    assert "price_confidence" not in IncrementalGradingDecisionResponse.model_fields
+    assert "price_confidence" not in InvestmentReturnResponse.model_fields
 
 
 def test_image_quality_is_the_weakest_photograph() -> None:
@@ -1130,6 +1207,26 @@ def test_a_priced_card_is_valued_from_its_own_snapshot(
     assert [entry["company"] for entry in comparison["unranked"]] == ["bgs"]
     # BGS is the engine's own unranked, not a refusal: `refused` says nothing of it.
     assert body["refused"] == {}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_priced_figure_is_never_shown_without_the_age_of_its_prices(
+    client: TestClient, priced: list[dict[str, Any]]
+) -> None:
+    """#262, spec §38: per company, how old the prices behind the figures are and how far trusted."""
+    body = priced_analysis(client, STORED_PSA_ENTRY, priced)
+
+    psa, bgs = body["companies"]
+    assert isinstance(psa["raw_price_age_seconds"], int)
+    assert isinstance(psa["graded_price_age_seconds"], int)
+    assert 0 <= psa["graded_price_age_seconds"] < 3_600
+    assert psa["price_confidence"] == pytest.approx(0.9)
+    # The raw price is the card's, so BGS has its age; it has no ladder in this snapshot.
+    assert isinstance(bgs["raw_price_age_seconds"], int)
+    assert bgs["graded_price_age_seconds"] is None
+    # The threshold travels on the wire, so the client never owns one.
+    assert body["market_snapshot"]["stale_after_seconds"] == 30 * 86_400
 
 
 @pytest.mark.integration

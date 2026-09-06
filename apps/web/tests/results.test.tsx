@@ -143,6 +143,9 @@ function company(overrides: Partial<CompanyEconomicsResponse> = {}): CompanyEcon
       label: "Return on investment",
     },
     investment_roi_reason: null,
+    raw_price_age_seconds: 7_200,
+    graded_price_age_seconds: 3 * 86_400,
+    price_confidence: 0.9,
     ...overrides,
   };
 }
@@ -163,6 +166,9 @@ function unpricedCompany(
     investment_reason: "acquisition_cost_not_supplied",
     investment_roi: null,
     investment_roi_reason: "acquisition_cost_not_supplied",
+    raw_price_age_seconds: null,
+    graded_price_age_seconds: null,
+    price_confidence: null,
     ...overrides,
   });
 }
@@ -696,16 +702,19 @@ describe("spec §49's second screen — the company comparison", () => {
   });
 });
 
+const SNAPSHOT: ResultsResponse["market_snapshot"] = {
+  id: "66666666-6666-6666-6666-666666666666",
+  generated_at: "2026-08-25T03:00:00Z",
+  data_version: "2026-08-25",
+  stale_after_seconds: 30 * 86_400,
+};
+
 describe("the market snapshot", () => {
   it("date-stamps the figures with the snapshot they were priced against", async () => {
     readResultsMock.mockResolvedValue(
       results({
         companies: [company()],
-        market_snapshot: {
-          id: "66666666-6666-6666-6666-666666666666",
-          generated_at: "2026-08-25T03:00:00Z",
-          data_version: "2026-08-25",
-        },
+        market_snapshot: SNAPSHOT,
       }),
     );
 
@@ -720,6 +729,47 @@ describe("the market snapshot", () => {
 
     expect(screen.getByText(/No market data was recorded for this analysis/)).toBeInTheDocument();
     expect(document.querySelector("time")).toBeNull();
+  });
+});
+
+describe("each price's age — #262, spec §38", () => {
+  it("never shows a priced figure without saying how old its prices are", async () => {
+    readResultsMock.mockResolvedValue(
+      results({ companies: [company()], market_snapshot: SNAPSHOT }),
+    );
+
+    await shown();
+
+    const tag = screen.getByRole("heading", { level: 3, name: "TAG" }).closest("article")!;
+    expect(
+      within(tag).getByText(
+        "The ungraded price was seen 2 hours ago, and the oldest graded price was seen 3 days ago.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/stale/)).not.toBeInTheDocument();
+  });
+
+  it("says stale only past the threshold the wire sent, never one of its own", async () => {
+    readResultsMock.mockResolvedValue(
+      results({
+        companies: [company({ graded_price_age_seconds: 45 * 86_400 })],
+        market_snapshot: SNAPSHOT,
+      }),
+    );
+
+    await shown();
+
+    expect(
+      screen.getByText(
+        "The ungraded price was seen 2 hours ago, and the oldest graded price was seen 45 days ago, and is stale.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about ages for a company nothing was priced for", async () => {
+    await shown();
+
+    expect(screen.queryByText(/price was seen/)).not.toBeInTheDocument();
   });
 });
 
