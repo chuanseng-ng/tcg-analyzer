@@ -33,6 +33,12 @@ describe("the route error boundary", () => {
     expect(screen.getByRole("link", { name: "Back to the start" })).toHaveAttribute("href", "/");
   });
 
+  it("is announced, like every other failure on a screen", () => {
+    render(<ErrorPage error={crash()} reset={vi.fn()} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("This page could not be shown.");
+  });
+
   it("shows nothing from the error", () => {
     const { container } = render(<ErrorPage error={crash()} reset={vi.fn()} />);
 
@@ -48,9 +54,14 @@ describe("the root error boundary", () => {
   // test container.
   const markup = () => renderToStaticMarkup(<GlobalError error={crash()} reset={vi.fn()} />);
 
-  it("is a whole document", () => {
-    // React 19 hoists an empty `<head>` in front of the body it is given.
-    expect(markup()).toMatch(/^<html lang="en">(<head><\/head>)?<body>/);
+  it("is a whole document, laid out for a phone", () => {
+    // It replaces the root layout, and with it the layout's viewport.
+    const html = markup();
+
+    expect(html).toMatch(/^<html lang="en"><head>.*<\/head><body>/);
+    expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1"');
+    expect(html).toContain("<title>TCG Grading Advisor</title>");
+    expect(html).toContain('role="alert"');
   });
 
   it("says the same as the route boundary, with the same way back", () => {

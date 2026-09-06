@@ -10,10 +10,11 @@ import { Crashed } from "./Recovery";
  * convention (#261).
  *
  * This replaces the root layout when it renders, so it carries its own
- * `<html>` and `<body>` and imports the two global stylesheets the layout
- * would have. It says exactly what `error.tsx` says and shows nothing from
- * the error, for the same reasons. Next renders it in production builds
- * only; in development its overlay takes the place of both boundaries.
+ * `<html>` and `<body>`, the layout's viewport (without it a phone lays the
+ * page out at desktop width) and the two global stylesheets the layout would
+ * have. It says exactly what `error.tsx` says and shows nothing from the
+ * error, for the same reasons. Next renders it in production builds only; in
+ * development its overlay takes the place of both boundaries.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- handed over by Next, deliberately unread
 export default function GlobalError(_props: {
@@ -22,6 +23,10 @@ export default function GlobalError(_props: {
 }) {
   return (
     <html lang="en">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>TCG Grading Advisor</title>
+      </head>
       <body>
         <Crashed />
       </body>

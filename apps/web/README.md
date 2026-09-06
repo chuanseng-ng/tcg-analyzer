@@ -197,8 +197,8 @@ has a route of its own instead of a button somewhere in the catalog.
   throughout. A confirmation the page kept to itself gets neither: there is no
   analysis to price, and the screen says so — nothing has been analysed because
   this tab holds no photographs — and offers **Photograph the card**, a link to
-  `/analyze`, as the way to have it analysed (#261). The recorded screen still
-  says that nothing has analysed the photographs yet, because nothing has.
+  `/analyze`, as the way to have it analysed (#261). The recorded screen's own
+  sentence is unchanged by #261.
 - **The gate shows no `metadata` and no provider identifiers.** They are catalog
   bookkeeping rather than something a person checks against a card in their
   hand; the full record is one link away.
