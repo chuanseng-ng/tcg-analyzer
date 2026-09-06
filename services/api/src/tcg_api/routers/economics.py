@@ -120,7 +120,12 @@ from tcg_api.economics.store import (
 from tcg_api.errors import ApiError, ErrorCode, ErrorResponse
 from tcg_api.market.snapshots import MarketSnapshotUnavailable, get_snapshot, resolve_prices
 from tcg_api.rate_limit import analysis_rate_limit
-from tcg_api.routers.analyses import SESSION_COOKIE, analysis_session
+from tcg_api.routers.analyses import (
+    SESSION_COOKIE,
+    FailureResponse,
+    analysis_session,
+    failure_of,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -932,6 +937,14 @@ class ResultsResponse(BaseModel):
             "configuration, or no prediction stored. **`null` is not "
             "`insufficient_information`**: the first means nobody has asked, the "
             "second that we asked and the data did not support an answer."
+        ),
+    )
+    failure: FailureResponse | None = Field(
+        description=(
+            "Why the analysis failed, or `null` while it has not — the same "
+            "stored fact `GET /analyses/{id}` serves (#265), here so a results "
+            "screen holding this body need not go back for it. Never `null` "
+            "when `status` is `failed`."
         ),
     )
 
@@ -1872,4 +1885,5 @@ async def read_results(
         companies=[_company_economics(outlook, freshness[outlook.company]) for outlook in outlooks],
         refused=refused,
         recommendation=None if recommendation is None else _recommendation(recommendation),
+        failure=failure_of(record),
     )

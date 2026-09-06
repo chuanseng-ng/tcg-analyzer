@@ -18,6 +18,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 from tcg_api.analysis import tables
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.tables import (
     REPRODUCIBILITY_COLUMNS,
     TABLES,
@@ -114,6 +115,12 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 # The per-company grade distributions, `condition_details`'
                 # family and one stage downstream of it (#227).
                 "grade_predictions",
+                # Why a `failed` analysis failed (#265): spec §66's code and
+                # the closed reason vocabulary, written in the same statement
+                # as the status so nothing ever re-derives them from the
+                # photographs.
+                "failure_code",
+                "failure_reason",
             },
         ),
         (
@@ -518,3 +525,40 @@ def test_the_quality_scale_is_the_one_the_gate_defined() -> None:
 def test_compared_text_is_ordered_by_byte(table: sa.Table, column: str) -> None:
     """Identifiers and digests must compare the same way locally and in CI."""
     assert table.columns[column].type.collation == "C"
+
+
+def test_the_failure_columns_are_outside_the_record() -> None:
+    """#265's storage decision: two nullable TEXT columns beside `status`.
+
+    Not in `REPRODUCIBILITY_COLUMNS`: a failure is not §57's record, and the
+    trigger must keep letting `status` move — `failed` is one such move.
+    """
+    for name in ("failure_code", "failure_reason"):
+        column = analyses.columns[name]
+
+        assert isinstance(column.type, sa.Text)
+        assert column.nullable
+        assert column.server_default is None
+        assert column.comment
+        assert name not in REPRODUCIBILITY_COLUMNS
+
+
+def test_a_failure_is_recorded_exactly_when_failed() -> None:
+    """Strict both ways: `failed` needs both columns, nothing else may carry them."""
+    rendered = check_constraint(analyses, "failure_is_recorded_exactly_when_failed")
+
+    assert (
+        "status = 'failed' AND failure_code IS NOT NULL AND failure_reason IS NOT NULL" in rendered
+    )
+    assert "status <> 'failed' AND failure_code IS NULL AND failure_reason IS NULL" in rendered
+
+
+def test_every_failure_reason_and_both_codes_are_admitted() -> None:
+    """Two of §66's eight codes and the whole `FailureReason` vocabulary."""
+    rendered = check_constraint(analyses, "failure_names_a_known_reason")
+
+    assert "'image_quality_failure'" in rendered
+    assert "'analysis_failed'" in rendered
+    assert "'internal_error'" not in rendered
+    for reason in FailureReason:
+        assert f"'{reason.value}'" in rendered

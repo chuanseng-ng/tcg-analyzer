@@ -464,3 +464,70 @@ def test_alembic_fails_clearly_when_the_database_url_is_unset() -> None:
 
     assert result.returncode != 0
     assert "TCG_API_DATABASE_URL" in result.stderr
+
+
+# #265's failure columns, and the one-time backfill that lets the strict CHECK
+# be created over rows that predate it. Pinned for the same reason as the rest:
+# the test is about *this* revision's backfill, not about whichever is newest.
+FAILURE_REVISION = "e7a3c5d9b1f2"
+GRADE_PREDICTIONS_REVISION = "c4d81e2f9a37"
+
+A_SESSION = "00000000-0000-0000-0000-000000000001"
+REFUSED_BY_THE_GATE = "00000000-0000-0000-0000-000000000011"
+GIVEN_UP_ON = "00000000-0000-0000-0000-000000000012"
+STILL_RUNNING = "00000000-0000-0000-0000-000000000013"
+
+
+def execute_sql(statement: str, **parameters: object) -> list[tuple[object, ...]]:
+    async def work() -> list[tuple[object, ...]]:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.begin() as connection:
+                result = await connection.execute(text(statement), parameters)
+                return [tuple(row) for row in result] if result.returns_rows else []
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(work())
+
+
+def test_upgrading_over_failed_rows_backfills_their_reason_once() -> None:
+    """A `failed` row from before #265 gets the reason the photographs suggest.
+
+    The last time a reason is derived from `images[]`, and it happens here
+    rather than in a consumer: a row whose image the gate refused is
+    `unusable_photograph`, and one with no such evidence is `job_dead_lettered`
+    — the honest bucket, because nothing recorded why the runner gave up.
+    """
+    alembic("upgrade", GRADE_PREDICTIONS_REVISION)
+    execute_sql(
+        "INSERT INTO analysis_sessions (id, anonymous_session_id, expires_at, application_version)"
+        " VALUES (:session, 'wCq3nB0Xr4h8kJ2vL7pT1yZ6sD9aF5gE', now() + interval '7 days', '0.1.0')",
+        session=A_SESSION,
+    )
+    execute_sql(
+        "INSERT INTO analyses (id, session_id, status) VALUES"
+        " (:refused, :session, 'failed'), (:given_up, :session, 'failed'),"
+        " (:running, :session, 'analyzing')",
+        session=A_SESSION,
+        refused=REFUSED_BY_THE_GATE,
+        given_up=GIVEN_UP_ON,
+        running=STILL_RUNNING,
+    )
+    execute_sql(
+        "INSERT INTO images (id, analysis_id, side, original_uri, mime_type, sha256,"
+        " quality_status) VALUES (:image, :refused, 'front', 's3://bucket/front',"
+        " 'image/jpeg', repeat('a', 64), 'unusable')",
+        image="00000000-0000-0000-0000-000000000021",
+        refused=REFUSED_BY_THE_GATE,
+    )
+
+    alembic("upgrade", FAILURE_REVISION)
+
+    assert execute_sql(
+        "SELECT id::text, failure_code, failure_reason FROM analyses ORDER BY id"
+    ) == [
+        (REFUSED_BY_THE_GATE, "image_quality_failure", "unusable_photograph"),
+        (GIVEN_UP_ON, "analysis_failed", "job_dead_lettered"),
+        (STILL_RUNNING, None, None),
+    ]

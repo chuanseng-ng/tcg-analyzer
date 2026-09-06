@@ -40,8 +40,9 @@ insecure by omission and none of its snippets are copied here:
 2. The broker URL comes from `TCG_API_REDIS_URL` and is never defaulted. There
    is no `redis://localhost:6379` fallback, because a fallback is what turns a
    missing setting into an unauthenticated broker nobody notices.
-3. The dead-letter record is a log line carrying the job id, the exception type
-   and the attempt count — and nothing else. Analysis payloads reference
+3. The dead-letter record is a log line carrying the job id, the exception type,
+   the attempt count and the vocabulary reason the row gets (#265) — and
+   nothing else, and never a message. Analysis payloads reference
    photographs of somebody's card, hands and living room (spec §54); a queue
    holding those indefinitely so that a job nobody re-drives could theoretically
    be re-driven is not a trade this project makes.
@@ -70,6 +71,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 from tcg_grading_companies import ADAPTERS
 
+from tcg_api.analysis.failures import FailureReason, failure_reason
 from tcg_api.analysis.retention import (
     SWEEP_INTERVAL_SECONDS,
     SWEEP_LIMIT,
@@ -316,8 +318,15 @@ async def _advance(analysis_id: UUID) -> bool:
             if verdict is QualityStatus.UNUSABLE:
                 # §19: "If unusable, analysis should stop." The findings are
                 # already written, so the refusal can be explained; the status
-                # is the only thing said out loud here (spec §54).
-                await transition(db, analysis_id, to=AnalysisStatus.FAILED)
+                # and its reason are the only things said out loud here (spec
+                # §54). The reason rides in the same statement as the move
+                # (#265) — the one failure that is the user's to fix.
+                await transition(
+                    db,
+                    analysis_id,
+                    to=AnalysisStatus.FAILED,
+                    failure=FailureReason.UNUSABLE_PHOTOGRAPH,
+                )
                 await db.commit()
                 logger.info(
                     "analysis.image_quality_failed",
@@ -387,12 +396,18 @@ async def _grading_rules_version(db: AsyncSession) -> str | None:
     return "+".join(versions)
 
 
-async def _fail(analysis_id: UUID) -> None:
-    """Put an analysis into `failed`, from wherever the run left it."""
+async def _fail(analysis_id: UUID, reason: FailureReason) -> None:
+    """Put an analysis into `failed`, from wherever the run left it, saying why.
+
+    "Wherever" is usually `uploaded`: a run that raised never committed its
+    claim, so the row is back where the run found it and every non-terminal
+    state may move to `failed`. The reason is vocabulary chosen from the
+    exception's type (#265), never its text.
+    """
     engine = create_engine()
     try:
         async with create_session_factory(engine)() as db:
-            await transition(db, analysis_id, to=AnalysisStatus.FAILED)
+            await transition(db, analysis_id, to=AnalysisStatus.FAILED, failure=reason)
             await db.commit()
     finally:
         await engine.dispose()
@@ -448,18 +463,22 @@ def run_analysis(self: Task, analysis_id: str) -> None:
 
         # The dead-letter record: the job, what went wrong, how many times it was
         # tried. Deliberately not the payload, not the traceback and nothing
-        # about an image — see rule 3 in the module docstring.
+        # about an image — see rule 3 in the module docstring. The reason is
+        # the same closed vocabulary the row gets (#265), chosen from the
+        # exception's type and never its message.
+        reason = failure_reason(error)
         logger.error(
             "analysis.dead_lettered",
             job_id=self.request.id,
             error=type(error).__name__,
+            reason=reason.value,
             attempts=attempts,
         )
-        _fail_quietly(identifier)
+        _fail_quietly(identifier, reason)
         raise
 
 
-def _fail_quietly(analysis_id: UUID) -> None:
+def _fail_quietly(analysis_id: UUID, reason: FailureReason) -> None:
     """Record the failure on the analysis, without masking the one being raised.
 
     A store that is itself unreachable is why the run failed as often as not, so
@@ -467,7 +486,7 @@ def _fail_quietly(analysis_id: UUID) -> None:
     is mid-`raise` and the dead-letter line has already been written.
     """
     try:
-        asyncio.run(_fail(analysis_id))
+        asyncio.run(_fail(analysis_id, reason))
     except Exception:  # see the docstring; there is nothing better to do here
         logger.error("analysis.failure_not_recorded", analysis_id=str(analysis_id), exc_info=True)
 

@@ -83,7 +83,13 @@ reports the state of one, but only to the session that started it — an unknown
 identifier, another session's analysis, a missing cookie and an expired one all
 answer 404 with the same body, so the endpoint cannot be used to discover which
 analyses exist. Sessions expire after `TCG_API_SESSION_TTL_SECONDS`; nothing
-about the caller is recorded.
+about the caller is recorded. **A failed analysis says why** (#265): `failure`
+is `null` until the analysis is `failed` and never `null` once it is, carrying
+one of two spec §66 codes and a reason from the closed vocabulary under
+[Why an analysis failed](#why-an-analysis-failed). It is a stored fact the
+worker writes in the same statement as the status — a client reads it and
+never infers a reason from `images[]`, and no message or exception text ever
+travels with it (spec §54).
 
 `POST /analyses/{id}/images?side=front` uploads one photograph, as the raw
 bytes of the request body rather than as a multipart form. That is deliberate:
@@ -114,7 +120,11 @@ one naming no card is refused with the same `card_not_identified` that
 take a confirmation, and recording one moves it to `analyzing`. Spec §65's
 states move forwards only, so there is no second confirmation and no changing
 the card afterwards — both are a 409, and a card chosen in error is corrected by
-starting a new analysis.
+starting a new analysis. A `failed` analysis answers 409 in the §66 envelope
+with the code the row stores — `image_quality_failure` when the gate refused
+the photographs, `analysis_failed` otherwise — the stored reason as
+`details.reason`, and for the first the refused sides as `details.sides`; the
+difference is whether trying again could ever help.
 
 `POST /analyses/{id}/economic-configuration` records the economics of the
 decision (spec §45, §46, §43): the six cost line items, the optional acquisition
@@ -166,7 +176,9 @@ field — spec §50 forbids an explanation unrelated to the evidence, so the cop
 the frontend's to write from those four fields. The response echoes the analysis's
 own spec §57 record, including the market snapshot it was computed against, which
 is what ADR 0006 requires the UI to date-stamp. `Cache-Control: no-store`, for
-the same reason `GET /cards/{id}/market` is.
+the same reason `GET /cards/{id}/market` is. The body also carries `failure`,
+the same stored fact `GET /analyses/{id}` serves, so a results screen holding
+this body need not go back for it.
 
 **Every priced figure says how old its prices are** (#262, spec §38). Per
 company, `raw_price_age_seconds` is how long before the request the ungraded
@@ -283,6 +295,35 @@ a Postgres outage without correlating timestamps.
 | `economic_configuration_store_unreachable` | `POST /analyses/{id}/economic-configuration` |
 | `dataset_store_unreachable` | the `/internal/annotation` routes |
 | `stored_object_missing` | an annotation row naming bytes the store does not hold — a **500** `internal_error`, not a 503, because two stores disagreeing will not come right on a retry |
+
+One other route puts a different vocabulary on the same field: `confirm-card`'s
+409 on a `failed` analysis carries the stored `failure.reason` as
+`details.reason` — see [Why an analysis failed](#why-an-analysis-failed).
+`image_store_unreachable` (a 503, the store is down now) and
+`image_store_unavailable` (a recorded failure, the store was down during the
+run) are deliberately different strings.
+
+## Why an analysis failed
+
+`failed` is a state; *why* is a second fact on the same row (#265), served as
+`failure: {code, reason}` on `GET /analyses/{id}` and `/results` and as the
+`confirm-card` 409. The code is one of two of spec §66's eight — the taxonomy
+stays closed ([ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md)) — and
+the reason is this vocabulary, which lives in `tcg_api.analysis.failures` and
+nowhere else; a client keys its copy off these strings exactly. It is chosen
+from the exception's *type* where the worker gives up, never its message
+(spec §54), and it is never re-derived from the photographs.
+
+| `failure.code` | `failure.reason` | Recorded when |
+| --- | --- | --- |
+| `image_quality_failure` | `unusable_photograph` | spec §19's gate refused a photograph — the one failure the user can fix |
+| `analysis_failed` | `catalog_unavailable` | the catalog could not be read at the claim |
+| `analysis_failed` | `grading_rules_unavailable` | the grading rules could not be read at the claim |
+| `analysis_failed` | `image_store_unavailable` | the object store could not be read during the run |
+| `analysis_failed` | `model_failed` | a grading model *raised* (`GradingCompanyError`), or the stored condition assessment was one the domain refused (`InvalidConditionAssessment`) — a model that declined is a stored refusal in the results, never a failure |
+| `analysis_failed` | `job_dead_lettered` | the runner gave up after its retries on something with no name here, the analysis store's own outage included |
+| `analysis_failed` | `timed_out` | reserved for the run's soft time limit; written by nobody yet |
+| `analysis_failed` | `stalled` | reserved for the stall sweep; written by nobody yet |
 
 Caching follows from what a body claims rather than from how expensive it was to
 build. `GET /grading-companies` is `public, max-age=3600` — slow-moving reference

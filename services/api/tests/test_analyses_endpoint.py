@@ -272,6 +272,33 @@ def test_an_analysis_is_readable_by_the_session_that_started_it(client: TestClie
 
 @pytest.mark.integration
 @requires_postgres
+def test_a_live_analysis_reports_no_failure(client: TestClient) -> None:
+    created = client.post("/analyses").json()
+
+    assert created["failure"] is None
+    assert client.get(f"/analyses/{created['id']}").json()["failure"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_failed_analysis_reports_its_code_and_reason(client: TestClient) -> None:
+    """#265: the stored fact, served whole — a client never guesses from `images[]`."""
+    created = client.post("/analyses").json()
+    executing(
+        "UPDATE analyses SET status = 'failed', failure_code = 'analysis_failed',"
+        " failure_reason = 'model_failed' WHERE id = :id",
+        id=uuid.UUID(created["id"]),
+    )
+
+    response = client.get(f"/analyses/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["failure"] == {"code": "analysis_failed", "reason": "model_failed"}
+
+
+@pytest.mark.integration
+@requires_postgres
 def test_another_sessions_analysis_is_not_readable(client: TestClient) -> None:
     """The property the whole issue exists for."""
     created = client.post("/analyses").json()
@@ -912,7 +939,11 @@ def test_a_failed_analysis_says_so_rather_than_asking_for_another_try(
     a job that ran out of retries, or a dependency that never came back.
     """
     created = client.post("/analyses").json()
-    executing("UPDATE analyses SET status = 'failed' WHERE id = :id", id=uuid.UUID(created["id"]))
+    executing(
+        "UPDATE analyses SET status = 'failed', failure_code = 'analysis_failed',"
+        " failure_reason = 'job_dead_lettered' WHERE id = :id",
+        id=uuid.UUID(created["id"]),
+    )
 
     response = client.post(
         f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
@@ -920,6 +951,7 @@ def test_a_failed_analysis_says_so_rather_than_asking_for_another_try(
 
     assert response.status_code == 409
     assert response.json()["code"] == "analysis_failed"
+    assert response.json()["details"] == {"reason": "job_dead_lettered"}
 
 
 @pytest.mark.integration
@@ -937,7 +969,11 @@ def test_a_quality_failure_is_named_as_one(client: TestClient) -> None:
         id=analysis_id,
         digest="a" * 64,
     )
-    executing("UPDATE analyses SET status = 'failed' WHERE id = :id", id=analysis_id)
+    executing(
+        "UPDATE analyses SET status = 'failed', failure_code = 'image_quality_failure',"
+        " failure_reason = 'unusable_photograph' WHERE id = :id",
+        id=analysis_id,
+    )
 
     response = client.post(
         f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
@@ -945,7 +981,34 @@ def test_a_quality_failure_is_named_as_one(client: TestClient) -> None:
 
     assert response.status_code == 409
     assert response.json()["code"] == "image_quality_failure"
-    assert response.json()["details"]["sides"] == ["front"]
+    assert response.json()["details"] == {"reason": "unusable_photograph", "sides": ["front"]}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_the_stored_reason_answers_even_when_no_photograph_says_unusable(
+    client: TestClient,
+) -> None:
+    """#265: the row decides. The photographs are no longer consulted for the code.
+
+    Before, the code was re-derived from `images[].quality_status`; a row that
+    says `image_quality_failure` with no `unusable` image is the case that
+    tells the two apart.
+    """
+    created = client.post("/analyses").json()
+    executing(
+        "UPDATE analyses SET status = 'failed', failure_code = 'image_quality_failure',"
+        " failure_reason = 'unusable_photograph' WHERE id = :id",
+        id=uuid.UUID(created["id"]),
+    )
+
+    response = client.post(
+        f"/analyses/{created['id']}/confirm-card", json={"card_id": str(CARD_ID)}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "image_quality_failure"
+    assert response.json()["details"] == {"reason": "unusable_photograph", "sides": []}
 
 
 @pytest.mark.integration

@@ -67,6 +67,7 @@ function analysis(status: string, overrides: Partial<AnalysisResponse> = {}): An
       economic_configuration_id: null,
       image_sha256: {},
     },
+    failure: null,
     ...overrides,
   };
 }
@@ -216,6 +217,7 @@ function results(overrides: Partial<ResultsResponse> = {}): ResultsResponse {
     companies: [unpricedCompany()],
     refused: {},
     recommendation: admission(),
+    failure: null,
     ...overrides,
   };
 }

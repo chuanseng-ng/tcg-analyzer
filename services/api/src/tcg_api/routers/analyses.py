@@ -61,7 +61,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
 import structlog
@@ -76,6 +76,7 @@ from tcg_domain.image_quality import ConditionVerdict, QualityCondition
 from tcg_domain.repository import CardRepository
 from tcg_shared.storage import ObjectStorage, StorageError, StorageKey, generate_key
 
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.image_validation import InvalidImage, ValidatedImage, validate_image
 from tcg_api.analysis.images import (
     ImageQuality,
@@ -336,6 +337,38 @@ class ReproducibilityResponse(BaseModel):
     )
 
 
+class FailureResponse(BaseModel):
+    """Why a `failed` analysis failed — #265, spec §66, §54.
+
+    A stored fact, never a guess: written by the worker in the same statement
+    as the move to `failed`, and never re-derived from the photographs by any
+    consumer. No message and no exception text travel with it.
+    """
+
+    code: ErrorCode = Field(
+        description=(
+            "Spec §66's code — only ever `image_quality_failure`, when the §19 "
+            "gate refused a photograph (the one failure the user can fix), or "
+            "`analysis_failed`, for everything else. The taxonomy stays closed "
+            "at eight (ADR 0005); the reason is the second field, not a code."
+        ),
+        examples=["image_quality_failure"],
+    )
+    reason: FailureReason = Field(
+        description=(
+            "The closed vocabulary of why: `unusable_photograph`, "
+            "`catalog_unavailable`, `grading_rules_unavailable`, "
+            "`image_store_unavailable`, `model_failed` (a grading model *raised*, "
+            "or the stored condition assessment was one the domain refused — a "
+            "model that declined is a stored refusal, not a failure), "
+            "`job_dead_lettered` (the runner gave up on something with no name "
+            "here), and `timed_out` / `stalled`, reserved for the bounding "
+            "issue and written by nobody yet."
+        ),
+        examples=["unusable_photograph"],
+    )
+
+
 class AnalysisResponse(BaseModel):
     """One analysis, as the API reports it.
 
@@ -386,6 +419,13 @@ class AnalysisResponse(BaseModel):
             "Spec §57's record: which versions of everything this answer was "
             "produced against, captured when the run claimed the analysis and "
             "immutable afterwards."
+        ),
+    )
+    failure: FailureResponse | None = Field(
+        description=(
+            "Why the analysis failed, or `null` while it has not. Never `null` "
+            "when `status` is `failed`: the reason is written with the status "
+            "(#265). A client reads this and never infers a reason from `images`."
         ),
     )
 
@@ -466,6 +506,20 @@ class ImageResponse(BaseModel):
     )
 
 
+def failure_of(record: AnalysisRecord) -> FailureResponse | None:
+    """The stored failure, or `None` on a row that has not failed.
+
+    The two columns are `NULL` together or set together — the table's CHECK —
+    so one test on either is the whole question. Shared with the results
+    route, which serves the same fact.
+    """
+    if record.failure_code is None or record.failure_reason is None:
+        return None
+    return FailureResponse(
+        code=ErrorCode(record.failure_code), reason=FailureReason(record.failure_reason)
+    )
+
+
 def _response(record: AnalysisRecord, images: Sequence[ImageQuality] = ()) -> AnalysisResponse:
     return AnalysisResponse(
         id=record.id,
@@ -486,6 +540,7 @@ def _response(record: AnalysisRecord, images: Sequence[ImageQuality] = ()) -> An
             # rather than a missing field.
             image_sha256={ImageSide(image.side): image.sha256 for image in images},
         ),
+        failure=failure_of(record),
     )
 
 
@@ -887,10 +942,12 @@ async def run_one_analysis(
                 "The analysis is not waiting for a confirmation. A bare body "
                 "while it has merely not got there yet — outside the spec §66 "
                 "taxonomy, which has no code meaning 'conflict' — and the §66 "
-                "envelope once it has `failed`, carrying `image_quality_failure` "
-                "when the gate refused the photographs and `analysis_failed` "
-                "otherwise. The difference is whether trying again could ever "
-                "help."
+                "envelope once it has `failed`, carrying the code the row "
+                "stores (#265): `image_quality_failure` when the gate refused "
+                "the photographs and `analysis_failed` otherwise, with the "
+                "stored reason as `details.reason` and, for the first, the "
+                "refused sides as `details.sides`. The difference is whether "
+                "trying again could ever help."
             ),
         },
         status.HTTP_429_TOO_MANY_REQUESTS: {
@@ -938,7 +995,7 @@ async def confirm_card(
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND)
 
     if record.status == AnalysisStatus.FAILED:
-        raise _failed(images)
+        raise _failed(record, images)
 
     if record.status != _CONFIRMABLE:
         # Safe to name the state: ownership is established, and the caller can
@@ -988,34 +1045,44 @@ def _not_confirmable(current: str) -> str:
     return f"A card is confirmed while the analysis is waiting for one, and this one is {current}."
 
 
-def _failed(images: Sequence[ImageQuality]) -> ApiError:
-    """Why a failed analysis cannot take a confirmation — #36.
+def _failed(record: AnalysisRecord, images: Sequence[ImageQuality]) -> ApiError:
+    """Why a failed analysis cannot take a confirmation — #36, #265.
 
     A `failed` analysis used to fall into `_not_confirmable`'s 409, whose copy
     reads "your photographs are not ready for this yet" and invites a retry that
     can never succeed. §65 has no edge out of `failed`, so this is a permanent
     answer and has to say so.
 
-    Two of spec §66's eight codes describe it exactly, and neither had a caller
-    until now. Which one depends on what the images say: the gate refusing them
-    is `image_quality_failure`, and anything else — a dead-lettered job, an
-    unreachable dependency the runner gave up on — is `analysis_failed`. The
-    distinction matters because only the first is the user's to fix, and it has
-    always been wrong for a dead-lettered job too, not merely since the gate
-    existed.
+    The code and the reason are the row's (#265). This used to decide the code
+    from `images[].quality_status` — right when the gate refused, and wrong
+    for a dead-lettered job or a model that raised, which looked exactly like a
+    healthy run whose photographs passed. The row is written by the one place
+    that knows, and nothing here guesses. `details.reason` is the vocabulary
+    the client keys its copy off; `details.sides` names the refused
+    photographs beside an `image_quality_failure`, because those are a fact
+    about the images the user can act on, not a reason.
     """
-    unusable = [image.side for image in images if image.quality_status == QualityStatus.UNUSABLE]
-    if unusable:
+    failure = failure_of(record)
+    if failure is None:
+        # The CHECK forbids it; if it is ever seen, the row is corrupt and this
+        # is a 500's business, not a 409's.
+        raise RuntimeError(f"analysis {record.id} is failed with no recorded reason")
+    details: dict[str, Any] = {"reason": failure.reason.value}
+    if failure.code is ErrorCode.IMAGE_QUALITY_FAILURE:
+        details["sides"] = sorted(
+            image.side for image in images if image.quality_status == QualityStatus.UNUSABLE
+        )
         return ApiError(
-            ErrorCode.IMAGE_QUALITY_FAILURE,
+            failure.code,
             "These photographs cannot support an analysis.",
             status_code=status.HTTP_409_CONFLICT,
-            details={"sides": sorted(unusable)},
+            details=details,
         )
     return ApiError(
-        ErrorCode.ANALYSIS_FAILED,
+        failure.code,
         "This analysis did not finish.",
         status_code=status.HTTP_409_CONFLICT,
+        details=details,
     )
 
 

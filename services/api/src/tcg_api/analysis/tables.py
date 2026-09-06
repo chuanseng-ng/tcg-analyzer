@@ -73,6 +73,7 @@ from tcg_domain.analysis import (
 # `CreateTable(analyses)` raises NoReferencedTableError. The column object is
 # referenced directly rather than by the string "cards.id" so that the dependency
 # is visible to a reader and to a type checker, and cannot be a silent typo.
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.catalog.tables import cards
 
 # `analyses.market_snapshot_id` points at §36's snapshots, so the market domain
@@ -105,6 +106,10 @@ __all__ = [
 #: Spec §65's terminal states, in the enum's own order so the rendered DDL is
 #: stable. `completed_at` is only meaningful for one of these.
 _TERMINAL: Final = tuple(status for status in AnalysisStatus if status in TERMINAL_STATUSES)
+
+#: The two spec §66 codes a failed analysis may carry (#265) — the values
+#: `FailureReason.code` can answer, rendered rather than retyped.
+_FAILURE_CODES: Final = tuple(dict.fromkeys(reason.code.value for reason in FailureReason))
 
 
 analysis_sessions = sa.Table(
@@ -366,6 +371,34 @@ analyses = sa.Table(
             "nothing joins it, and the results route reads the whole document."
         ),
     ),
+    sa.Column(
+        "failure_code",
+        sa.Text(),
+        nullable=True,
+        comment=(
+            "Which of spec §66's codes a failed analysis failed under — only ever "
+            "'image_quality_failure' (the §19 gate refused a photograph, the one "
+            "failure the user can fix) or 'analysis_failed' (everything else); the "
+            "taxonomy stays closed at eight (ADR 0005). Written in the same statement "
+            "as the move to 'failed' and derived from failure_reason by the one writer "
+            "(#265), so the two never disagree. NULL on every analysis that has not "
+            "failed."
+        ),
+    ),
+    sa.Column(
+        "failure_reason",
+        sa.Text(),
+        nullable=True,
+        comment=(
+            "Why a failed analysis failed — the closed vocabulary in "
+            "tcg_api.analysis.failures, never a message, a traceback or exception "
+            "text (spec §54, #265). Chosen from the exception's type where the job "
+            "runner gives up, or 'unusable_photograph' where the gate refuses; a "
+            "model that declined is a stored refusal in grade_predictions and never "
+            "a failure. Read by every consumer and re-derived from the photographs by "
+            "none. NULL on every analysis that has not failed."
+        ),
+    ),
     sa.CheckConstraint(
         one_of("status", AnalysisStatus),
         name="status_is_a_known_analysis_state",
@@ -375,6 +408,21 @@ analyses = sa.Table(
     sa.CheckConstraint(
         f"completed_at IS NULL OR {one_of('status', _TERMINAL)}",
         name="completed_at_accompanies_a_terminal_status",
+    ),
+    # Strict both ways (#265): a `failed` row without its reason would be the
+    # guess this column exists to end, and a reason on a live row would be a
+    # claim the row's own status contradicts. The pair is written in one
+    # statement by `state.transition`, which derives the code from the reason;
+    # nothing here binds the two to each other because that one writer does.
+    sa.CheckConstraint(
+        "(status = 'failed' AND failure_code IS NOT NULL AND failure_reason IS NOT NULL) "
+        "OR (status <> 'failed' AND failure_code IS NULL AND failure_reason IS NULL)",
+        name="failure_is_recorded_exactly_when_failed",
+    ),
+    sa.CheckConstraint(
+        f"(failure_code IS NULL OR {one_of('failure_code', _FAILURE_CODES)}) "
+        f"AND (failure_reason IS NULL OR {one_of('failure_reason', FailureReason)})",
+        name="failure_names_a_known_reason",
     ),
     sa.Index("ix_analyses_session_id", "session_id"),
     # No index on `card_id`: nothing deletes from the catalog, so the RESTRICT

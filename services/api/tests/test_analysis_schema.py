@@ -29,7 +29,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import sqlalchemy as sa
@@ -37,6 +37,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.tables import (
     REPRODUCIBILITY_COLUMNS,
     analyses,
@@ -234,6 +235,19 @@ def analysis_values(**overrides: Any) -> dict[str, Any]:
     return values | overrides
 
 
+#: The failure a bare `failed` fixture carries (#265): the CHECK refuses one
+#: without, and `job_dead_lettered` is what a runner that gave up records.
+DEAD_LETTERED: Final = {
+    "failure_code": FailureReason.JOB_DEAD_LETTERED.code.value,
+    "failure_reason": FailureReason.JOB_DEAD_LETTERED.value,
+}
+
+
+def failure_for(status: AnalysisStatus) -> dict[str, str]:
+    """What a row in `status` must carry in the failure columns — the CHECK's rule."""
+    return DEAD_LETTERED if status is AnalysisStatus.FAILED else {}
+
+
 def publish_snapshots() -> None:
     """Two snapshots, so the reproducibility record has something to point at.
 
@@ -365,7 +379,7 @@ def test_every_one_of_the_nine_states_is_storable(status: AnalysisStatus) -> Non
     """
     insert_session()
 
-    insert_analysis(status=status.value)
+    insert_analysis(status=status.value, **failure_for(status))
 
     assert query(sa.select(analyses.c.status)) == [(status.value,)]
 
@@ -691,7 +705,7 @@ def test_an_image_cannot_exist_without_an_analysis() -> None:
 def test_a_terminal_analysis_may_record_when_it_finished(status: AnalysisStatus) -> None:
     insert_session()
 
-    insert_analysis(status=status.value, completed_at=NOW)
+    insert_analysis(status=status.value, completed_at=NOW, **failure_for(status))
 
     assert query(sa.select(analyses.c.completed_at)) != [(None,)]
 
@@ -708,9 +722,66 @@ def test_a_failed_analysis_need_not_have_a_completion_time() -> None:
     """Whether a reaped job records one is the state machine's question, not this table's."""
     insert_session()
 
-    insert_analysis(status=AnalysisStatus.FAILED.value)
+    insert_analysis(status=AnalysisStatus.FAILED.value, **DEAD_LETTERED)
 
     assert query(sa.select(analyses.c.completed_at)) == [(None,)]
+
+
+# ---------------------------------------------------------------------------
+# Why an analysis failed — issue #265
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("reason", list(FailureReason), ids=[r.value for r in FailureReason])
+def test_every_failure_reason_is_storable_on_a_failed_row(reason: FailureReason) -> None:
+    """The migration's literal and `FailureReason` agree — Alembic never checks."""
+    insert_session()
+
+    insert_analysis(
+        status=AnalysisStatus.FAILED.value,
+        failure_code=reason.code.value,
+        failure_reason=reason.value,
+    )
+
+    assert query(sa.select(analyses.c.failure_code, analyses.c.failure_reason)) == [
+        (reason.code.value, reason.value)
+    ]
+
+
+def test_a_failed_row_without_its_reason_is_refused() -> None:
+    """A `failed` with no reason is the guess the columns exist to end."""
+    insert_session()
+
+    with pytest.raises(IntegrityError, match="failure_is_recorded_exactly_when_failed"):
+        insert_analysis(status=AnalysisStatus.FAILED.value)
+
+
+def test_a_reason_on_an_analysis_that_has_not_failed_is_refused() -> None:
+    insert_session()
+
+    with pytest.raises(IntegrityError, match="failure_is_recorded_exactly_when_failed"):
+        insert_analysis(status=AnalysisStatus.ANALYZING.value, **DEAD_LETTERED)
+
+
+def test_a_code_outside_the_two_is_refused() -> None:
+    """Spec §66 has eight codes; a failed analysis carries one of two."""
+    insert_session()
+
+    with pytest.raises(IntegrityError, match="failure_names_a_known_reason"):
+        insert_analysis(
+            status=AnalysisStatus.FAILED.value,
+            failure_code="internal_error",
+            failure_reason=FailureReason.JOB_DEAD_LETTERED.value,
+        )
+
+
+def test_a_reason_the_vocabulary_does_not_name_is_refused() -> None:
+    insert_session()
+
+    with pytest.raises(IntegrityError, match="failure_names_a_known_reason"):
+        insert_analysis(
+            status=AnalysisStatus.FAILED.value,
+            failure_code="analysis_failed",
+            failure_reason="the store was down",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +875,11 @@ def test_an_analysis_still_moves_after_its_record_is_written() -> None:
             (
                 sa.update(analyses)
                 .where(analyses.c.id == ANALYSIS_ID)
-                .values(status=AnalysisStatus.FAILED.value, completed_at=sa.func.now()),
+                .values(
+                    status=AnalysisStatus.FAILED.value,
+                    completed_at=sa.func.now(),
+                    **DEAD_LETTERED,
+                ),
                 None,
             )
         ]

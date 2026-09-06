@@ -37,13 +37,20 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import TERMINAL_STATUSES, AnalysisStatus, legal_predecessors
 
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.sessions import execute
 from tcg_api.analysis.tables import analyses
 
 __all__ = ["transition"]
 
 
-async def transition(db: AsyncSession, analysis_id: UUID, *, to: AnalysisStatus) -> bool:
+async def transition(
+    db: AsyncSession,
+    analysis_id: UUID,
+    *,
+    to: AnalysisStatus,
+    failure: FailureReason | None = None,
+) -> bool:
     """Move `analysis_id` to `to`, if that is legal from wherever it is now.
 
     Returns whether this call is the one that moved it. `False` covers every way
@@ -55,7 +62,14 @@ async def transition(db: AsyncSession, analysis_id: UUID, *, to: AnalysisStatus)
 
     Does not commit. The caller owns the transaction, so a transition and
     whatever it accompanies land together or not at all.
+
+    A move to `failed` carries its `failure` — the reason, from which the §66
+    code follows — in the **same statement** as the status, so a row can never
+    be `failed` without its reason or carry a reason without being `failed`
+    (#265); the table's CHECK says the same. Any other move refuses one.
     """
+    if (failure is None) != (to is not AnalysisStatus.FAILED):
+        raise ValueError("a move to `failed` needs a reason, and only that move takes one")
     sources = legal_predecessors(to)
     if not sources:
         # `created` is where a row starts, never somewhere it moves to. The
@@ -70,6 +84,9 @@ async def transition(db: AsyncSession, analysis_id: UUID, *, to: AnalysisStatus)
         # database's clock, not this process's: an analysis is finished when the
         # row says so.
         values["completed_at"] = sa.func.now()
+    if failure is not None:
+        values["failure_code"] = failure.code.value
+        values["failure_reason"] = failure.value
 
     statement = (
         sa.update(analyses)
