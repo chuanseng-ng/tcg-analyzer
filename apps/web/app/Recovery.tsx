@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { Container } from "@/components/Container";
 
 import styles from "./recovery.module.css";
@@ -14,26 +12,37 @@ import styles from "./recovery.module.css";
  * page that exists because something else failed cannot depend on the thing
  * that failed. What it is told to say is all it says: nothing here reads an
  * error object.
+ *
+ * **The links are plain anchors, not `next/link`, on purpose.** Next's error
+ * boundary clears itself only when the pathname changes, so a crash on `/`
+ * followed by a client-side push to `/` would leave the boundary exactly as
+ * it was; a full document load resets the boundary and whatever client state
+ * threw. A 404 pays a page load it did not need, which costs nothing. This is
+ * the one place in `apps/web` where `<a>` fits better than `Link`.
  */
 export function Recovery({
   heading,
   body,
   href,
   action,
+  alert = false,
 }: {
   readonly heading: string;
   readonly body: string;
   readonly href: "/" | "/analyze";
   readonly action: string;
+  /** Announce it: a crash is, a wrong address is not. */
+  readonly alert?: boolean;
 }) {
   return (
     <>
       <header>
         <Container>
           <p className={styles.brand}>
-            <Link className={styles.brandLink} href="/">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full load is the point, see above */}
+            <a className={styles.brandLink} href="/">
               TCG Grading Advisor
-            </Link>
+            </a>
           </p>
         </Container>
       </header>
@@ -41,13 +50,13 @@ export function Recovery({
       <main>
         <Container>
           <div className={styles.page}>
-            <div className={styles.gate}>
+            <div className={styles.gate} role={alert ? "alert" : undefined}>
               <h1 className={styles.heading}>{heading}</h1>
               <p className={styles.body}>{body}</p>
               <div className={styles.actions}>
-                <Link className={styles.action} href={href}>
+                <a className={styles.action} href={href}>
                   {action}
-                </Link>
+                </a>
               </div>
             </div>
           </div>
@@ -72,6 +81,7 @@ export function Crashed() {
       }
       href="/"
       action="Back to the start"
+      alert
     />
   );
 }

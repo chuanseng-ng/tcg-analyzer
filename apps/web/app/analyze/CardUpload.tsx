@@ -649,9 +649,9 @@ function Stored({
             Both photographs are stored.
           </p>
           <p className={styles.note}>
-            Nothing has been analysed yet. Next, find this card in the catalog and confirm it — the
-            product will not guess which card you are holding. Confirming it is what starts the
-            reading of its condition and its likely grades.
+            Nothing has been analysed yet. Choosing which card this is, below, is what starts the
+            reading of its condition and its likely grades — the product will not guess which card
+            you are holding, so the catalog is where you confirm it.
           </p>
           <button className={styles.send} type="button" onClick={onChooseCard} disabled={busy}>
             {busy ? "Getting ready…" : "Choose which card this is"}

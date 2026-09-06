@@ -7,8 +7,7 @@ import { Crashed } from "./Recovery";
  *
  * Next hands the boundary the error and a `reset`, and this shows neither:
  * an exception's text is not this product's voice, and it may name a
- * variable, a path or a URL (`lib/env.ts` refusing a malformed base URL puts
- * the value in its message). The one way out is the start, not `reset`,
+ * variable, a path or a URL. The one way out is the start, not `reset`,
  * because re-rendering the segment that just threw rarely helps and a link
  * back into `/analyze` would loop if the crash was there. Nothing is logged
  * from the client; Next already reports the error on the server.

@@ -240,10 +240,14 @@ describe("sending", () => {
     fireEvent.click(sendButton());
 
     await screen.findByText("Both photographs are stored.");
-    // The reading exists since M9; what is still to come is the confirmation
-    // that starts it (#261).
+    // The reading exists since M7/M8, and the button under this paragraph is
+    // what runs it (#251) — not the confirmation on `/identify`, which the
+    // worker has already read the card by (#261).
     expect(screen.queryByText(/still being built/)).not.toBeInTheDocument();
-    expect(screen.getByText(/confirming it is what starts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/confirming it is what starts/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/choosing which card this is, below, is what starts the reading/i),
+    ).toBeInTheDocument();
     expect(startAnalysisMock).toHaveBeenCalledTimes(1);
     expect(uploadImageMock.mock.calls.map(([request]) => request.side)).toEqual(["front", "back"]);
     expect(uploadImageMock.mock.calls.map(([request]) => request.analysisId)).toEqual([
