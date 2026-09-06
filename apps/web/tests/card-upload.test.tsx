@@ -240,6 +240,10 @@ describe("sending", () => {
     fireEvent.click(sendButton());
 
     await screen.findByText("Both photographs are stored.");
+    // The reading exists since M9; what is still to come is the confirmation
+    // that starts it (#261).
+    expect(screen.queryByText(/still being built/)).not.toBeInTheDocument();
+    expect(screen.getByText(/confirming it is what starts/i)).toBeInTheDocument();
     expect(startAnalysisMock).toHaveBeenCalledTimes(1);
     expect(uploadImageMock.mock.calls.map(([request]) => request.side)).toEqual(["front", "back"]);
     expect(uploadImageMock.mock.calls.map(([request]) => request.analysisId)).toEqual([

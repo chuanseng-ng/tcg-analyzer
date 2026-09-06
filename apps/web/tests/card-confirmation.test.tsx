@@ -182,6 +182,23 @@ describe("the confirmation gate", () => {
     expect(confirmCardMock).not.toHaveBeenCalled();
   });
 
+  it("says nothing was analysed for want of photographs, and where to take them", async () => {
+    // Since M9 the reading, the grades and the economics exist; what is true
+    // with no photographs in the tab is that there is nothing to read (#261).
+    getCardMock.mockResolvedValue(card());
+
+    render(<CardConfirmation />);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
+    await screen.findByRole("heading", { name: /^Confirmed/ });
+
+    expect(screen.getByText(/holds no photographs of it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/still being built/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Photograph the card" })).toHaveAttribute(
+      "href",
+      "/analyze",
+    );
+  });
+
   it("records the card against the analysis the tab is working on", async () => {
     getCardMock.mockResolvedValue(card());
     withPhotographs();
@@ -307,7 +324,12 @@ describe("the confirmation gate", () => {
   });
 
   it("never becomes a door into analysis", async () => {
+    // The question never links out to `/analyze`, and neither does a
+    // confirmation the analysis recorded — the way on from there is the costs.
+    // The one link to `/analyze` is on the confirmation the page kept to
+    // itself (#261), because then there is nothing for it to be a door into.
     getCardMock.mockResolvedValue(card());
+    withPhotographs();
 
     const { container } = render(<CardConfirmation />);
     await screen.findByRole("heading", { name: "Charizard" });
