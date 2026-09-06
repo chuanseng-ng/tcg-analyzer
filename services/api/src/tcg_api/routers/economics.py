@@ -618,11 +618,12 @@ class CompanyEconomicsResponse(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Spec §38's `price_confidence`: the **weakest** of the prices behind these "
-            "figures, each discounted for its age at the moment of asking. Already "
-            "multiplied into every `confidence` above — reported here so a reader "
-            "can see how much of that was the market rather than the model, never "
-            "applied a second time. `null` when nothing was priced."
+            "Spec §38's `price_confidence`: the **weakest** of the age-discounted price "
+            "confidences the engine was handed for this company — the raw price and "
+            "its graded ladder. Each of those already entered the figures' own "
+            "`confidence` (probability-weighted over the ladder, as a floor for the "
+            "raw price), so this is reported to show how weak the market side was, "
+            "never applied again. `null` when nothing was priced."
         ),
         examples=[0.86],
     )
@@ -750,8 +751,9 @@ class MarketSnapshotReference(BaseModel):
             "How old a price has to be before it is worth only the floor of its "
             "provider's confidence — this deployment's judgement about its "
             "ingestion cadence, not a fact about prices. A client says *stale* of a "
-            "`*_price_age_seconds` only past this number and never owns one of its "
-            "own (spec §38: stale data is identified, not hidden)."
+            "`*_price_age_seconds` from this number on — the age at which "
+            "`price_confidence` reaches the floor — and never owns one of its own "
+            "(spec §38: stale data is identified, not hidden)."
         ),
         examples=[2592000],
     )
@@ -1337,6 +1339,8 @@ def _graded_prices(
     graded, raw = _ladder(observations, company)
     return (
         {
+            # `_ladder` already dropped the raw observation; the guard is what
+            # narrows `Grade | None` to `Grade` for the dict's key type.
             observation.grade: priced(observation)
             for observation in graded
             if observation.grade is not None
@@ -1355,10 +1359,11 @@ class PriceFreshness:
         graded_age: The **oldest** of this company's graded prices, never a
             mean — the mean would hide exactly the gap §38 names. `None` when
             the snapshot held no price for any of its grades.
-        confidence: The **weakest** of the prices, each discounted for its age
-            — the same numbers the engine multiplied into every figure, so this
-            is reported, never applied a second time. `None` when nothing was
-            priced.
+        confidence: The **weakest** of the age-discounted price confidences
+            the engine was handed — raw and graded together. Each entered the
+            figures' own confidence in the engine's way (a probability-weighted
+            sum over the ladder, a floor for the raw price); this is reported,
+            never applied again. `None` when nothing was priced.
     """
 
     raw_age: timedelta | None
@@ -1396,11 +1401,8 @@ def _freshness(
             None
             if not priced
             else min(
-                (
-                    price_confidence(observation, at=at, stale_after=stale_after)
-                    for observation in priced
-                ),
-                key=lambda confidence: confidence.value,
+                price_confidence(observation, at=at, stale_after=stale_after)
+                for observation in priced
             )
         ),
     )

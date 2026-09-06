@@ -213,8 +213,9 @@ function ageInWords(seconds: number): string {
 /**
  * Spec §38's `price_age`, per company, as one sentence beside the figures
  * (#262): when the ungraded price was seen, when the oldest graded price was,
- * and the word "stale" only past `staleAfter` — the threshold the wire sent
- * as `market_snapshot.stale_after_seconds`, never one decided here. `null`
+ * and the word "stale" from `staleAfter` on — the threshold the wire sent as
+ * `market_snapshot.stale_after_seconds`, the age at which the server's
+ * `price_confidence` reaches its floor, never one decided here. `null`
  * when nothing was priced, because the figures already carry their reason.
  */
 export function priceAgeSentence(
@@ -223,7 +224,7 @@ export function priceAgeSentence(
   staleAfter: number,
 ): string | null {
   const seen = (age: number) =>
-    `was seen ${ageInWords(age)}${age > staleAfter ? ", and is stale" : ""}`;
+    `was seen ${ageInWords(age)}${age >= staleAfter ? ", and is stale" : ""}`;
   if (rawAge !== null && gradedAge !== null) {
     return `The ungraded price ${seen(rawAge)}, and the oldest graded price ${seen(gradedAge)}.`;
   }

@@ -286,8 +286,9 @@ between the last two. Nine decisions shape it:
 - **Every priced figure says how old its prices are** (#262, spec §38). Under
   each company's figures, one sentence says when the ungraded price was seen
   and when the oldest graded price was — hours under a day, days from there —
-  and calls one "stale" only past `market_snapshot.stale_after_seconds`, the
-  threshold the wire sent; nothing here owns one. A company nothing was priced
+  and calls one "stale" from `market_snapshot.stale_after_seconds` on — the
+  threshold the wire sent, the age at which the server's `price_confidence`
+  reaches its floor; nothing here owns one. A company nothing was priced
   for gets no sentence, because its figures already carry their reason.
 - **The grade distribution is drawn whole, and the chart is the table.** Spec
   §2.1 insists the distribution be kept, not collapsed to a grade, so each

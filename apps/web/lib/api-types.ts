@@ -1205,7 +1205,7 @@ export interface components {
             investment_roi_reason: string | null;
             /**
              * Price Confidence
-             * @description Spec §38's `price_confidence`: the **weakest** of the prices behind these figures, each discounted for its age at the moment of asking. Already multiplied into every `confidence` above — reported here so a reader can see how much of that was the market rather than the model, never applied a second time. `null` when nothing was priced.
+             * @description Spec §38's `price_confidence`: the **weakest** of the age-discounted price confidences the engine was handed for this company — the raw price and its graded ladder. Each of those already entered the figures' own `confidence` (probability-weighted over the ladder, as a floor for the raw price), so this is reported to show how weak the market side was, never applied again. `null` when nothing was priced.
              * @example 0.86
              */
             price_confidence: number | null;
@@ -1949,7 +1949,7 @@ export interface components {
             id: string;
             /**
              * Stale After Seconds
-             * @description How old a price has to be before it is worth only the floor of its provider's confidence — this deployment's judgement about its ingestion cadence, not a fact about prices. A client says *stale* of a `*_price_age_seconds` only past this number and never owns one of its own (spec §38: stale data is identified, not hidden).
+             * @description How old a price has to be before it is worth only the floor of its provider's confidence — this deployment's judgement about its ingestion cadence, not a fact about prices. A client says *stale* of a `*_price_age_seconds` from this number on — the age at which `price_confidence` reaches the floor — and never owns one of its own (spec §38: stale data is identified, not hidden).
              * @example 2592000
              */
             stale_after_seconds: number;

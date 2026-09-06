@@ -157,12 +157,12 @@ describe("priceAgeSentence", () => {
     );
   });
 
-  it("says a price is stale only past the wire's threshold", () => {
-    expect(priceAgeSentence(30 * DAY, null, STALE_AFTER)).toBe(
-      "The ungraded price was seen 30 days ago.",
+  it("says a price is stale from the wire's threshold on — where its confidence hits the floor", () => {
+    expect(priceAgeSentence(30 * DAY - 1, null, STALE_AFTER)).toBe(
+      "The ungraded price was seen 29 days ago.",
     );
-    expect(priceAgeSentence(31 * DAY, null, STALE_AFTER)).toBe(
-      "The ungraded price was seen 31 days ago, and is stale.",
+    expect(priceAgeSentence(30 * DAY, null, STALE_AFTER)).toBe(
+      "The ungraded price was seen 30 days ago, and is stale.",
     );
   });
 
