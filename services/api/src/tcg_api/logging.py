@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
+from uuid import uuid4
 
 import structlog
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tcg_api.config import Settings
 
-__all__ = ["configure_logging"]
+__all__ = ["RequestLogMiddleware", "configure_logging"]
 
 #: Marks the handler this module owns, so reconfiguring replaces it instead of
 #: stacking a second copy and duplicating every line.
@@ -80,3 +84,60 @@ def configure_logging(settings: Settings) -> None:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True
+    # uvicorn's access line says the same thing as `api.request_completed`
+    # below, with the raw path where that line carries the route template
+    # (spec §54, #266). Its warnings and errors still come through.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+
+class RequestLogMiddleware:
+    """One `api.request_completed` line per request, joined to every other line by a request id.
+
+    The id is generated here and never read from the client — a client that
+    could choose it could forge a join key into another request's lines. It is
+    bound into contextvars for the request, so `merge_contextvars` puts it on
+    every line the request logs, and echoed as `X-Request-Id` so a user can
+    quote it. The line carries the route *template* (`/analyses/{analysis_id}`),
+    never the path: the template counts, the path names a user's analysis.
+
+    Pure ASGI, like `errors._UnexpectedErrorMiddleware`, and outermost: a 404
+    and a preflight are requests too, and a contextvar bound out here is what
+    the catch-all's `api.unhandled_exception` inside picks up. The line is
+    written in a `finally` — the catch-all has already answered the 500 and
+    re-raised by the time control comes back, so the status is observed, not
+    inferred, and the exception keeps going.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = str(uuid4())
+        status: int | None = None
+
+        async def _send(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+                MutableHeaders(scope=message)["X-Request-Id"] = request_id
+            await send(message)
+
+        started = time.perf_counter()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+        try:
+            await self.app(scope, receive, _send)
+        finally:
+            # Set by FastAPI's router on a match; absent on a 404 or a preflight.
+            route = scope.get("route")
+            structlog.get_logger(__name__).info(
+                "api.request_completed",
+                method=scope["method"],
+                route=None if route is None else route.path,
+                status=status,
+                duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            )
+            structlog.contextvars.clear_contextvars()
