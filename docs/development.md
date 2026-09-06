@@ -219,9 +219,9 @@ What spec §67 asks the product to track, and where each is read from:
 | ML inference latency | `analysis.step_completed` | `duration_ms` where `step` is `condition` or `grading` |
 | market-data latency | `market.prices_ingested` | **reserved** — unmeasurable until #54 ingests anything |
 | failure rates | `analysis.job_finished`, `analysis.dead_lettered` | `outcome`, `reason` |
-| provider errors | `analysis.job_retrying`, `analysis.dead_lettered` | `error` (the exception's type, never its message) |
+| provider errors | `api.error`; `analysis.job_retrying`, `analysis.dead_lettered` | `code` = `provider_error`, per `route` through the request id; `error` (the exception's type, never its message) |
 | model confidence | `analysis.grades_predicted`, `economics.results_computed` | `model_confidence`, `distribution_confidence` — per company; the model's certainty, never a probability of a grade |
-| analysis completion rate | `analysis.job_finished` | `outcome` |
+| analysis completion rate | `economics.configuration_recorded`, `analysis.queued` | one over the other in the same window — the worker never writes `completed` (#244), so `analysis.job_finished` cannot carry this |
 
 The budgets those numbers are held to, and the first measurement of each, are
 [`observability.md`](observability.md)'s, not this one's.

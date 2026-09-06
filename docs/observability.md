@@ -48,38 +48,39 @@ says which number each of them quotes.
   ever been timed through the pipeline; the budgets below leave room for
   that, and the first measurement on a real photograph is the next section
   someone appends here.
-- **How the lines were read.** With the `Logs` step now running on a green
-  run too (the CI change in this PR — a dump, not a check), the run's log is
-  one download, and the JSON lines are what
-  [`development.md`](development.md#logs) describes. The filter used:
-
-  ```bash
-  gh run view 34063674946 --log | grep -o '{"[^"]*".*"event": ".*}' | jq -c 'select((.event // "") | test("^(analysis|image|api|economics)\\."))'
-  ```
-
-  Locally the same lines come off the stack directly:
-
-  ```bash
-  docker compose -f infrastructure/local/docker-compose.yml logs --no-log-prefix api worker
-  ```
-
 - **Statistics.** Six runs is not a distribution. A p95 over n = 6 is the
   maximum, so the tables below report **every run** and the maximum, and the
   budgets are stated as p95 because that is what they will be compared
   against once there are runs to take one over. Latencies are on one cold
   runner with one worker process and one client; nothing was contended.
 
+**How the lines were read.** With the `Logs` step now running on a green run
+too (the CI change in this PR — a dump, not a check), the run's log is one
+download, and the JSON lines are what [`development.md`](development.md#logs)
+describes. The filter used keeps only structlog's lines — the `python` job's
+output carries JSON-shaped fragments `jq` would choke on:
+
+```bash
+gh run view 34063674946 --log | grep -o '{"[^"]*".*"event": ".*}' | jq -c 'select((.event // "") | test("^(analysis|image|api|economics)\\."))'
+```
+
+Locally the same lines come off the stack directly:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml logs --no-log-prefix api worker
+```
+
 ## The eight signals, their budgets, and what was measured
 
-| # | Signal (§67) | Read from | Statistic | Budget | Measured (2026-09-07, six runs) |
+| # | Signal (§67) | Read from | Statistic | Budget | Measured (run 34063674946, six runs) |
 | --- | --- | --- | --- | --- | --- |
 | 1 | analysis latency | `analysis.step_completed` | Σ `duration_ms` over a run's four steps, p95 | **≤ 10 s** | max **956 ms**; 31 – 956 ms |
 | 2 | image-processing latency | `image.assessed` | `duration_ms` per side, p95, split by `cached` | **≤ 3 s** uncached, **≤ 100 ms** cached | uncached max **462 ms**; cached max **14.6 ms** |
-| 3 | ML inference latency | `analysis.step_completed` | `duration_ms`, `step` ∈ {`condition`, `grading`}, summed, p95 | **≤ 3 s** | max **235 ms** (227.3 + 7.8) |
+| 3 | ML inference latency | `analysis.step_completed` | `duration_ms`, `step` ∈ {`condition`, `grading`}, summed, p95 | **≤ 3 s** | max **235.1 ms** (227.3 + 7.8) |
 | 4 | market-data latency | `market.prices_ingested` (reserved) | `duration_ms` per ingestion run; snapshot age at read | run: **none until measured**; age **≤ 30 days** | **unmeasurable until #54** |
 | 5 | failure rates | `analysis.dead_lettered`, `analysis.job_retrying`, `analysis.job_finished` | dead-lettered ÷ `analysis.queued`, same window; retries counted; gate refusals reported | dead-letter **≤ 1 %**; retries **≤ 5 %**; refusals **no budget** | **0 / 6** dead-lettered, **0** retries; 2 / 6 refused by design |
 | 6 | provider errors | `api.error` (`code = provider_error`), `analysis.job_retrying` (`error`) | errors ÷ `api.request_completed`, per `route`, same window | **≤ 1 %** per route | **0 / 102** requests; 0 worker errors |
-| 7 | model confidence | `analysis.grades_predicted`, `economics.results_computed` | `model_confidence`, `distribution_confidence` per company — a distribution to watch | **no budget** (ADR 0011) | **0.35** for PSA, TAG and BGS on every predicted run; `{}` where all three refused |
+| 7 | model confidence | `analysis.grades_predicted`, `economics.results_computed` | `model_confidence`, `distribution_confidence` per company — a value to watch for drift | **no budget** (ADR 0011) | **0.35** for PSA, TAG and BGS on every predicted run; `{}` where all three refused |
 | 8 | analysis completion rate | `economics.configuration_recorded` ÷ `analysis.queued` | same window; abandonment is in the denominator | **no floor yet** | **1 / 6** (five stop short by design) |
 
 ### 1. Analysis latency
@@ -166,7 +167,7 @@ image work at all, and 100 ms is seven times the slowest one measured.
 
 `analysis.step_completed` where `step` is `condition` or `grading`, summed
 per run: the four axis analyzers over both artifacts, then the three
-per-company predictors over the assessment. Measured 235 ms at most
+per-company predictors over the assessment. Measured 235.1 ms at most
 (227.3 + 7.8), and 4.9 ms on the checkerboard, where the analyzers found
 nothing to assess and every predictor refused.
 
@@ -298,22 +299,23 @@ four requests wide, so a client polling on schedule never has two in flight.
 
 ## What reads these numbers
 
-- **#272 — the run's time limits.** `task_soft_time_limit` = **60 s**,
-  `task_time_limit` = **120 s**. Sixty seconds is six times the analysis
+- **#272 — the run's time limits.** Neither exists yet; #272 will set
+  `task_soft_time_limit` to **60 s** and `task_time_limit` to **120 s**.
+  Sixty seconds is six times the analysis
   budget, past `/analyze`'s 20 s wait and CI's 30 s ceiling: a run there is
-  not slow, it is stuck, and the soft limit writes `timed_out` through
+  not slow, it is stuck, and the soft limit will write `timed_out` through
   `transition(..., failure=)` so the row says so. `RETRY_BACKOFF_MAX_SECONDS`
   is already 60 s — "so a long backoff cannot outlive the analysis" — and the
   two now agree on what that means. The hard limit is the backstop at twice
   the soft one; with `acks_late` and prefork a hard kill acks the message,
-  so the row is left for the stall sweep, which treats an analysis
+  so the row is left for the stall sweep, which will treat an analysis
   `identifying` for **≥ 15 min** as stalled — the longest a legitimate run
   can be there is four attempts of 120 s plus three backoffs of at most 60 s,
   eleven minutes. Changing any of these three changes this section in the
   same PR.
-- **#271 — the `/results` poll.** First interval **1 s**, backing off to a
-  cap of **10 s** (the poll route answers in milliseconds; the cap is for the
-  tab left open, not the request). The screen stops polling and says the
+- **#271 — the `/results` poll.** Today it polls at 1 s with no cap; #271
+  will keep the first interval at **1 s** and back off to a cap of **10 s** (the poll route answers in milliseconds; the cap is for the
+  tab left open, not the request). The screen will stop polling and say the
   analysis is stuck at **2 min**, the hard limit above: a row still
   `identifying` then has been hard-killed or is between retries, and neither
   is worth a spinner. `stuck` is a screen state, never a §65 state.
