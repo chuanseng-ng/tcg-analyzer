@@ -767,6 +767,10 @@ describe("each price's age — #262, spec §38", () => {
   });
 
   it("says nothing about ages for a company nothing was priced for", async () => {
+    // A snapshot exists, so the threshold is on the wire; this company simply
+    // had no price in it — the sentence must be absent, not "seen null".
+    readResultsMock.mockResolvedValue(results({ market_snapshot: SNAPSHOT }));
+
     await shown();
 
     expect(screen.queryByText(/price was seen/)).not.toBeInTheDocument();
