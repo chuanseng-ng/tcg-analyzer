@@ -985,6 +985,37 @@ def test_two_predicted_companies_answer_with_their_distributions_and_a_recommend
 
 @pytest.mark.integration
 @requires_postgres
+def test_the_results_line_logs_each_confidence_and_the_decisive_reason(
+    client: TestClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Spec §67's model confidence and failure reason, off one line — never an
+    amount or a distribution (spec §54, #266 decision 5)."""
+    from tcg_api.config import Settings
+    from tcg_api.logging import configure_logging
+
+    configure_logging(Settings(_env_file=None, log_format="json"))
+    analysis_id = analyzing(client)
+    configured(client, analysis_id, "bgs", "psa")
+    predicted(analysis_id, bgs=BGS_ENTRY, psa=STORED_PSA_ENTRY, tag=REFUSED)
+    photographed(analysis_id, score=0.9)
+
+    client.get(f"/analyses/{analysis_id}/results")
+
+    (line,) = [
+        json.loads(raw)
+        for raw in capsys.readouterr().out.splitlines()
+        if raw.startswith("{") and "economics.results_computed" in raw
+    ]
+    assert line["analysis_id"] == analysis_id
+    assert line["distribution_confidence"] == {"bgs": 0.35, "psa": 0.35}
+    assert line["recommended_action"] == "insufficient_information"
+    assert line["reason"] == "no_company_can_be_ranked"
+    assert "grade_distribution" not in json.dumps(line)
+    assert "probability" not in json.dumps(line)
+
+
+@pytest.mark.integration
+@requires_postgres
 def test_a_refused_company_is_not_a_companies_entry(client: TestClient) -> None:
     """A refusal has no distribution to carry; it is unranked, and never fabricated."""
     analysis_id = analyzing(client)

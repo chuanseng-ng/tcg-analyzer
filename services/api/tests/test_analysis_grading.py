@@ -321,6 +321,33 @@ def test_the_outcome_is_logged_with_the_analysis_it_belongs_to(
     assert "distribution" not in lines[0]
 
 
+def test_each_answering_model_logs_its_confidence(
+    wired: _Recorder, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec §67's model confidence, per company that answered — the model's own
+    certainty, not a measurement of the card (#266, decision 5); a refusal has
+    none, and the distribution stays out (spec §54)."""
+    import json
+
+    from tcg_api.config import Settings
+    from tcg_api.logging import configure_logging
+
+    configure_logging(Settings(_env_file=None, log_format="json"))
+    _with_psa(monkeypatch, lambda _assessment: InsufficientInformation("not_this_card"))
+
+    run(lambda: grading.predict_grades(None, uuid.uuid4()))
+
+    (line,) = [
+        json.loads(raw)
+        for raw in capsys.readouterr().out.splitlines()
+        if raw.startswith("{") and "analysis.grades_predicted" in raw
+    ]
+    assert set(line["model_confidence"]) == {"bgs", "tag"}
+    for value in line["model_confidence"].values():
+        assert 0 < value <= 0.35
+    assert "distribution" not in json.dumps(line)
+
+
 # ---------------------------------------------------------------------------
 # The write and the read, against PostgreSQL
 # ---------------------------------------------------------------------------

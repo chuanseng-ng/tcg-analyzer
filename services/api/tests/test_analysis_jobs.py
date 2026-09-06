@@ -15,9 +15,9 @@ setting, which is how a worker ends up accepting it by default.
 from __future__ import annotations
 
 import asyncio
+import json
 import pickle
 import sys
-import json
 import types
 import uuid
 from typing import Any
