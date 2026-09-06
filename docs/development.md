@@ -223,7 +223,8 @@ What spec §67 asks the product to track, and where each is read from:
 | model confidence | `analysis.grades_predicted`, `economics.results_computed` | `model_confidence`, `distribution_confidence` — per company; the model's certainty, never a probability of a grade |
 | analysis completion rate | `analysis.job_finished` | `outcome` |
 
-The budgets those numbers are held to are #267's document, not this one.
+The budgets those numbers are held to, and the first measurement of each, are
+[`observability.md`](observability.md)'s, not this one's.
 
 One analysis, end to end, off the shipped stack — the first command's output
 piped into the second, which keeps the id's lines and reduces each to what

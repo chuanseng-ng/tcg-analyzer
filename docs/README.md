@@ -10,6 +10,7 @@ Project documentation.
 | [`database.md`](database.md) | Migrations, the schema registry, the seeds, the catalog import, the test markers |
 | [`development.md`](development.md) | Host-based workflows — the web application, the annotation tool, object storage, background jobs |
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
+| [`observability.md`](observability.md) | Spec §67's eight signals: the event each is read from, the budget it is held to, and the first measurement off a CI run |
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
 | [`training-image-provenance-research.md`](training-image-provenance-research.md) | The rubric training-image sources are judged against, and what each one's licence actually permits |
 | [`image-quality-gate-research.md`](image-quality-gate-research.md) | Spec §19's gate measured against the corpus's real photographs, and the issues the disagreements became |
