@@ -1182,6 +1182,12 @@ export interface components {
              * @description **The full distribution, always** — spec §2.1 retains it even when a UI shows one number. Ascending by grade.
              */
             grade_distribution: components["schemas"]["GradeProbabilityResponse"][];
+            /**
+             * Graded Price Age Seconds
+             * @description Spec §38's `price_age` for **the oldest** graded price behind this company's figures — the oldest, never a mean, because a fresh 9 beside a six-week-old 10 is the gap that matters. `null` when the snapshot held no price for any of this company's grades.
+             * @example 3888000
+             */
+            graded_price_age_seconds: number | null;
             incremental_grading_decision: components["schemas"]["IncrementalGradingDecisionResponse"] | null;
             /** Incremental Reason */
             incremental_reason: string | null;
@@ -1197,6 +1203,18 @@ export interface components {
              * @description `acquisition_cost_not_supplied` when the user did not say what they paid — ADR 0007's own string, and never a zero standing in for it.
              */
             investment_roi_reason: string | null;
+            /**
+             * Price Confidence
+             * @description Spec §38's `price_confidence`: the **weakest** of the prices behind these figures, each discounted for its age at the moment of asking. Already multiplied into every `confidence` above — reported here so a reader can see how much of that was the market rather than the model, never applied a second time. `null` when nothing was priced.
+             * @example 0.86
+             */
+            price_confidence: number | null;
+            /**
+             * Raw Price Age Seconds
+             * @description Spec §38's `price_age` for the ungraded price the figures above were computed from: how long before this request it was observed. `null` when the snapshot held no raw price. Computed now, never stored, which is why the response is `no-store`.
+             * @example 7200
+             */
+            raw_price_age_seconds: number | null;
         };
         /**
          * ConditionRefusalResponse
@@ -1929,6 +1947,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Stale After Seconds
+             * @description How old a price has to be before it is worth only the floor of its provider's confidence — this deployment's judgement about its ingestion cadence, not a fact about prices. A client says *stale* of a `*_price_age_seconds` only past this number and never owns one of its own (spec §38: stale data is identified, not hidden).
+             * @example 2592000
+             */
+            stale_after_seconds: number;
         };
         /**
          * MarketSnapshotResponse

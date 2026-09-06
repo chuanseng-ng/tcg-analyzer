@@ -168,6 +168,19 @@ own spec §57 record, including the market snapshot it was computed against, whi
 is what ADR 0006 requires the UI to date-stamp. `Cache-Control: no-store`, for
 the same reason `GET /cards/{id}/market` is.
 
+**Every priced figure says how old its prices are** (#262, spec §38). Per
+company, `raw_price_age_seconds` is how long before the request the ungraded
+price was observed, `graded_price_age_seconds` is the age of the **oldest**
+graded price behind that company's figures — the oldest, never a mean, because a
+fresh 9 beside a six-week-old 10 is the gap §38 names — and `price_confidence`
+is the **weakest** of those prices' age-discounted confidences, the same numbers
+the engine already multiplied into every `confidence`, reported rather than
+applied twice. Each is `null` when the snapshot held no price of that kind.
+`market_snapshot.stale_after_seconds` carries the deployment's staleness
+threshold (`TCG_API_MARKET_STALE_AFTER_DAYS`), so a client says *stale* of an
+age only past it and never owns a threshold of its own. Ages are computed at the
+moment of asking, which is the other reason the response is `no-store`.
+
 The route answers on `completed` exactly as it does on `analyzing`: it
 composes from the stored pieces and does not care which side of that line it
 reads from. Spec §57's record is complete once the analysis is: `analysis_id`
@@ -263,7 +276,7 @@ a Postgres outage without correlating timestamps.
 | `analysis_store_unreachable` | any analysis read or write |
 | `image_store_unreachable` | the object store, on upload and on the annotation bytes route |
 | `job_queue_unreachable` | `POST /analyses/{id}/run` with Redis down or unset — deliberately not the analysis store's reason |
-| `market_store_unreachable` | `/cards/{id}/market` — deliberately not `market_data_unreachable`, since the same route also raises §66's `market_data_unavailable`, and the two must stay unmistakable in a log |
+| `market_store_unreachable` | `/cards/{id}/market`, and `/analyses/{id}/results` reading the analysis's snapshot and its prices — deliberately not `market_data_unreachable`, since the market route also raises §66's `market_data_unavailable`, and the two must stay unmistakable in a log |
 | `economic_configuration_store_unreachable` | `POST /analyses/{id}/economic-configuration` |
 | `dataset_store_unreachable` | the `/internal/annotation` routes |
 | `stored_object_missing` | an annotation row naming bytes the store does not hold — a **500** `internal_error`, not a 503, because two stores disagreeing will not come right on a retry |
