@@ -310,14 +310,16 @@ def journey() -> Iterator[list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def worked(analysis_id: str) -> None:
+def worked(analysis_id: str, *, retries: int = 0) -> None:
     """Run the job the way a worker would, without a worker.
 
     The task's function, with a request pushed so `self.request` is populated —
     the same seam `test_analysis_jobs.py` uses. No broker, no eager mode, and no
-    `asyncio.run` nested inside the test client's event loop.
+    `asyncio.run` nested inside the test client's event loop. `retries` is the
+    attempt this delivery is: at `MAX_RETRIES` a raising run dead-letters
+    instead of asking the broker for another go.
     """
-    jobs.run_analysis.push_request(retries=0, id="job-1", called_directly=False)
+    jobs.run_analysis.push_request(retries=retries, id="job-1", called_directly=False)
     try:
         jobs.run_analysis.run(analysis_id)
     finally:
@@ -423,7 +425,9 @@ def test_a_new_user_completes_an_anonymous_analysis(
         "card_id",
         "images",
         "reproducibility",
+        "failure",
     }
+    assert gated["failure"] is None
 
     # The gate's verdict is on the wire per side, and it let the card through.
     sides = {image["side"]: image for image in gated["images"]}
@@ -616,11 +620,17 @@ def test_an_unusable_photograph_fails_the_analysis_honestly(
     # The record was written at the claim, before the gate spoke.
     assert failed["reproducibility"]["application_version"] is not None
     assert failed["reproducibility"]["model_bundle_version"] is not None
+    # Why, as a stored fact (#265): the gate's refusal, and the one failure
+    # the user can fix.
+    assert failed["failure"] == {"code": "image_quality_failure", "reason": "unusable_photograph"}
 
     refused = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
     assert refused.status_code == 409, refused.text
     assert refused.json()["code"] == "image_quality_failure"
-    assert refused.json()["details"]["sides"] == ["back", "front"]
+    assert refused.json()["details"] == {
+        "reason": "unusable_photograph",
+        "sides": ["back", "front"],
+    }
 
     unconfigurable = client.post(
         f"/analyses/{analysis_id}/economic-configuration",
@@ -636,6 +646,86 @@ def test_an_unusable_photograph_fails_the_analysis_honestly(
     assert results["economic_configuration"] is None
     assert results["market_snapshot"] is None
     assert results["condition"] is None
+    assert results["companies"] == []
+    assert results["refused"] == {}
+    assert results["recommendation"] is None
+    assert results["failure"] == {"code": "image_quality_failure", "reason": "unusable_photograph"}
+
+
+@pytest.mark.integration
+@pytest.mark.object_storage
+@requires_postgres
+@needs_minio
+def test_a_model_that_breaks_fails_the_analysis_honestly(
+    client: TestClient,
+    enqueued: list[uuid.UUID],
+    journey: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model that *raised* is `analysis_failed` / `model_failed` — #265.
+
+    The one failure the first two scenarios cannot reach. A PSA predictor that
+    raises is injected through `PREDICTING_ADAPTERS` (#226's seam, #227's
+    registry); the real worker runs in-process on its last attempt, so the run
+    dead-letters rather than asking for another go. What the wire must say:
+    the stored reason, and **nothing** in `grade_predictions` — a model that
+    broke is never recorded as one that declined (ADR 0011).
+
+    What the rollback means, asserted rather than hidden: the run raised
+    inside its claim, so the claim, the §57 record and the gate's verdicts on
+    the images were never committed. The poll shows `failed` with every
+    `quality_status` null and an empty record. The two normalized artifacts
+    the gate had already written to the object store are orphaned by that
+    same rollback — `quality.py` documents the leak and #264's sweep is its
+    fix — which is why `journey` cannot find them: `normalized_uri` is null.
+    """
+    from tcg_api.analysis import grading
+    from tcg_grading_companies import PSAAdapter
+    from tcg_grading_companies.errors import GradePredictionFailed
+
+    def broken(_condition: Any) -> Any:
+        raise RuntimeError("the model's own failure, which must not reach the row")
+
+    monkeypatch.setattr(
+        grading,
+        "PREDICTING_ADAPTERS",
+        {**grading.PREDICTING_ADAPTERS, "psa": PSAAdapter(predictor=broken)},
+    )
+
+    created = client.post("/analyses").json()
+    analysis_id: str = created["id"]
+    journey.append(analysis_id)
+
+    send(client, analysis_id, "front", jpeg(photograph(seed=11)))
+    send(client, analysis_id, "back", jpeg(photograph(seed=12)))
+    assert client.post(f"/analyses/{analysis_id}/run").status_code == 202
+
+    with pytest.raises(GradePredictionFailed):
+        worked(analysis_id, retries=jobs.MAX_RETRIES)
+
+    failed = polled(client, analysis_id)
+    assert failed["status"] == "failed"
+    assert failed["completed_at"] is not None
+    assert failed["failure"] == {"code": "analysis_failed", "reason": "model_failed"}
+    # The claim rolled back with the run: nothing the run wrote survived it.
+    assert failed["reproducibility"]["application_version"] is None
+    assert {image["quality_status"] for image in failed["images"]} == {None}
+    # And nothing was recorded as a refusal — a model that broke is a failure.
+    assert querying(
+        "SELECT grade_predictions IS NULL FROM analyses WHERE id = :id",
+        id=uuid.UUID(analysis_id),
+    ) == [(True,)]
+
+    refused = client.post(f"/analyses/{analysis_id}/confirm-card", json={"card_id": str(CARD_ID)})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "analysis_failed"
+    assert refused.json()["details"] == {"reason": "model_failed"}
+
+    response = client.get(f"/analyses/{analysis_id}/results")
+    assert response.status_code == 200, response.text
+    results = response.json()
+    assert results["status"] == "failed"
+    assert results["failure"] == {"code": "analysis_failed", "reason": "model_failed"}
     assert results["companies"] == []
     assert results["refused"] == {}
     assert results["recommendation"] is None

@@ -52,6 +52,7 @@ function analysis(status = "created", images: AnalysisResponse["images"] = []): 
       economic_configuration_id: null,
       image_sha256: {},
     },
+    failure: null,
   };
 }
 

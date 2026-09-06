@@ -27,9 +27,11 @@ from kombu.exceptions import ContentDisallowed
 from kombu.serialization import dumps, loads, prepare_accept_content
 from structlog.testing import CapturingLogger
 from tcg_api.analysis import jobs
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.version import application_version
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
+from tcg_shared.storage.errors import StorageUnavailable
 
 BROKER = "redis://:local@localhost:6379/0"
 
@@ -258,20 +260,36 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
     assert 0 <= raised.value.when <= ceiling
 
 
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (ConnectionError("the store is down"), FailureReason.JOB_DEAD_LETTERED),
+        (StorageUnavailable("the bucket is down"), FailureReason.IMAGE_STORE_UNAVAILABLE),
+    ],
+    ids=["a_bare_connection_error", "the_object_store"],
+)
 def test_the_last_attempt_is_dead_lettered_and_the_analysis_fails(
-    monkeypatch: pytest.MonkeyPatch, configured: Any
+    monkeypatch: pytest.MonkeyPatch, configured: Any, error: Exception, reason: FailureReason
 ) -> None:
-    """And the record carries the job, the error and the count — nothing else.
+    """And the record carries the job, the error, the reason and the count — nothing else.
 
     Spec §54: an analysis payload references photographs of somebody's card,
     hands and living room. A dead-letter record holding one indefinitely so that
     a job nobody re-drives could theoretically be re-driven is not a trade this
-    project makes, so the assertion below is on what is *absent*.
+    project makes, so the assertion below is on what is *absent*. The reason
+    is the vocabulary the row gets (#265) — a bare `ConnectionError` names no
+    store and lands in the honest bucket; the object store's own error names it.
     """
-    failed: list[uuid.UUID] = []
+
+    async def raising(_: Any) -> bool:
+        raise error
+
+    failed: list[tuple[uuid.UUID, FailureReason]] = []
     recorder = CapturingLogger()
-    monkeypatch.setattr(jobs, "_advance", failing)
-    monkeypatch.setattr(jobs, "_fail_quietly", failed.append)
+    monkeypatch.setattr(jobs, "_advance", raising)
+    monkeypatch.setattr(
+        jobs, "_fail_quietly", lambda analysis_id, reason: failed.append((analysis_id, reason))
+    )
     # The module's own logger, replaced. `capture_logs` reconfigures structlog
     # globally, which does nothing to a logger another test has already caused
     # to be cached — and the API's app factory configures logging on creation.
@@ -280,17 +298,18 @@ def test_the_last_attempt_is_dead_lettered_and_the_analysis_fails(
     analysis_id = uuid.uuid4()
     jobs.run_analysis.push_request(retries=jobs.MAX_RETRIES, id="job-2", called_directly=False)
     try:
-        with pytest.raises(ConnectionError):
+        with pytest.raises(type(error)):
             jobs.run_analysis.run(str(analysis_id))
     finally:
         jobs.run_analysis.pop_request()
 
-    assert failed == [analysis_id]
+    assert failed == [(analysis_id, reason)]
     record = next(call for call in recorder.calls if call.args == ("analysis.dead_lettered",))
     assert record.method_name == "error"
     assert record.kwargs == {
         "job_id": "job-2",
-        "error": "ConnectionError",
+        "error": type(error).__name__,
+        "reason": reason.value,
         "attempts": jobs.MAX_RETRIES + 1,
     }
 
@@ -394,6 +413,7 @@ def _run_with_gate(
     recorded: list[dict[str, Any]] | None = None,
     condition_calls: list[dict[str, Any]] | None = None,
     grading_calls: list[dict[str, Any]] | None = None,
+    failures: list[FailureReason | None] | None = None,
     catalog_version: str | None = "pokemon-catalog-v0.3.0",
     snapshot_id: uuid.UUID | None = None,
     rules: dict[str, str | None] | None = None,
@@ -404,7 +424,9 @@ def _run_with_gate(
     the second so that a test can assert the connection is always released. A
     caller that cares about spec §57's record passes `recorded`, which collects
     the keyword arguments each write was made with; one that cares about the
-    condition step passes `condition_calls`; most callers pass neither.
+    condition step passes `condition_calls`; one that cares about the reason
+    a `failed` move carried passes `failures`, one entry per transition; most
+    callers pass none of them.
 
     All three lazily imported worker modules are stubbed through `sys.modules`
     — the real ones bind the CV stack or the `tcg_ml_` prefix, and `_advance`
@@ -418,8 +440,12 @@ def _run_with_gate(
     predicted = grading_calls if grading_calls is not None else []
     in_force = RULES_IN_FORCE if rules is None else rules
 
-    async def transition(_db: Any, _id: Any, *, to: AnalysisStatus) -> bool:
+    async def transition(
+        _db: Any, _id: Any, *, to: AnalysisStatus, failure: FailureReason | None = None
+    ) -> bool:
         moves.append(to)
+        if failures is not None:
+            failures.append(failure)
         return True
 
     async def prepare_images(_db: Any, _id: Any) -> QualityStatus:
@@ -506,10 +532,13 @@ def test_unusable_photographs_stop_the_analysis(monkeypatch: pytest.MonkeyPatch)
     photographs nothing could read would ask the user to confirm a card for an
     analysis that can only ever produce a confident guess.
     """
-    moves, _ = _run_with_gate(monkeypatch, QualityStatus.UNUSABLE)
+    failures: list[FailureReason | None] = []
+    moves, _ = _run_with_gate(monkeypatch, QualityStatus.UNUSABLE, failures=failures)
 
     assert moves == [AnalysisStatus.IDENTIFYING, AnalysisStatus.FAILED]
     assert AnalysisStatus.AWAITING_CONFIRMATION not in moves
+    # #265: the reason rides in the same move, and it is the gate's own.
+    assert failures == [None, FailureReason.UNUSABLE_PHOTOGRAPH]
 
 
 def test_the_gate_runs_after_the_claim_rather_than_before_it(

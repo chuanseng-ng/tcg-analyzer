@@ -54,6 +54,7 @@ function confirmed(): AnalysisResponse {
       economic_configuration_id: null,
       image_sha256: {},
     },
+    failure: null,
   };
 }
 

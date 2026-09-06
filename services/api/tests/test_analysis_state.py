@@ -28,6 +28,7 @@ from uuid import UUID
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine
+from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.sessions import AnalysisStoreUnavailable
 from tcg_api.analysis.state import transition
 from tcg_api.database import create_session_factory
@@ -114,7 +115,21 @@ def moving(analysis_id: UUID, *targets: AnalysisStatus) -> list[bool]:
         engine = create_async_engine(DATABASE_URL or "")
         try:
             async with create_session_factory(engine)() as db:
-                moved = [await transition(db, analysis_id, to=target) for target in targets]
+                # A move to `failed` needs its reason (#265); the runner's
+                # "gave up" is the one a bare fixture carries.
+                moved = [
+                    await transition(
+                        db,
+                        analysis_id,
+                        to=target,
+                        failure=(
+                            FailureReason.JOB_DEAD_LETTERED
+                            if target is AnalysisStatus.FAILED
+                            else None
+                        ),
+                    )
+                    for target in targets
+                ]
                 await db.commit()
                 return moved
         finally:
@@ -281,6 +296,30 @@ def test_reaching_a_terminal_state_stamps_when(
     status, completed_at = state_of(analysis)
     assert status == target.value
     assert completed_at is not None
+
+
+def test_a_failed_analysis_carries_its_reason_in_the_same_row(analysis: UUID) -> None:
+    """#265: the code and the reason land with the status, in one statement."""
+    assert moving(analysis, AnalysisStatus.FAILED) == [True]
+
+    async def read() -> tuple[str, str | None, str | None]:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            async with engine.connect() as connection:
+                row = (
+                    await connection.execute(
+                        sa.text(
+                            "SELECT status, failure_code, failure_reason"
+                            " FROM analyses WHERE id = :id"
+                        ),
+                        {"id": analysis},
+                    )
+                ).one()
+                return row.status, row.failure_code, row.failure_reason
+        finally:
+            await engine.dispose()
+
+    assert run(read) == ("failed", "analysis_failed", "job_dead_lettered")
 
 
 def test_an_unfinished_analysis_has_no_completion_time(analysis: UUID) -> None:

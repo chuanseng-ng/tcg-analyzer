@@ -107,6 +107,12 @@ class AnalysisRecord:
     grading_rules_version: str | None
     market_snapshot_id: UUID | None
     economic_configuration_id: UUID | None
+    #: Why a `failed` analysis failed (#265): spec §66's code and the
+    #: `FailureReason` value, as stored — both `None` unless `status` is
+    #: `failed`, and never `None` when it is. Strings rather than the enums, on
+    #: `status`'s terms: the row is what was written.
+    failure_code: str | None
+    failure_reason: str | None
 
 
 def new_session_token() -> str:
@@ -132,6 +138,8 @@ _ANALYSIS_COLUMNS: Final = (
     analyses.c.grading_rules_version,
     analyses.c.market_snapshot_id,
     analyses.c.economic_configuration_id,
+    analyses.c.failure_code,
+    analyses.c.failure_reason,
 )
 
 
@@ -148,6 +156,8 @@ def _record(row: sa.Row[Any]) -> AnalysisRecord:
         grading_rules_version=row.grading_rules_version,
         market_snapshot_id=row.market_snapshot_id,
         economic_configuration_id=row.economic_configuration_id,
+        failure_code=row.failure_code,
+        failure_reason=row.failure_reason,
     )
 
 

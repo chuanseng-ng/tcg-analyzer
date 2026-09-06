@@ -439,6 +439,8 @@ export interface components {
              * @description When the analysis was started.
              */
             created_at: string;
+            /** @description Why the analysis failed, or `null` while it has not. Never `null` when `status` is `failed`: the reason is written with the status (#265). A client reads this and never infers a reason from `images`. */
+            failure: components["schemas"]["FailureResponse"] | null;
             /**
              * Id
              * Format: uuid
@@ -1616,6 +1618,32 @@ export interface components {
             unpriced_probability: number;
         };
         /**
+         * FailureReason
+         * @description The closed set of reasons an analysis stops — `analyses.failure_reason`.
+         * @enum {string}
+         */
+        FailureReason: "unusable_photograph" | "catalog_unavailable" | "grading_rules_unavailable" | "image_store_unavailable" | "model_failed" | "job_dead_lettered" | "timed_out" | "stalled";
+        /**
+         * FailureResponse
+         * @description Why a `failed` analysis failed — #265, spec §66, §54.
+         *
+         *     A stored fact, never a guess: written by the worker in the same statement
+         *     as the move to `failed`, and never re-derived from the photographs by any
+         *     consumer. No message and no exception text travel with it.
+         */
+        FailureResponse: {
+            /**
+             * @description Spec §66's code — only ever `image_quality_failure`, when the §19 gate refused a photograph (the one failure the user can fix), or `analysis_failed`, for everything else. The taxonomy stays closed at eight (ADR 0005); the reason is the second field, not a code.
+             * @example image_quality_failure
+             */
+            code: components["schemas"]["ErrorCode"];
+            /**
+             * @description The closed vocabulary of why: `unusable_photograph`, `catalog_unavailable`, `grading_rules_unavailable`, `image_store_unavailable`, `model_failed` (a grading model *raised*, or the stored condition assessment was one the domain refused — a model that declined is a stored refusal, not a failure), `job_dead_lettered` (the runner gave up on something with no name here), and `timed_out` / `stalled`, reserved for the bounding issue and written by nobody yet.
+             * @example unusable_photograph
+             */
+            reason: components["schemas"]["FailureReason"];
+        };
+        /**
          * GradeProbabilityResponse
          * @description One term of a grade distribution — spec §2.1's `P(g)`.
          */
@@ -2366,6 +2394,8 @@ export interface components {
             currency: string;
             /** @description What the economics were computed under, or `null` if none was supplied. */
             economic_configuration: components["schemas"]["EconomicConfigurationResponse"] | null;
+            /** @description Why the analysis failed, or `null` while it has not — the same stored fact `GET /analyses/{id}` serves (#265), here so a results screen holding this body need not go back for it. Never `null` when `status` is `failed`. */
+            failure: components["schemas"]["FailureResponse"] | null;
             /** @description The snapshot recorded on this analysis, or `null` when nothing had been ingested when it ran. */
             market_snapshot: components["schemas"]["MarketSnapshotReference"] | null;
             /** @description Spec §44's answer, or `null` when nothing has been asked yet — no configuration, or no prediction stored. **`null` is not `insufficient_information`**: the first means nobody has asked, the second that we asked and the data did not support an answer. */
@@ -2756,7 +2786,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description The analysis is not waiting for a confirmation. A bare body while it has merely not got there yet — outside the spec §66 taxonomy, which has no code meaning 'conflict' — and the §66 envelope once it has `failed`, carrying `image_quality_failure` when the gate refused the photographs and `analysis_failed` otherwise. The difference is whether trying again could ever help. */
+            /** @description The analysis is not waiting for a confirmation. A bare body while it has merely not got there yet — outside the spec §66 taxonomy, which has no code meaning 'conflict' — and the §66 envelope once it has `failed`, carrying the code the row stores (#265): `image_quality_failure` when the gate refused the photographs and `analysis_failed` otherwise, with the stored reason as `details.reason` and, for the first, the refused sides as `details.sides`. The difference is whether trying again could ever help. */
             409: {
                 headers: {
                     [name: string]: unknown;

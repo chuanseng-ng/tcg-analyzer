@@ -851,6 +851,25 @@ def test_results_are_empty_rather_than_absent_before_anything_is_computed(
     assert body["recommendation"] is None
     assert body["economic_configuration"] is None
     assert body["market_snapshot"] is None
+    assert body["failure"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_failed_analysis_carries_its_failure_on_the_results(client: TestClient) -> None:
+    """#265: the same stored fact `GET /analyses/{id}` serves, so a results
+    screen that already has this body need not go back for the reason."""
+    analysis_id = client.post("/analyses").json()["id"]
+    executing(
+        "UPDATE analyses SET status = 'failed', failure_code = 'analysis_failed',"
+        " failure_reason = 'catalog_unavailable' WHERE id = :id",
+        id=uuid.UUID(analysis_id),
+    )
+
+    body = client.get(f"/analyses/{analysis_id}/results").json()
+
+    assert body["status"] == "failed"
+    assert body["failure"] == {"code": "analysis_failed", "reason": "catalog_unavailable"}
 
 
 @pytest.mark.integration
