@@ -718,8 +718,11 @@ jobs:
       - name: The annotation tool serves
         run: curl -fsS --retry 10 --retry-all-errors -o /dev/null localhost:3001
 
+      # On a green run too: the JSON lines are spec §67's measurement, and
+      # `docs/observability.md` reads its figures off this step. A dump, never
+      # an assertion — a duration asserted in CI is flaky by construction.
       - name: Logs
-        if: failure()
+        if: always()
         run: $COMPOSE logs --no-color
 
       - name: Stop the stack
@@ -778,8 +781,11 @@ jobs:
           path: apps/web/test-results/
           if-no-files-found: ignore
 
+      # On a green run too: the JSON lines are spec §67's measurement, and
+      # `docs/observability.md` reads its figures off this step. A dump, never
+      # an assertion — a duration asserted in CI is flaky by construction.
       - name: Logs
-        if: failure()
+        if: always()
         run: $COMPOSE logs --no-color
 
       - name: Stop the stack
