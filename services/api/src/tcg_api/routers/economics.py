@@ -1848,8 +1848,11 @@ async def read_results(
                 ),
                 refusals,
             )
-        # Identifiers, which companies answered and the verdict — never a
-        # probability or an amount (spec §54, and what a user paid is theirs).
+        # Identifiers, which companies answered, the verdict, the gate that
+        # decided it and how far each model trusted its own distribution (spec
+        # §67; the confidence describes the model, not the card — #266) —
+        # never a probability or an amount (spec §54, and what a user paid is
+        # theirs).
         logger.info(
             "economics.results_computed",
             analysis_id=str(record.id),
@@ -1858,6 +1861,11 @@ async def read_results(
             recommended_action=(
                 None if recommendation is None else str(recommendation.recommended_action)
             ),
+            reason=None if recommendation is None else recommendation.reason.code,
+            distribution_confidence={
+                outlook.company: round(outlook.distribution_confidence.value, 3)
+                for outlook in outlooks
+            },
             market_snapshot_id=None if snapshot is None else str(snapshot.id),
         )
 

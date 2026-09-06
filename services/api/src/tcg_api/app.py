@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from tcg_api.config import Settings, get_settings
 from tcg_api.database import get_engine
 from tcg_api.errors import ErrorResponse, install_error_handlers
-from tcg_api.logging import configure_logging
+from tcg_api.logging import RequestLogMiddleware, configure_logging
 from tcg_api.rate_limit import get_redis
 from tcg_api.routers import (
     analyses,
@@ -120,8 +120,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # reaches the user as "too many requests, unknown wait" — and the only
         # thing left to offer is a button that fires straight back into the
         # limit. Found in a browser; curl reads every header regardless.
-        expose_headers=["Retry-After"],
+        expose_headers=["Retry-After", "X-Request-Id"],
     )
+
+    # After CORS on purpose, so it is the outermost layer: a preflight and a
+    # 404 are requests too, and the request id it binds is what every line
+    # inside — the catch-all's included — carries (#266).
+    app.add_middleware(RequestLogMiddleware)
 
     app.include_router(health.router, responses=ERROR_RESPONSES)
     app.include_router(readiness.router, responses=ERROR_RESPONSES)

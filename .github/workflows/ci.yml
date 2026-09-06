@@ -304,13 +304,14 @@ jobs:
       - name: The API is live
         run: curl -fsS --retry 5 --retry-all-errors localhost:8000/health
 
-      - name: The API reached PostgreSQL and MinIO
+      - name: The API reached PostgreSQL, MinIO and Redis
         run: |
           readiness=$(curl -fsS --retry 5 --retry-all-errors localhost:8000/readiness)
           echo "$readiness"
           test "$(echo "$readiness" | jq -r '.status')" = ok
           test "$(echo "$readiness" | jq -r '.checks.database')" = ok
           test "$(echo "$readiness" | jq -r '.checks.storage')" = ok
+          test "$(echo "$readiness" | jq -r '.checks.redis')" = ok
 
       # The worker has no port to probe and no healthcheck to wait on — nothing
       # calls a Celery worker — so the honest assertion is that it is still up

@@ -57,4 +57,4 @@ def test_retry_after_is_readable_by_the_browser() -> None:
 
     exposed = response.headers["access-control-expose-headers"]
 
-    assert "Retry-After" in {header.strip() for header in exposed.split(",")}
+    assert {"Retry-After", "X-Request-Id"} <= {header.strip() for header in exposed.split(",")}

@@ -6,11 +6,20 @@ non-idempotent configuration would stack handlers and duplicate every line.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import re
+import uuid
+from pathlib import Path
 
 import pytest
+import structlog
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from tcg_api.app import create_app
 from tcg_api.config import Settings
-from tcg_api.logging import configure_logging
+from tcg_api.logging import RequestLogMiddleware, configure_logging
 
 
 @pytest.mark.parametrize("log_format", ["json", "console"])
@@ -44,3 +53,147 @@ def test_uvicorn_loggers_are_routed_through_the_same_pipeline() -> None:
         logger = logging.getLogger(name)
         assert logger.handlers == []
         assert logger.propagate is True
+
+
+# ---------------------------------------------------------------------------
+# The request line (#266)
+# ---------------------------------------------------------------------------
+def _json_lines(out: str, event: str) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in out.splitlines()
+        if line.startswith("{") and json.loads(line).get("event") == event
+    ]
+
+
+def _json_app() -> FastAPI:
+    return create_app(Settings(_env_file=None, log_format="json"))
+
+
+def test_a_request_is_logged_with_its_template_and_a_duration(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One `api.request_completed` per request: the route *template*, never the path."""
+    with TestClient(_json_app()) as client:
+        response = client.get("/health")
+
+    (line,) = _json_lines(capsys.readouterr().out, "api.request_completed")
+    assert line["method"] == "GET"
+    assert line["route"] == "/health"
+    assert line["status"] == 200
+    assert isinstance(line["duration_ms"], float)
+    assert line["duration_ms"] >= 0
+    assert line["request_id"] == response.headers["X-Request-Id"]
+
+
+def test_a_client_supplied_request_id_is_ignored() -> None:
+    """The id is generated, never accepted — a client cannot forge a join key."""
+    with TestClient(_json_app()) as client:
+        response = client.get("/health", headers={"X-Request-Id": "attacker"})
+
+    echoed = response.headers["X-Request-Id"]
+    assert echoed != "attacker"
+    uuid.UUID(echoed)
+
+
+def test_an_unmatched_path_logs_no_route_and_never_the_raw_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A 404 is a request too, and whatever the client typed stays out of the log."""
+    with TestClient(_json_app()) as client:
+        client.get("/no-such-route-9f3a")
+
+    out = capsys.readouterr().out
+    (line,) = _json_lines(out, "api.request_completed")
+    assert line["route"] is None
+    assert line["status"] == 404
+    # The service's own lines only: the test client's `httpx` logger prints
+    # the URL it requested, which is not this service's doing.
+    service_lines = [line for line in out.splitlines() if '"logger": "tcg_api' in line]
+    assert service_lines
+    assert not any("no-such-route-9f3a" in line for line in service_lines)
+
+
+def test_the_request_id_joins_the_error_line_to_the_request(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The catch-all's line and the request line share the id, and nothing leaks past the request."""
+    app = _json_app()
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise LookupError("boom")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.get("/boom")
+
+    out = capsys.readouterr().out
+    (error,) = _json_lines(out, "api.unhandled_exception")
+    (request,) = _json_lines(out, "api.request_completed")
+    assert request["status"] == 500
+    assert request["request_id"] == error["request_id"]
+
+
+def test_the_request_id_is_bound_for_the_request_and_cleared_after_it() -> None:
+    """Driven directly, in one task: `TestClient` runs the app on another thread,
+    whose contextvars the test's own context never sees, so an assertion on
+    `get_contextvars()` after a `client.get` passes whatever the middleware did."""
+    seen: list[dict[str, object]] = []
+
+    async def raising_app(scope: object, receive: object, send: object) -> None:
+        seen.append(dict(structlog.contextvars.get_contextvars()))
+        raise LookupError("boom")
+
+    async def scenario() -> None:
+        scope = {"type": "http", "method": "GET", "path": "/x", "headers": []}
+        with pytest.raises(LookupError):
+            await RequestLogMiddleware(raising_app)(scope, _never, _never)
+        assert structlog.contextvars.get_contextvars() == {}
+
+    asyncio.run(scenario())
+
+    (inside,) = seen
+    uuid.UUID(str(inside["request_id"]))
+
+
+async def _never(*_: object) -> None:
+    raise AssertionError("neither receive nor send is reached")
+
+
+# ---------------------------------------------------------------------------
+# The `extra=` trap (repository rule)
+# ---------------------------------------------------------------------------
+SRC = Path(__file__).resolve().parents[1] / "src" / "tcg_api"
+
+#: A `logger.<level>(...)` call whose arguments include `extra=`. One level of
+#: nested parentheses, so `str(x)` and `round(x, 1)` arguments do not end the
+#: match early.
+#: ponytail: an `extra=` after a doubly-nested argument is missed; a real parser
+#: if anyone ever writes one.
+EXTRA_IN_A_LOG_CALL = re.compile(
+    r"\blogger\.(?:debug|info|warning|error|exception|critical)\((?:[^()]|\([^()]*\))*\bextra="
+)
+
+
+def test_no_log_call_passes_a_stdlib_extra_mapping() -> None:
+    """`configure_logging`'s `ProcessorFormatter` chain carries no `ExtraAdder`, so
+    a stdlib `extra={...}` is silently discarded — the line still appears and
+    says nothing, which is worse than no line. Values go in as structlog
+    keywords, always."""
+    offending = sorted(
+        str(path.relative_to(SRC))
+        for path in SRC.rglob("*.py")
+        if EXTRA_IN_A_LOG_CALL.search(path.read_text(encoding="utf-8"))
+    )
+
+    assert offending == []
+
+
+def test_the_extra_guard_recognises_the_trap() -> None:
+    """The regex is the test; a regex that matches nothing would pass forever."""
+    assert EXTRA_IN_A_LOG_CALL.search('logger.warning("x", extra={"a": 1})')
+    assert EXTRA_IN_A_LOG_CALL.search(
+        'logger.error(\n    "x",\n    path=str(p),\n    extra={"a": 1},\n)'
+    )
+    assert not EXTRA_IN_A_LOG_CALL.search('logger.warning("x", exc_info=True)')
+    assert not EXTRA_IN_A_LOG_CALL.search('model_config = ConfigDict(extra="forbid")')

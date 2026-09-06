@@ -15,6 +15,7 @@ setting, which is how a worker ends up accepting it by default.
 from __future__ import annotations
 
 import asyncio
+import json
 import pickle
 import sys
 import types
@@ -22,13 +23,15 @@ import uuid
 from typing import Any
 
 import pytest
+import structlog
 from celery.exceptions import Retry
 from kombu.exceptions import ContentDisallowed
 from kombu.serialization import dumps, loads, prepare_accept_content
 from structlog.testing import CapturingLogger
 from tcg_api.analysis import jobs
 from tcg_api.analysis.failures import FailureReason
-from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
+from tcg_api.config import REDIS_URL_ENV_VAR, Settings, get_settings
+from tcg_api.logging import configure_logging
 from tcg_api.version import application_version
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 from tcg_shared.storage.errors import StorageUnavailable
@@ -217,13 +220,13 @@ def test_the_sweep_is_not_retried(configured: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def failing(_: Any) -> bool:
+async def failing(_: Any) -> AnalysisStatus | None:
     raise ConnectionError("the store is down")
 
 
-async def already_done(_: Any) -> bool:
+async def already_done(_: Any) -> AnalysisStatus | None:
     """What `_advance` answers when the analysis has already been claimed."""
-    return False
+    return None
 
 
 @pytest.mark.parametrize("retries", [0, 1, 2], ids=["first", "second", "third"])
@@ -243,7 +246,9 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
     and retrying them all on the same schedule is how a recovering database gets
     knocked over a second time.
     """
+    recorder = CapturingLogger()
     monkeypatch.setattr(jobs, "_advance", failing)
+    monkeypatch.setattr(jobs, "logger", recorder)
     # `called_directly` is what tells Celery this is a worker and not a bare
     # function call; without it `retry` re-raises the original by design, and
     # the test would be asserting against a path a worker never takes.
@@ -258,6 +263,11 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
 
     ceiling = min(jobs.RETRY_BACKOFF_SECONDS * 2**retries, jobs.RETRY_BACKOFF_MAX_SECONDS)
     assert 0 <= raised.value.when <= ceiling
+    # Spec §67's provider errors: a run that retries and then succeeds would
+    # otherwise leave no record of what went wrong. The type, never the message.
+    (retrying,) = [call for call in recorder.calls if call.args == ("analysis.job_retrying",)]
+    assert retrying.kwargs["error"] == "ConnectionError"
+    assert retrying.kwargs["attempts"] == retries + 1
 
 
 @pytest.mark.parametrize(
@@ -281,7 +291,7 @@ def test_the_last_attempt_is_dead_lettered_and_the_analysis_fails(
     store and lands in the honest bucket; the object store's own error names it.
     """
 
-    async def raising(_: Any) -> bool:
+    async def raising(_: Any) -> AnalysisStatus | None:
         raise error
 
     failed: list[tuple[uuid.UUID, FailureReason]] = []
@@ -307,11 +317,15 @@ def test_the_last_attempt_is_dead_lettered_and_the_analysis_fails(
     record = next(call for call in recorder.calls if call.args == ("analysis.dead_lettered",))
     assert record.method_name == "error"
     assert record.kwargs == {
+        "analysis_id": str(analysis_id),
         "job_id": "job-2",
         "error": type(error).__name__,
         "reason": reason.value,
         "attempts": jobs.MAX_RETRIES + 1,
     }
+    # Cleared on the way out even when the run raised: a bind that outlived
+    # its run would stamp the next task's lines with this analysis.
+    assert structlog.contextvars.get_contextvars() == {}
 
 
 def test_a_delivery_with_nothing_to_do_is_not_an_error(
@@ -328,6 +342,70 @@ def test_a_delivery_with_nothing_to_do_is_not_an_error(
         jobs.run_analysis.pop_request()
 
     assert [call.args[0] for call in recorder.calls] == ["analysis.job_ignored"]
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [AnalysisStatus.AWAITING_CONFIRMATION, AnalysisStatus.FAILED],
+    ids=["awaiting_confirmation", "failed"],
+)
+def test_a_finished_run_reports_its_outcome_and_total(
+    monkeypatch: pytest.MonkeyPatch, configured: Any, outcome: AnalysisStatus
+) -> None:
+    """Spec §67's completion rate is a count over this one line's `outcome`."""
+
+    async def advance(_: Any) -> AnalysisStatus | None:
+        return outcome
+
+    recorder = CapturingLogger()
+    monkeypatch.setattr(jobs, "_advance", advance)
+    monkeypatch.setattr(jobs, "logger", recorder)
+    analysis_id = uuid.uuid4()
+    jobs.run_analysis.push_request(retries=0, id="job-4", called_directly=False)
+    try:
+        jobs.run_analysis.run(str(analysis_id))
+    finally:
+        jobs.run_analysis.pop_request()
+
+    (record,) = [call for call in recorder.calls if call.args == ("analysis.job_finished",)]
+    assert record.kwargs["analysis_id"] == str(analysis_id)
+    assert record.kwargs["job_id"] == "job-4"
+    assert record.kwargs["outcome"] == str(outcome)
+    assert isinstance(record.kwargs["total_ms"], float)
+    assert record.kwargs["total_ms"] >= 0
+
+
+def test_the_bound_identifiers_reach_every_line_of_the_run(
+    monkeypatch: pytest.MonkeyPatch, configured: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A line a step logs carries the analysis and the job without naming them itself.
+
+    Through the configured pipeline rather than a `CapturingLogger`, because
+    the bound values only join a line in `merge_contextvars`, which a
+    substituted logger never runs.
+    """
+    configure_logging(Settings(_env_file=None, log_format="json"))
+
+    async def advance(_: Any) -> AnalysisStatus | None:
+        structlog.get_logger("tcg_api.analysis.quality").info("image.assessed")
+        return AnalysisStatus.AWAITING_CONFIRMATION
+
+    monkeypatch.setattr(jobs, "_advance", advance)
+    analysis_id = uuid.uuid4()
+    jobs.run_analysis.push_request(retries=0, id="job-5", called_directly=False)
+    try:
+        jobs.run_analysis.run(str(analysis_id))
+    finally:
+        jobs.run_analysis.pop_request()
+
+    (line,) = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{") and json.loads(line)["event"] == "image.assessed"
+    ]
+    assert line["analysis_id"] == str(analysis_id)
+    assert line["job_id"] == "job-5"
+    assert structlog.contextvars.get_contextvars() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +576,12 @@ def _run_with_gate(
     monkeypatch.setattr(jobs, "PostgresCardDatabaseVersionRepository", versions)
     monkeypatch.setattr(jobs, "current_snapshot", current_snapshot)
 
-    assert asyncio.run(jobs._advance(uuid.uuid4())) is True
+    expected = (
+        AnalysisStatus.FAILED
+        if verdict is QualityStatus.UNUSABLE
+        else AnalysisStatus.AWAITING_CONFIRMATION
+    )
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is expected
     return moves, engine
 
 
@@ -567,7 +650,7 @@ def test_the_gate_runs_after_the_claim_rather_than_before_it(
     monkeypatch.setattr(jobs, "create_session_factory", lambda _engine: _FakeSession)
     monkeypatch.setattr(jobs, "transition", refuse_to_claim)
 
-    assert asyncio.run(jobs._advance(uuid.uuid4())) is False
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is None
     assert assessed == []
 
 
@@ -835,8 +918,33 @@ def test_an_unclaimed_delivery_writes_no_record(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(jobs, "record_reproducibility", record_reproducibility)
     monkeypatch.setattr(jobs, "current_snapshot", never_resolved)
 
-    assert asyncio.run(jobs._advance(uuid.uuid4())) is False
+    assert asyncio.run(jobs._advance(uuid.uuid4())) is None
     assert written == []
+
+
+@pytest.mark.parametrize(
+    ("verdict", "steps"),
+    [
+        (QualityStatus.GOOD, ["versions", "gate", "condition", "grading"]),
+        (QualityStatus.UNUSABLE, ["versions", "gate"]),
+    ],
+    ids=["good", "unusable"],
+)
+def test_every_step_is_timed(
+    monkeypatch: pytest.MonkeyPatch, verdict: QualityStatus, steps: list[str]
+) -> None:
+    """Spec §67's latencies: one `analysis.step_completed` per step the run reached, in order."""
+    recorder = CapturingLogger()
+    monkeypatch.setattr(jobs, "logger", recorder)
+
+    _run_with_gate(monkeypatch, verdict)
+
+    timed = [call for call in recorder.calls if call.args == ("analysis.step_completed",)]
+    assert [call.kwargs["step"] for call in timed] == steps
+    for call in timed:
+        assert call.method_name == "info"
+        assert isinstance(call.kwargs["duration_ms"], float)
+        assert call.kwargs["duration_ms"] >= 0
 
 
 def test_the_connection_is_released_however_the_gate_answers(

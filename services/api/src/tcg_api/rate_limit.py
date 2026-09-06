@@ -151,13 +151,12 @@ async def analysis_rate_limit(request: Request) -> None:
     except (RedisError, OSError, RuntimeError):
         # Fails open — see the module docstring. Logged at warning because a
         # limiter that is silently not limiting is worth noticing.
-        logger.warning("ratelimit.unavailable", path=request.url.path, exc_info=True)
+        logger.warning("ratelimit.unavailable", exc_info=True)
         return
 
     # The hashed client, never the address, and nothing else about the caller.
     logger.warning(
         "ratelimit.throttled",
-        path=request.url.path,
         client=key.removeprefix(RATE_LIMIT_KEY_PREFIX),
         retry_after=retry_after,
     )

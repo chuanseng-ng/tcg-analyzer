@@ -105,7 +105,7 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres 
 | `API_PORT` | `8000` | Published API port |
 | `WEB_PORT` | `3000` | Published web port |
 | `ANNOTATION_PORT` | `3001` | Published port for the internal annotation tool |
-| `TCG_API_LOG_FORMAT` | `console` | `console` locally, `json` in a deployment |
+| `TCG_API_LOG_FORMAT` | `json` | The shipped default; `console` is a developer's opt-in, set here |
 | `TCG_API_LOG_LEVEL` | `INFO` | Root log level |
 
 Override them with an untracked `.env` beside `docker-compose.yml` — most often

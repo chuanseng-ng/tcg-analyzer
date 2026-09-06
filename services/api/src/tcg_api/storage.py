@@ -13,9 +13,9 @@ answer the same operational questions and should not have to be learned twice.
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 
+import structlog
 from tcg_shared.storage import ObjectNotFound, ObjectStorage, StorageKey
 from tcg_shared.storage.s3 import S3ObjectStorage, create_s3_client
 
@@ -28,7 +28,7 @@ from tcg_api.config import (
     get_settings,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 __all__ = [
     "check_object_storage_connectivity",
@@ -116,7 +116,7 @@ async def check_object_storage_connectivity(storage: ObjectStorage) -> bool:
     except ObjectNotFound:
         return True
     except Exception:
-        logger.warning("object storage connectivity check failed", exc_info=True)
+        logger.warning("storage.connectivity_check_failed", exc_info=True)
         return False
     # A real object under the probe key would be surprising, but it is still the
     # store answering.

@@ -143,9 +143,9 @@ that sweep can be a prefix scan rather than a full listing. Not built, because
 nothing yet needs it.
 
 **Dead-letter records.** They expire by construction rather than by policy: the
-record is a log line carrying the job id, the exception's type and the attempt
-count, and never a payload, a traceback or an image URI. There is nothing in one
-to retain.
+record is a log line carrying the job id, the analysis id, the exception's type
+and the attempt count, and never a payload, a traceback or an image URI. There
+is nothing in one to retain.
 
 **Backups.** Whatever a deployment's database and bucket backups retain is
 outside this document, and a deployment that takes them owes its own answer.

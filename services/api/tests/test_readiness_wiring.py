@@ -19,7 +19,11 @@ from fastapi.testclient import TestClient
 from tcg_api.app import create_app
 from tcg_api.config import get_settings
 from tcg_api.database import get_engine, get_session_factory
-from tcg_api.routers.readiness import database_is_reachable, object_storage_is_reachable
+from tcg_api.routers.readiness import (
+    database_is_reachable,
+    object_storage_is_reachable,
+    redis_is_reachable,
+)
 from tcg_api.storage import get_object_storage
 
 CACHES = (get_settings, get_engine, get_session_factory, get_object_storage)
@@ -28,7 +32,7 @@ CACHES = (get_settings, get_engine, get_session_factory, get_object_storage)
 @pytest.fixture
 def app_without_dependencies(monkeypatch: pytest.MonkeyPatch):
     """The application with no database and no storage configuration at all."""
-    for variable in ("TCG_API_DATABASE_URL", "TCG_API_STORAGE_BUCKET"):
+    for variable in ("TCG_API_DATABASE_URL", "TCG_API_STORAGE_BUCKET", "TCG_API_REDIS_URL"):
         monkeypatch.delenv(variable, raising=False)
     for cached in CACHES:
         cached.cache_clear()
@@ -42,6 +46,7 @@ def app_with_dependencies(*, database: bool = True, storage: bool = True):
     app = create_app()
     app.dependency_overrides[database_is_reachable] = lambda: database
     app.dependency_overrides[object_storage_is_reachable] = lambda: storage
+    app.dependency_overrides[redis_is_reachable] = lambda: "ok"
     return app
 
 
@@ -62,7 +67,10 @@ def test_readiness_reports_ok_when_every_dependency_answers() -> None:
         response = client.get("/readiness")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "checks": {"database": "ok", "storage": "ok"}}
+    assert response.json() == {
+        "status": "ok",
+        "checks": {"database": "ok", "storage": "ok", "redis": "ok"},
+    }
 
 
 @pytest.mark.parametrize("failing", ["database", "storage"])
@@ -87,7 +95,7 @@ def test_readiness_names_every_failing_dependency_not_merely_the_first() -> None
 
     assert response.json() == {
         "status": "degraded",
-        "checks": {"database": "unavailable", "storage": "unavailable"},
+        "checks": {"database": "unavailable", "storage": "unavailable", "redis": "ok"},
     }
 
 
@@ -117,6 +125,16 @@ def test_readiness_is_degraded_rather_than_broken_without_configuration(
 
     assert response.status_code == 503
     assert response.json()["checks"][dependency] == "unavailable"
+
+
+def test_readiness_reports_an_unconfigured_redis_without_degrading_on_it(
+    app_without_dependencies,
+) -> None:
+    """Redis unset is the limiter's own tolerated case (ADR 0005): named, not failed."""
+    with TestClient(app_without_dependencies) as client:
+        response = client.get("/readiness")
+
+    assert response.json()["checks"]["redis"] == "not_configured"
 
 
 def test_shutdown_does_not_build_an_engine_it_never_needed(app_without_dependencies) -> None:

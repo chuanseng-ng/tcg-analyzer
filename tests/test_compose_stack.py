@@ -196,6 +196,18 @@ def test_the_published_api_port_and_the_cors_origin_agree(services: dict[str, An
     assert "${API_PORT:-8000}" in services["web"]["environment"]["NEXT_PUBLIC_API_BASE_URL"]
 
 
+@pytest.mark.parametrize("service", ["migrate", "api", "worker"])
+def test_the_shipped_stack_logs_json_unless_a_developer_opts_out(
+    services: dict[str, Any], service: str
+) -> None:
+    """Compose used to force `console`, so JSON was off in the shipped stack (#266).
+
+    The key stays — there is no `env_file:`, so it is the only way a developer's
+    `.env` reaches the container — and its default is the `Settings` default.
+    """
+    assert services[service]["environment"]["TCG_API_LOG_FORMAT"] == "${TCG_API_LOG_FORMAT:-json}"
+
+
 # ---------------------------------------------------------------------------
 # Hardening — spec §56
 # ---------------------------------------------------------------------------

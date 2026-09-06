@@ -13,23 +13,32 @@ The frozen contract:
       "status": "ok" | "degraded",
       "checks": {
         "database": "ok" | "unavailable",
-        "storage":  "ok" | "unavailable"
+        "storage":  "ok" | "unavailable",
+        "redis":    "ok" | "unavailable" | "not_configured"
       }
     }
+
+Redis has a third answer because an unset `TCG_API_REDIS_URL` is allowed on
+the limiter's terms (ADR 0005): the service starts and does not limit. That
+is reported, not failed. A configured Redis that does not answer is a dead
+queue — analyses pile up in `uploaded` — and degrades like the other two.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Literal
+from typing import Annotated, Literal
 
+import structlog
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 
 from tcg_api.database import check_database_connectivity, get_engine
+from tcg_api.rate_limit import get_redis
 from tcg_api.storage import check_object_storage_connectivity, get_object_storage
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+RedisCheck = Literal["ok", "unavailable", "not_configured"]
 
 router = APIRouter(tags=["health"])
 
@@ -42,6 +51,12 @@ class ReadinessChecks(BaseModel):
     )
     storage: Literal["ok", "unavailable"] = Field(
         description="Whether the API could reach the object store.",
+    )
+    redis: RedisCheck = Field(
+        description=(
+            "Whether the API could PING the queue's Redis. `not_configured` when "
+            "`TCG_API_REDIS_URL` is unset, which does not degrade the service."
+        ),
     )
 
 
@@ -68,7 +83,7 @@ async def database_is_reachable() -> bool:
     try:
         engine = get_engine()
     except Exception:
-        logger.warning("database engine could not be configured", exc_info=True)
+        logger.warning("readiness.database_engine_unavailable", exc_info=True)
         return False
     return await check_database_connectivity(engine)
 
@@ -84,9 +99,35 @@ async def object_storage_is_reachable() -> bool:
     try:
         storage = get_object_storage()
     except Exception:
-        logger.warning("object storage could not be configured", exc_info=True)
+        logger.warning("readiness.object_storage_unavailable", exc_info=True)
         return False
     return await check_object_storage_connectivity(storage)
+
+
+async def redis_is_reachable() -> RedisCheck:
+    """Dependency wrapping a PING, so tests can override it.
+
+    The limiter's own client, with its own socket timeouts — a hung Redis must
+    not hang the probe any more than it may hang a request. (redis-py retries
+    a refused or timed-out connection three times with backoff by default, so
+    the probe's worst case under an outage is seconds, not the quarter-second
+    socket timeout; it still answers `degraded`.) `get_redis` raises
+    `RuntimeError` when the URL is unset, which is the one construction
+    failure that is not an outage.
+    """
+    try:
+        client = get_redis()
+    except RuntimeError:
+        return "not_configured"
+    except Exception:
+        logger.warning("readiness.redis_unavailable", exc_info=True)
+        return "unavailable"
+    try:
+        await client.ping()
+    except Exception:
+        logger.warning("readiness.redis_unavailable", exc_info=True)
+        return "unavailable"
+    return "ok"
 
 
 @router.get(
@@ -106,8 +147,9 @@ async def object_storage_is_reachable() -> bool:
 )
 async def readiness(
     response: Response,
-    database_reachable: bool = Depends(database_is_reachable),
-    storage_reachable: bool = Depends(object_storage_is_reachable),
+    database_reachable: Annotated[bool, Depends(database_is_reachable)],
+    storage_reachable: Annotated[bool, Depends(object_storage_is_reachable)],
+    redis: Annotated[RedisCheck, Depends(redis_is_reachable)],
 ) -> ReadinessResponse:
     """Report dependency health.
 
@@ -122,9 +164,10 @@ async def readiness(
     checks = ReadinessChecks(
         database="ok" if database_reachable else "unavailable",
         storage="ok" if storage_reachable else "unavailable",
+        redis=redis,
     )
 
-    if not (database_reachable and storage_reachable):
+    if not (database_reachable and storage_reachable) or redis == "unavailable":
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return ReadinessResponse(status="degraded", checks=checks)
 

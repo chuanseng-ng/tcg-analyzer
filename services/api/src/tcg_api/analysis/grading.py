@@ -195,8 +195,9 @@ async def _record(
 
     One writer for both outcomes so the two shapes cannot drift, and one log
     event for the same reason (`condition.py`'s pattern). The identifier, the
-    version and which companies refused with what reason — never a
-    probability (spec §54).
+    version, which companies refused with what reason, and each answering
+    model's confidence — the model's own certainty, not a measurement of the
+    card (#266, decision 5) — but never a grade probability (spec §54).
     """
     answers: Mapping[str, Uncertain[GradePrediction]] = (
         dict.fromkeys(sorted(PREDICTING_ADAPTERS), outcome)
@@ -220,4 +221,9 @@ async def _record(
         version=GRADING_VERSION,
         refused=sorted(refused),
         reasons=refused,
+        model_confidence={
+            slug: round(answer.model_confidence.value, 3)
+            for slug, answer in answers.items()
+            if not isinstance(answer, InsufficientInformation)
+        },
     )

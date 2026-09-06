@@ -36,13 +36,13 @@ therefore nothing here that names the vendor, and no join to
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Final
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, Field
 from tcg_domain.catalog import Card, CardId
@@ -62,7 +62,7 @@ from tcg_api.market.snapshots import (
     resolve_prices,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 __all__ = [
     "CardMarketResponse",
@@ -282,7 +282,7 @@ async def resolved_market(
     try:
         factory = get_session_factory()
     except Exception as error:
-        logger.warning("market session factory could not be built", exc_info=True)
+        logger.warning("market.session_factory_unavailable", exc_info=True)
         raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
 
     async with factory() as session:
@@ -290,7 +290,7 @@ async def resolved_market(
         try:
             card = await repository.get(CardId(card_id))
         except CatalogUnavailable as error:
-            logger.warning("card could not be read for a market lookup", exc_info=True)
+            logger.warning("market.card_could_not_be_read", exc_info=True)
             raise _unreachable("catalog_unreachable", _CATALOG_UNREACHABLE) from error
 
         if card is None:
@@ -309,7 +309,7 @@ async def resolved_market(
             )
             prices = () if snapshot is None else await resolve_prices(session, snapshot, card)
         except MarketSnapshotUnavailable as error:
-            logger.warning("market prices could not be read", exc_info=True)
+            logger.warning("market.prices_could_not_be_read", exc_info=True)
             raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
 
         yield ResolvedMarket(

@@ -202,13 +202,8 @@ def install_error_handlers(app: FastAPI) -> None:
     """
 
     @app.exception_handler(ApiError)
-    async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
-        logger.warning(
-            "api.error",
-            code=exc.code.value,
-            status_code=exc.status_code,
-            path=request.url.path,
-        )
+    async def _handle_api_error(_request: Request, exc: ApiError) -> JSONResponse:
+        logger.warning("api.error", code=exc.code.value, status_code=exc.status_code)
         return exc.as_response()
 
     app.add_middleware(_UnexpectedErrorMiddleware)
