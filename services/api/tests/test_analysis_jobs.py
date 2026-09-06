@@ -246,7 +246,9 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
     and retrying them all on the same schedule is how a recovering database gets
     knocked over a second time.
     """
+    recorder = CapturingLogger()
     monkeypatch.setattr(jobs, "_advance", failing)
+    monkeypatch.setattr(jobs, "logger", recorder)
     # `called_directly` is what tells Celery this is a worker and not a bare
     # function call; without it `retry` re-raises the original by design, and
     # the test would be asserting against a path a worker never takes.
@@ -261,6 +263,11 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
 
     ceiling = min(jobs.RETRY_BACKOFF_SECONDS * 2**retries, jobs.RETRY_BACKOFF_MAX_SECONDS)
     assert 0 <= raised.value.when <= ceiling
+    # Spec §67's provider errors: a run that retries and then succeeds would
+    # otherwise leave no record of what went wrong. The type, never the message.
+    (retrying,) = [call for call in recorder.calls if call.args == ("analysis.job_retrying",)]
+    assert retrying.kwargs["error"] == "ConnectionError"
+    assert retrying.kwargs["attempts"] == retries + 1
 
 
 @pytest.mark.parametrize(

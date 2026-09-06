@@ -17,8 +17,8 @@ process is alive, so acquiring a database or network dependency there would make
 a liveness probe fail for a reason liveness is not about. Dependency checks belong
 to `GET /readiness`, which answers 200 when the service can serve traffic and 503
 with `checks.database = "unavailable"` when it cannot. It checks three things:
-PostgreSQL, the object store, and the queue's Redis with a `PING` on the
-limiter's quarter-second timeout. `checks.redis` has a third answer,
+PostgreSQL, the object store, and the queue's Redis with a `PING` through the
+limiter's own client and its timeouts. `checks.redis` has a third answer,
 `not_configured`, for an unset `TCG_API_REDIS_URL` — allowed on the limiter's
 terms (ADR 0005), so reported rather than failed; a configured Redis that does
 not answer is a dead queue and degrades the service like the other two.

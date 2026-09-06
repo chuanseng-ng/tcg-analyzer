@@ -107,9 +107,12 @@ async def object_storage_is_reachable() -> bool:
 async def redis_is_reachable() -> RedisCheck:
     """Dependency wrapping a PING, so tests can override it.
 
-    The limiter's own client, with its quarter-second timeout — a hung Redis
-    must not hang the probe any more than it may hang a request. `get_redis`
-    raises `RuntimeError` when the URL is unset, which is the one construction
+    The limiter's own client, with its own socket timeouts — a hung Redis must
+    not hang the probe any more than it may hang a request. (redis-py retries
+    a refused or timed-out connection three times with backoff by default, so
+    the probe's worst case under an outage is seconds, not the quarter-second
+    socket timeout; it still answers `degraded`.) `get_redis` raises
+    `RuntimeError` when the URL is unset, which is the one construction
     failure that is not an outage.
     """
     try:

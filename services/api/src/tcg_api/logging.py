@@ -21,6 +21,8 @@ from tcg_api.config import Settings
 
 __all__ = ["RequestLogMiddleware", "configure_logging"]
 
+logger = structlog.get_logger(__name__)
+
 #: Marks the handler this module owns, so reconfiguring replaces it instead of
 #: stacking a second copy and duplicating every line.
 _HANDLER_NAME = "tcg-api-structlog"
@@ -123,6 +125,8 @@ class RequestLogMiddleware:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
+                # ASGI lets a raw app omit `headers`; Starlette never does.
+                message.setdefault("headers", [])
                 MutableHeaders(scope=message)["X-Request-Id"] = request_id
             await send(message)
 
@@ -133,7 +137,7 @@ class RequestLogMiddleware:
         finally:
             # Set by FastAPI's router on a match; absent on a 404 or a preflight.
             route = scope.get("route")
-            structlog.get_logger(__name__).info(
+            logger.info(
                 "api.request_completed",
                 method=scope["method"],
                 route=None if route is None else route.path,

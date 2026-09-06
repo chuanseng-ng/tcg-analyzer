@@ -498,10 +498,14 @@ def run_analysis(self: Task, analysis_id: str) -> None:
                 maximum=RETRY_BACKOFF_MAX_SECONDS,
                 full_jitter=True,
             )
+            # The type and never the message, as on the dead-letter line: a
+            # run that retries and then succeeds would otherwise leave no
+            # record of what went wrong (spec §67's provider errors).
             logger.warning(
                 "analysis.job_retrying",
                 analysis_id=analysis_id,
                 job_id=self.request.id,
+                error=type(error).__name__,
                 attempts=attempts,
                 countdown=countdown,
             )

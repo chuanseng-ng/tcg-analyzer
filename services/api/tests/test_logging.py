@@ -6,6 +6,7 @@ non-idempotent configuration would stack handlers and duplicate every line.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -18,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tcg_api.app import create_app
 from tcg_api.config import Settings
-from tcg_api.logging import configure_logging
+from tcg_api.logging import RequestLogMiddleware, configure_logging
 
 
 @pytest.mark.parametrize("log_format", ["json", "console"])
@@ -131,7 +132,32 @@ def test_the_request_id_joins_the_error_line_to_the_request(
     (request,) = _json_lines(out, "api.request_completed")
     assert request["status"] == 500
     assert request["request_id"] == error["request_id"]
-    assert structlog.contextvars.get_contextvars() == {}
+
+
+def test_the_request_id_is_bound_for_the_request_and_cleared_after_it() -> None:
+    """Driven directly, in one task: `TestClient` runs the app on another thread,
+    whose contextvars the test's own context never sees, so an assertion on
+    `get_contextvars()` after a `client.get` passes whatever the middleware did."""
+    seen: list[dict[str, object]] = []
+
+    async def raising_app(scope: object, receive: object, send: object) -> None:
+        seen.append(dict(structlog.contextvars.get_contextvars()))
+        raise LookupError("boom")
+
+    async def scenario() -> None:
+        scope = {"type": "http", "method": "GET", "path": "/x", "headers": []}
+        with pytest.raises(LookupError):
+            await RequestLogMiddleware(raising_app)(scope, _never, _never)
+        assert structlog.contextvars.get_contextvars() == {}
+
+    asyncio.run(scenario())
+
+    (inside,) = seen
+    uuid.UUID(str(inside["request_id"]))
+
+
+async def _never(*_: object) -> None:
+    raise AssertionError("neither receive nor send is reached")
 
 
 # ---------------------------------------------------------------------------
