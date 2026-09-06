@@ -31,11 +31,11 @@ exactly as `routers/catalog.py` delegates to `tcg_api.catalog.versions`.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Annotated, Final
 
+import structlog
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from tcg_grading_companies import ADAPTERS, GradingCompanyAdapter, GradingRules
@@ -52,7 +52,7 @@ __all__ = [
     "router",
 ]
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["grading"])
 
@@ -167,7 +167,7 @@ async def grading_rules_in_force() -> Mapping[str, GradingRules | None]:
     try:
         factory = get_session_factory()
     except Exception as error:
-        logger.warning("grading rules session factory could not be built", exc_info=True)
+        logger.warning("grading.session_factory_unavailable", exc_info=True)
         raise _unreachable() from error
 
     today = datetime.now(UTC).date()
@@ -177,7 +177,7 @@ async def grading_rules_in_force() -> Mapping[str, GradingRules | None]:
             # windowed statement if the company list ever stops being three.
             return {company: await rules_in_force(session, company, today) for company in ADAPTERS}
         except GradingRulesUnavailable as error:
-            logger.warning("grading rules could not be read", exc_info=True)
+            logger.warning("grading.rules_could_not_be_read", exc_info=True)
             raise _unreachable() from error
 
 

@@ -18,11 +18,11 @@ delegates its probe to `tcg_api.database`.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from tcg_domain.catalog_version import CardDatabaseVersion, CardDatabaseVersionRepository
@@ -39,7 +39,7 @@ __all__ = [
     "router",
 ]
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
@@ -108,7 +108,7 @@ async def card_database_version_repository() -> AsyncIterator[CardDatabaseVersio
     try:
         factory = get_session_factory()
     except Exception as error:
-        logger.warning("catalog session factory could not be built", exc_info=True)
+        logger.warning("catalog.session_factory_unavailable", exc_info=True)
         raise ApiError(
             ErrorCode.PROVIDER_ERROR,
             _UNREACHABLE,
@@ -162,7 +162,7 @@ async def read_catalog_version(
     try:
         current = await repository.current()
     except CatalogUnavailable as error:
-        logger.warning("catalog version could not be read", exc_info=True)
+        logger.warning("catalog.version_could_not_be_read", exc_info=True)
         raise ApiError(
             ErrorCode.PROVIDER_ERROR,
             _UNREACHABLE,

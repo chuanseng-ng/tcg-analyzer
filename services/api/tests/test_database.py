@@ -117,7 +117,9 @@ def test_check_database_connectivity_returns_false_instead_of_raising(
     result = asyncio.run(database.check_database_connectivity(engine))
 
     assert result is False
-    assert any("database" in record.message.lower() for record in caplog.records)
+    assert any(
+        "database.connectivity_check_failed" in record.getMessage() for record in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

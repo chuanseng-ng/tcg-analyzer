@@ -13,12 +13,12 @@ decision open (spec §8).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Any
 
 import sqlalchemy as sa
+import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import (
 
 from tcg_api.config import DATABASE_URL_ENV_VAR, Settings, get_settings
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 __all__ = [
     "DATABASE_URL_ENV_VAR",
@@ -156,6 +156,6 @@ async def check_database_connectivity(engine: AsyncEngine) -> bool:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
     except Exception:
-        logger.warning("database connectivity check failed", exc_info=True)
+        logger.warning("database.connectivity_check_failed", exc_info=True)
         return False
     return True

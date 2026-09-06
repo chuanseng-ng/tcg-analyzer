@@ -33,12 +33,12 @@ UUID rather than an obviously missing route.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator, Sequence
 from datetime import date
 from typing import Annotated, Any, Final
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import AfterValidator, BaseModel, Field
 from tcg_domain.card import validated_identifier, validated_language, validated_slug
@@ -66,7 +66,7 @@ __all__ = [
     "router",
 ]
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/cards", tags=["cards"])
 
@@ -211,7 +211,7 @@ async def card_repository() -> AsyncIterator[CardRepository]:
     try:
         factory = get_session_factory()
     except Exception as error:
-        logger.warning("catalog session factory could not be built", exc_info=True)
+        logger.warning("catalog.session_factory_unavailable", exc_info=True)
         raise ApiError(
             ErrorCode.PROVIDER_ERROR,
             _UNREACHABLE,
@@ -479,7 +479,7 @@ async def search_cards(
     try:
         page = await repository.search(query, limit=limit, offset=offset)
     except CatalogUnavailable as error:
-        logger.warning("cards could not be searched", exc_info=True)
+        logger.warning("catalog.cards_could_not_be_searched", exc_info=True)
         raise ApiError(
             ErrorCode.PROVIDER_ERROR,
             _UNREACHABLE,
@@ -544,7 +544,7 @@ async def read_card(
             () if card is None else await repository.external_ids(identifier)
         )
     except CatalogUnavailable as error:
-        logger.warning("card could not be read", exc_info=True)
+        logger.warning("catalog.card_could_not_be_read", exc_info=True)
         raise ApiError(
             ErrorCode.PROVIDER_ERROR,
             _UNREACHABLE,
