@@ -377,7 +377,7 @@ function Confirmed({
       <p className={styles.body}>
         {saved
           ? "Your photographs are now recorded as being of this card. Nothing has analysed them yet — next is what grading it would cost you, and what you paid for it if you know."
-          : "Nothing has been analysed. Reading this card's condition, the likely grades from PSA, TAG and BGS, and the economics of sending it in are still being built."}
+          : "Nothing has been analysed, because this tab holds no photographs of it. Photographing the card is what starts an analysis — of its condition, the likely grades from PSA, TAG and BGS, and whether sending it in is worth it."}
       </p>
       <p className={styles.footnote}>
         {saved
@@ -386,9 +386,13 @@ function Confirmed({
       </p>
 
       <div className={styles.actions}>
-        {saved && (
+        {saved ? (
           <Link className={styles.confirm} href="/configure">
             Set the costs
+          </Link>
+        ) : (
+          <Link className={styles.confirm} href="/analyze">
+            Photograph the card
           </Link>
         )}
         <Link className={styles.change} href="/cards">

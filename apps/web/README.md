@@ -26,7 +26,7 @@ pnpm --filter @tcg/web typecheck  # next typegen && tsc --noEmit
 
 | Path             | Contents                                                                                                                                                                                                                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`           | App Router routes. `/` is the landing page                                                                                                                                                                                                                                |
+| `app/`           | App Router routes. `/` is the landing page; `error.tsx`, `global-error.tsx` and `not-found.tsx` are the way back from a render crash and an unknown address, drawn by `Recovery.tsx` in the product's own voice and never from the error (#261)                           |
 | `app/analyze/`   | `/analyze` — photograph the front and back of a card and upload them (spec §48)                                                                                                                                                                                           |
 | `app/cards/`     | `/cards` (search) and `/cards/[cardId]` (detail) — the catalog browse surface                                                                                                                                                                                             |
 | `app/identify/`  | `/identify` — the identification-confirmation gate (spec §20)                                                                                                                                                                                                             |
@@ -189,14 +189,16 @@ has a route of its own instead of a button somewhere in the catalog.
   `lib/confirm-errors.ts` is a third sibling of `card-errors.ts` and
   `upload-errors.ts`, because a 409 here means "your photographs are not ready
   for this yet" where the upload's means "start a new analysis".
-- **There is no route into analysis** in any branch, including the failures:
-  `/analyze` is where an analysis begins and this gate is not a second door into
-  it. Forwards is different. Once the confirmation has actually been recorded,
-  spec §5's next step exists, so the screen offers **Set the costs** and advances
-  to `/configure` on its own after four seconds, with the link live throughout. A
-  confirmation the page kept to itself gets neither: there is no analysis to
-  price. The confirmed screen still says that nothing has analysed the
-  photographs yet, because nothing has.
+- **The gate is not a door into analysis.** The question never links to
+  `/analyze`, and nothing here starts one: `/analyze` is where an analysis
+  begins. Forwards is different. Once the confirmation has actually been
+  recorded, spec §5's next step exists, so the screen offers **Set the costs**
+  and advances to `/configure` on its own after four seconds, with the link live
+  throughout. A confirmation the page kept to itself gets neither: there is no
+  analysis to price, and the screen says so — nothing has been analysed because
+  this tab holds no photographs — and offers **Photograph the card**, a link to
+  `/analyze`, as the way to have it analysed (#261). The recorded screen still
+  says that nothing has analysed the photographs yet, because nothing has.
 - **The gate shows no `metadata` and no provider identifiers.** They are catalog
   bookkeeping rather than something a person checks against a card in their
   hand; the full record is one link away.
