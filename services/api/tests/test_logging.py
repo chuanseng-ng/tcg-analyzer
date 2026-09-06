@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
+from pathlib import Path
 
 import pytest
 import structlog
@@ -130,3 +132,42 @@ def test_the_request_id_joins_the_error_line_to_the_request(
     assert request["status"] == 500
     assert request["request_id"] == error["request_id"]
     assert structlog.contextvars.get_contextvars() == {}
+
+
+# ---------------------------------------------------------------------------
+# The `extra=` trap (repository rule)
+# ---------------------------------------------------------------------------
+SRC = Path(__file__).resolve().parents[1] / "src" / "tcg_api"
+
+#: A `logger.<level>(...)` call whose arguments include `extra=`. One level of
+#: nested parentheses, so `str(x)` and `round(x, 1)` arguments do not end the
+#: match early.
+#: ponytail: an `extra=` after a doubly-nested argument is missed; a real parser
+#: if anyone ever writes one.
+EXTRA_IN_A_LOG_CALL = re.compile(
+    r"\blogger\.(?:debug|info|warning|error|exception|critical)\((?:[^()]|\([^()]*\))*\bextra="
+)
+
+
+def test_no_log_call_passes_a_stdlib_extra_mapping() -> None:
+    """`configure_logging`'s `ProcessorFormatter` chain carries no `ExtraAdder`, so
+    a stdlib `extra={...}` is silently discarded — the line still appears and
+    says nothing, which is worse than no line. Values go in as structlog
+    keywords, always."""
+    offending = sorted(
+        str(path.relative_to(SRC))
+        for path in SRC.rglob("*.py")
+        if EXTRA_IN_A_LOG_CALL.search(path.read_text(encoding="utf-8"))
+    )
+
+    assert offending == []
+
+
+def test_the_extra_guard_recognises_the_trap() -> None:
+    """The regex is the test; a regex that matches nothing would pass forever."""
+    assert EXTRA_IN_A_LOG_CALL.search('logger.warning("x", extra={"a": 1})')
+    assert EXTRA_IN_A_LOG_CALL.search(
+        'logger.error(\n    "x",\n    path=str(p),\n    extra={"a": 1},\n)'
+    )
+    assert not EXTRA_IN_A_LOG_CALL.search('logger.warning("x", exc_info=True)')
+    assert not EXTRA_IN_A_LOG_CALL.search('model_config = ConfigDict(extra="forbid")')

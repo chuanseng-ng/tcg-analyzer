@@ -2143,6 +2143,12 @@ export interface components {
              */
             database: "ok" | "unavailable";
             /**
+             * Redis
+             * @description Whether the API could PING the queue's Redis. `not_configured` when `TCG_API_REDIS_URL` is unset, which does not degrade the service.
+             * @enum {string}
+             */
+            redis: "ok" | "unavailable" | "not_configured";
+            /**
              * Storage
              * @description Whether the API could reach the object store.
              * @enum {string}

@@ -175,7 +175,7 @@ services:
     command: ["alembic", "upgrade", "head"]
     environment:
       <<: *api-database-url
-      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-json}
     depends_on:
       postgres:
         condition: service_healthy
@@ -223,7 +223,7 @@ services:
       # recorded is worse than one in a file — spec §30 asks that it never be
       # typed, so this is the only place it is chosen.
       TCG_API_ANNOTATOR_ID: ${TCG_API_ANNOTATOR_ID:-annotator}
-      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-json}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     ports:
       - "${API_PORT:-8000}:8000"
@@ -311,7 +311,7 @@ services:
       TCG_API_STORAGE_BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
       TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
       TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
-      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-console}
+      TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-json}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     depends_on:
       postgres:
