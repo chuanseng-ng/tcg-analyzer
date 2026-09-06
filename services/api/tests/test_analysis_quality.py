@@ -20,6 +20,7 @@ at length.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -44,7 +45,9 @@ from tcg_api.analysis.images import (
     record_quality,
     upsert_image,
 )
+from tcg_api.config import Settings
 from tcg_api.database import create_session_factory
+from tcg_api.logging import configure_logging
 from tcg_api.version import application_version
 from tcg_domain.analysis import ImageSide, QualityStatus
 from tcg_domain.card_geometry import CardGeometry
@@ -484,6 +487,34 @@ def test_a_photograph_already_processed_is_not_processed_again(
     assert set(recorder.written) == {ImageSide.BACK}
     assert set(recorder.served) == {ImageSide.FRONT}
     assert "back" in recorder.judged
+
+
+@pytest.mark.parametrize("served", [False, True], ids=["computed", "served"])
+def test_each_side_is_logged_with_how_long_it_took_and_whether_it_was_served(
+    wired: tuple[_Recorder, dict[str, QualityStatus]],
+    capsys: pytest.CaptureFixture[str],
+    served: bool,
+) -> None:
+    """Spec §67's image-processing latency and cache-hit rate, off one line per side."""
+    configure_logging(Settings(_env_file=None, log_format="json"))
+    recorder, _ = wired
+    if served:
+        recorder.cached[ImageSide.FRONT] = a_cached_result()
+
+    run(lambda: quality.prepare_images(object(), uuid.uuid4()))
+
+    lines = {
+        line["side"]: line
+        for line in (
+            json.loads(raw) for raw in capsys.readouterr().out.splitlines() if raw.startswith("{")
+        )
+        if line["event"] == "image.assessed"
+    }
+    assert lines["front"]["cached"] is served
+    assert lines["back"]["cached"] is False
+    for line in lines.values():
+        assert isinstance(line["duration_ms"], float)
+        assert line["duration_ms"] >= 0
 
 
 def test_a_served_verdict_counts_towards_the_analysis_verdict(

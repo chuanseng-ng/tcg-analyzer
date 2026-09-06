@@ -36,6 +36,7 @@ will not start.
 
 from __future__ import annotations
 
+import time
 from functools import partial
 from typing import Final
 from uuid import UUID
@@ -131,10 +132,11 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
 
     statuses: list[QualityStatus] = []
     for side in sorted(keys):
+        started = time.perf_counter()
         # Before the store is built, not after. A served verdict with no
         # artifact needs no object store at all, so asking the cache first keeps
         # the property the placement below was written for.
-        served = await _serve_from_cache(db, analysis_id=analysis_id, side=side)
+        served = await _serve_from_cache(db, analysis_id=analysis_id, side=side, started=started)
         if served is not None:
             statuses.append(served)
             continue
@@ -162,6 +164,7 @@ async def prepare_images(db: AsyncSession, analysis_id: UUID) -> QualityStatus:
             gate=report.version,
             detector=report.detector,
             cached=False,
+            started=started,
         )
         if artifact is not None:
             await _store_artifact(
@@ -180,13 +183,18 @@ def _log_assessed(
     gate: object,
     detector: object,
     cached: bool,
+    started: float,
 ) -> None:
     """The verdict and the score, never the URI and never a measurement that
     could describe the photograph itself (spec §54).
 
     One function for both paths so a served verdict and a computed one cannot
     drift into different shapes — `cached` is what separates them, and the
-    hit rate spec §67 asks for is a count over this one event.
+    hit rate spec §67 asks for is a count over this one event. `duration_ms`
+    beside it is §67's image-processing latency: from the cache lookup to
+    this line, so a computed side is the read, the decode, the detection, the
+    gate and the warp, and a served side is the row and the artifact copy;
+    neither includes the artifact upload that follows.
     """
     logger.info(
         "image.assessed",
@@ -201,11 +209,12 @@ def _log_assessed(
         # back `acceptable`.
         detector=detector,
         cached=cached,
+        duration_ms=round((time.perf_counter() - started) * 1000, 1),
     )
 
 
 async def _serve_from_cache(
-    db: AsyncSession, *, analysis_id: UUID, side: ImageSide
+    db: AsyncSession, *, analysis_id: UUID, side: ImageSide, started: float
 ) -> QualityStatus | None:
     """Replay what an earlier run derived from these exact bytes — issue #39.
 
@@ -255,6 +264,7 @@ async def _serve_from_cache(
         gate=cached.quality_details.get("version"),
         detector=cached.quality_details.get("detector"),
         cached=True,
+        started=started,
     )
     return QualityStatus(cached.quality_status)
 

@@ -40,9 +40,9 @@ insecure by omission and none of its snippets are copied here:
 2. The broker URL comes from `TCG_API_REDIS_URL` and is never defaulted. There
    is no `redis://localhost:6379` fallback, because a fallback is what turns a
    missing setting into an unauthenticated broker nobody notices.
-3. The dead-letter record is a log line carrying the job id, the exception type,
-   the attempt count and the vocabulary reason the row gets (#265) — and
-   nothing else, and never a message. Analysis payloads reference
+3. The dead-letter record is a log line carrying the job id, the analysis id,
+   the exception type, the attempt count and the vocabulary reason the row
+   gets (#265) — and nothing else, and never a message. Analysis payloads reference
    photographs of somebody's card, hands and living room (spec §54); a queue
    holding those indefinitely so that a job nobody re-drives could theoretically
    be re-driven is not a trade this project makes.
@@ -59,6 +59,9 @@ disagree with the first.
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 from uuid import UUID
@@ -228,8 +231,27 @@ def enqueue_analysis(analysis_id: UUID) -> str:
     return str(result.id)
 
 
-async def _advance(analysis_id: UUID) -> bool:
-    """Run the pipeline for one analysis. Returns whether this call claimed it.
+@contextmanager
+def _step(name: str) -> Iterator[None]:
+    """Time one pipeline step and say so — spec §67's latencies, one line each.
+
+    A step that raised is not completed and gets no line: the retry or the
+    dead-letter line is its record.
+    """
+    started = time.perf_counter()
+    yield
+    logger.info(
+        "analysis.step_completed",
+        step=name,
+        duration_ms=round((time.perf_counter() - started) * 1000, 1),
+    )
+
+
+async def _advance(analysis_id: UUID) -> AnalysisStatus | None:
+    """Run the pipeline for one analysis.
+
+    Returns the state the run left the analysis in, or `None` when this call
+    did not claim it.
 
     The engine is built and disposed inside this coroutine rather than taken
     from `database.get_engine`, because an asyncpg pool belongs to the event
@@ -248,7 +270,21 @@ async def _advance(analysis_id: UUID) -> bool:
             claimed = await transition(db, analysis_id, to=AnalysisStatus.IDENTIFYING)
             if not claimed:
                 await db.rollback()
-                return False
+                return None
+
+            # Imported *here*, not at the top of the module: `tcg_ml_condition`
+            # pulls the four axis analyzers and with them OpenCV, and
+            # `routers/analyses.py` imports this file to enqueue, so a
+            # module-level import would drag OpenCV into the API image, which
+            # does not have it. See `tcg_api.analysis.quality` and
+            # `tcg_api.analysis.condition`. The grading wiring binds no OpenCV
+            # but matches the `tcg_ml_` prefix `test_import_purity.py` probes,
+            # so it is deferred all the same. After the claim, so an unclaimed
+            # delivery imports nothing; before the timer below, so `versions`
+            # measures the reads and not the first run's cold import.
+            from tcg_api.analysis.condition import CONDITION_VERSION, assess_condition
+            from tcg_api.analysis.grading import GRADING_VERSION, predict_grades
+            from tcg_api.analysis.quality import prepare_images
 
             # Spec §57, immediately after the claim and inside it. This is the
             # one place a run begins, so it is the one moment at which "which
@@ -263,58 +299,50 @@ async def _advance(analysis_id: UUID) -> bool:
             # catalog raises `CatalogUnavailable` and is left to propagate: the
             # store is down, so the run should fail, roll the claim back and be
             # retried.
-            current_catalog = await PostgresCardDatabaseVersionRepository(db).current()
-            # §36: the analysis is computed against a snapshot resolved now, not
-            # against whichever is current when somebody re-reads the result.
-            # `None` through V1 and honestly so — ADR 0006 gates the provider on
-            # a subscription that is not yet active, so nothing has ingested and
-            # there is no snapshot. Never a fabricated one.
-            snapshot = await current_snapshot(db)
-            # §57's rules version, resolved against the table like the catalog
-            # version above, and before the gate for the same reason the model
-            # bundle is: the record says what was in force, not which stages
-            # completed. See `_grading_rules_version`.
-            rules_version = await _grading_rules_version(db)
-            # Imported *here*, not at the top of the module, exactly like the
-            # gate below: `tcg_ml_condition` pulls the four axis analyzers and
-            # with them OpenCV, and `routers/analyses.py` imports this file to
-            # enqueue. See `tcg_api.analysis.condition`. The grading wiring
-            # binds no OpenCV but matches the `tcg_ml_` prefix
-            # `test_import_purity.py` probes, so it is deferred all the same.
-            from tcg_api.analysis.condition import CONDITION_VERSION, assess_condition
-            from tcg_api.analysis.grading import GRADING_VERSION, predict_grades
+            with _step("versions"):
+                current_catalog = await PostgresCardDatabaseVersionRepository(db).current()
+                # §36: the analysis is computed against a snapshot resolved
+                # now, not against whichever is current when somebody re-reads
+                # the result. `None` through V1 and honestly so — ADR 0006
+                # gates the provider on a subscription that is not yet active,
+                # so nothing has ingested and there is no snapshot. Never a
+                # fabricated one.
+                snapshot = await current_snapshot(db)
+                # §57's rules version, resolved against the table like the
+                # catalog version above, and before the gate for the same
+                # reason the model bundle is: the record says what was in
+                # force, not which stages completed. See
+                # `_grading_rules_version`.
+                rules_version = await _grading_rules_version(db)
 
-            await record_reproducibility(
-                db,
-                analysis_id,
-                # The *worker's* version, which is the process producing the
-                # result — not the API's, and not the one that opened the
-                # session days ago.
-                application_version=application_version(),
-                card_database_version=None if current_catalog is None else current_catalog.version,
-                market_snapshot_id=None if snapshot is None else snapshot.id,
-                # Compile-time constants of the ml packages, so resolvable at
-                # the claim like every other §57 field — and recorded whether
-                # or not the run reaches either step, because the record says
-                # which versions were in force, not which stages completed
-                # (#187). The grading version composes in after the condition
-                # version, ADR 0011 decision 6.
-                model_bundle_version=f"{CONDITION_VERSION}+{GRADING_VERSION}",
-                grading_rules_version=rules_version,
-            )
+                await record_reproducibility(
+                    db,
+                    analysis_id,
+                    # The *worker's* version, which is the process producing
+                    # the result — not the API's, and not the one that opened
+                    # the session days ago.
+                    application_version=application_version(),
+                    card_database_version=(
+                        None if current_catalog is None else current_catalog.version
+                    ),
+                    market_snapshot_id=None if snapshot is None else snapshot.id,
+                    # Compile-time constants of the ml packages, so resolvable
+                    # at the claim like every other §57 field — and recorded
+                    # whether or not the run reaches either step, because the
+                    # record says which versions were in force, not which
+                    # stages completed (#187). The grading version composes in
+                    # after the condition version, ADR 0011 decision 6.
+                    model_bundle_version=f"{CONDITION_VERSION}+{GRADING_VERSION}",
+                    grading_rules_version=rules_version,
+                )
 
             # Spec §18 puts the quality gate here, before anything looks for a
             # card: refusing a photograph nothing could be read from costs one
             # decode, where letting it through costs the whole pipeline and ends
-            # in a confident answer about a blurred rectangle.
-            #
-            # Imported *here*, not at the top of the module. `routers/analyses.py`
-            # imports this file to enqueue, so a module-level import would drag
-            # OpenCV into the API image, which does not have it. See
-            # `tcg_api.analysis.quality`.
-            from tcg_api.analysis.quality import prepare_images
-
-            verdict = await prepare_images(db, analysis_id)
+            # in a confident answer about a blurred rectangle. Both sides in one
+            # step; `image.assessed` carries each side's own duration.
+            with _step("gate"):
+                verdict = await prepare_images(db, analysis_id)
             if verdict is QualityStatus.UNUSABLE:
                 # §19: "If unusable, analysis should stop." The findings are
                 # already written, so the refusal can be explained; the status
@@ -333,7 +361,7 @@ async def _advance(analysis_id: UUID) -> bool:
                     analysis_id=str(analysis_id),
                     quality_status=str(verdict),
                 )
-                return True
+                return AnalysisStatus.FAILED
 
             # The condition step — M7's acceptance criterion (#187): both sides'
             # artifacts in, one recorded assessment out, uncertainty included. It
@@ -342,14 +370,16 @@ async def _advance(analysis_id: UUID) -> bool:
             # transaction as the transition below. It never consults the card's
             # identity — the representation is neutral by the master
             # architectural rule — which is why it can run before confirmation.
-            await assess_condition(db, analysis_id)
+            with _step("condition"):
+                await assess_condition(db, analysis_id)
 
             # The grade prediction step — M8's acceptance criterion (#227): the
             # document the step above stored in, a distribution per company
             # out, refusals included. Same claim, same transaction, and before
             # confirmation for the same reason: it reads the neutral
             # representation and never the card's identity (ADR 0011).
-            await predict_grades(db, analysis_id)
+            with _step("grading"):
+                await predict_grades(db, analysis_id)
 
             # Where identification would run. It does not exist in any decomposed
             # milestone yet, so the analysis reaches the confirmation gate with no
@@ -362,7 +392,7 @@ async def _advance(analysis_id: UUID) -> bool:
             await db.commit()
     finally:
         await engine.dispose()
-    return True
+    return AnalysisStatus.AWAITING_CONFIRMATION
 
 
 async def _grading_rules_version(db: AsyncSession) -> str | None:
@@ -432,13 +462,29 @@ def run_analysis(self: Task, analysis_id: str) -> None:
     chose, so it is safe to key idempotency on.
     """
     identifier = UUID(analysis_id)
+    started = time.perf_counter()
+    # Bound for the whole run, so every line a step logs carries them without
+    # naming them itself; `asyncio.run` copies this context into the loop.
+    # Cleared in the `finally` below — a prefork child runs many tasks in a
+    # row, and a bind that outlived its run would stamp the next one's lines.
+    structlog.contextvars.bind_contextvars(analysis_id=analysis_id, job_id=self.request.id)
     try:
-        if not asyncio.run(_advance(identifier)):
+        outcome = asyncio.run(_advance(identifier))
+        if outcome is None:
             # Not an error. The analysis was already claimed, already past this
             # point, or gone — all of which mean this delivery has nothing to do.
             logger.info("analysis.job_ignored", analysis_id=analysis_id, job_id=self.request.id)
         else:
-            logger.info("analysis.job_finished", analysis_id=analysis_id, job_id=self.request.id)
+            # `total_ms` is the task's, entry to return: one event loop and
+            # one engine ahead of the claim. Spec §67's analysis latency is
+            # claim → `awaiting_confirmation`, the sum of the step lines.
+            logger.info(
+                "analysis.job_finished",
+                analysis_id=analysis_id,
+                job_id=self.request.id,
+                outcome=str(outcome),
+                total_ms=round((time.perf_counter() - started) * 1000, 1),
+            )
     except Exception as error:
         attempts = (self.request.retries or 0) + 1
         if attempts <= MAX_RETRIES:
@@ -469,6 +515,7 @@ def run_analysis(self: Task, analysis_id: str) -> None:
         reason = failure_reason(error)
         logger.error(
             "analysis.dead_lettered",
+            analysis_id=analysis_id,
             job_id=self.request.id,
             error=type(error).__name__,
             reason=reason.value,
@@ -476,6 +523,8 @@ def run_analysis(self: Task, analysis_id: str) -> None:
         )
         _fail_quietly(identifier, reason)
         raise
+    finally:
+        structlog.contextvars.clear_contextvars()
 
 
 def _fail_quietly(analysis_id: UUID, reason: FailureReason) -> None:
