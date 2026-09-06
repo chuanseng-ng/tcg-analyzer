@@ -173,12 +173,15 @@ company, `raw_price_age_seconds` is how long before the request the ungraded
 price was observed, `graded_price_age_seconds` is the age of the **oldest**
 graded price behind that company's figures — the oldest, never a mean, because a
 fresh 9 beside a six-week-old 10 is the gap §38 names — and `price_confidence`
-is the **weakest** of those prices' age-discounted confidences, the same numbers
-the engine already multiplied into every `confidence`, reported rather than
-applied twice. Each is `null` when the snapshot held no price of that kind.
-`market_snapshot.stale_after_seconds` carries the deployment's staleness
-threshold (`TCG_API_MARKET_STALE_AFTER_DAYS`), so a client says *stale* of an
-age only past it and never owns a threshold of its own. Ages are computed at the
+is the **weakest** of the age-discounted price confidences the engine was
+handed for that company; each of those already entered the figures' own
+`confidence` in the engine's way (probability-weighted over the ladder, a floor
+for the raw price), so this is reported to show how weak the market side was,
+never applied again. Each is `null` when the snapshot held no price of that
+kind. `market_snapshot.stale_after_seconds` carries the deployment's staleness
+threshold (`TCG_API_MARKET_STALE_AFTER_DAYS`) — the age at which a price's
+confidence reaches the floor — so a client says *stale* of an age from that
+number on and never owns a threshold of its own. Ages are computed at the
 moment of asking, which is the other reason the response is `no-store`.
 
 The route answers on `completed` exactly as it does on `analyzing`: it
