@@ -46,6 +46,15 @@ const KNOWN_CODES = [
   "no print template to measure registration against",
   "a manufacturing judgement this baseline cannot make",
   "the face's own texture is indistinguishable from defect texture in this signal",
+  // Why an analysis failed (#265, #271): `FailureReason`, keyed as stored.
+  "unusable_photograph",
+  "catalog_unavailable",
+  "grading_rules_unavailable",
+  "image_store_unavailable",
+  "model_failed",
+  "job_dead_lettered",
+  "timed_out",
+  "stalled",
 ];
 
 describe("reasonCopy", () => {

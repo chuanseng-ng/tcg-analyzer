@@ -94,6 +94,35 @@ describe("a confirmation the service did not record", () => {
     expect(failure.message).not.toMatch(/photograph/i);
   });
 
+  it("says why from the stored reason the 409 carries, in the results screen's words", () => {
+    // #265: `details.reason` is the row's `FailureReason`; one sentence per
+    // reason, the same one `/results` shows, through the same lookup.
+    const failure = classifyConfirmFailure(
+      new ApiError("conflict", {
+        status: 409,
+        code: "analysis_failed",
+        details: { reason: "model_failed" },
+      }),
+    );
+
+    expect(failure.action).toBe("gone");
+    expect(failure.message).toMatch(/A grading model broke/);
+  });
+
+  it("reads the reason beside the refused sides, and still offers no way into /analyze", () => {
+    const failure = classifyConfirmFailure(
+      new ApiError("conflict", {
+        status: 409,
+        code: "image_quality_failure",
+        details: { reason: "unusable_photograph", sides: ["front"] },
+      }),
+    );
+
+    expect(failure.action).toBe("gone");
+    expect(failure.message).toBe("The photographs could not support an analysis.");
+    expect(failure.message).not.toMatch(/\/analyze/);
+  });
+
   it("offers no way into the upload screen, even when new photographs are what is needed", () => {
     // #91: the confirmation gate has no route onward to analysis in any branch,
     // and a failure is not the place to open one.

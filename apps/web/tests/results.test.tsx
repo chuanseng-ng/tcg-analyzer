@@ -847,9 +847,75 @@ describe("waiting on the analysis", () => {
     expect(readResultsMock).not.toHaveBeenCalled();
   });
 
-  it("explains a failed analysis in the gate's own words when a photograph was refused", async () => {
+  it("backs off from one second to a ten-second cap while the analysis is unfinished", async () => {
+    vi.useFakeTimers();
+    readAnalysisMock.mockResolvedValue(analysis("analyzing"));
+
+    render(<Results />);
+    const after = async (ms: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+      return readAnalysisMock.mock.calls.length;
+    };
+
+    expect(await after(0)).toBe(1);
+    expect(await after(1_000)).toBe(2);
+    // The second pause is two seconds, so a second later nothing has happened.
+    expect(await after(1_000)).toBe(2);
+    expect(await after(1_000)).toBe(3);
+    expect(await after(4_000)).toBe(4);
+    expect(await after(8_000)).toBe(5);
+    expect(await after(10_000)).toBe(6);
+    expect(await after(10_000)).toBe(7);
+  });
+
+  it("stops polling at the budget, says the analysis is stuck, and polls again only when asked", async () => {
+    vi.useFakeTimers();
+    readAnalysisMock.mockResolvedValue(analysis("analyzing"));
+
+    render(<Results />);
+    // 1 + 2 + 4 + 8 = 15 s, then eleven pauses of 10 s: 125 s waited, 16 reads.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(125_000);
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(/taking longer than it should/);
+    expect(within(alert).getByRole("link", { name: "Photograph the card again" })).toHaveAttribute(
+      "href",
+      "/analyze",
+    );
+    expect(readAnalysisMock).toHaveBeenCalledTimes(16);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(readAnalysisMock).toHaveBeenCalledTimes(16);
+    expect(readResultsMock).not.toHaveBeenCalled();
+
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(readAnalysisMock).toHaveBeenCalledTimes(17);
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for the costs to be set.");
+  });
+});
+
+describe("a failed analysis", () => {
+  const failed = (reason: string, overrides: Partial<AnalysisResponse> = {}) =>
+    analysis("failed", {
+      failure: {
+        code: reason === "unusable_photograph" ? "image_quality_failure" : "analysis_failed",
+        reason: reason as NonNullable<AnalysisResponse["failure"]>["reason"],
+      },
+      ...overrides,
+    });
+
+  it("explains a refused photograph from the stored reason, naming the side in the gate's own words", async () => {
     readAnalysisMock.mockResolvedValue(
-      analysis("failed", { images: [unusableFront(), photograph("back")] }),
+      failed("unusable_photograph", { images: [unusableFront(), photograph("back")] }),
     );
 
     render(<Results />);
@@ -857,6 +923,7 @@ describe("waiting on the analysis", () => {
     expect(
       await screen.findByRole("heading", { name: "This analysis could not be completed." }),
     ).toBeInTheDocument();
+    expect(screen.getByText("The photographs could not support an analysis.")).toBeInTheDocument();
     expect(
       screen.getByText(/The front photograph could not support an analysis/),
     ).toBeInTheDocument();
@@ -868,8 +935,23 @@ describe("waiting on the analysis", () => {
     expect(readResultsMock).not.toHaveBeenCalled();
   });
 
+  it("lets the stored reason decide, not the photographs", async () => {
+    // A refused photograph beside a `model_failed` row: the row is the fact
+    // (#265), and nothing here re-derives a reason from `images[]`.
+    readAnalysisMock.mockResolvedValue(
+      failed("model_failed", { images: [unusableFront(), photograph("back")] }),
+    );
+
+    render(<Results />);
+
+    await screen.findByRole("heading", { name: "This analysis could not be completed." });
+    expect(screen.getByText(/A grading model broke/)).toBeInTheDocument();
+    expect(screen.queryByText(/The front photograph/)).not.toBeInTheDocument();
+    expect(screen.queryByText("It is out of focus.")).not.toBeInTheDocument();
+  });
+
   it("does not blame the photographs for a failure that was not theirs", async () => {
-    readAnalysisMock.mockResolvedValue(analysis("failed"));
+    readAnalysisMock.mockResolvedValue(failed("job_dead_lettered"));
 
     render(<Results />);
 
@@ -877,6 +959,25 @@ describe("waiting on the analysis", () => {
     expect(
       screen.getByText(/nothing suggests the photographs were the problem/),
     ).toBeInTheDocument();
+  });
+
+  it("names a reason it has no words for rather than rendering nothing", async () => {
+    readAnalysisMock.mockResolvedValue(failed("a_new_reason"));
+
+    render(<Results />);
+
+    await screen.findByRole("heading", { name: "This analysis could not be completed." });
+    expect(screen.getByText(/a_new_reason/)).toBeInTheDocument();
+  });
+
+  it("still says something when a failed row carries no reason", async () => {
+    // The CHECK forbids it; the screen still says it was given no reason.
+    readAnalysisMock.mockResolvedValue(analysis("failed", { failure: null }));
+
+    render(<Results />);
+
+    await screen.findByRole("heading", { name: "This analysis could not be completed." });
+    expect(screen.getByText("No reason was given.")).toBeInTheDocument();
   });
 });
 

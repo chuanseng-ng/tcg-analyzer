@@ -109,6 +109,19 @@ const REASON_COPY: Readonly<Record<string, string>> = {
     "Whether a flaw came from the factory is a judgement this analysis cannot make.",
   "the face's own texture is indistinguishable from defect texture in this signal":
     "The card's own foil or artwork cannot be told from wear in this photograph.",
+  // Why an analysis failed (#265, #271): `FailureReason`, the stored fact
+  // `/results` and `/identify` both read — keyed exactly as the row spells it.
+  unusable_photograph: "The photographs could not support an analysis.",
+  catalog_unavailable: "The card catalog could not be read while the analysis ran.",
+  grading_rules_unavailable:
+    "The grading companies' rules could not be read while the analysis ran.",
+  image_store_unavailable: "The stored photographs could not be read back while the analysis ran.",
+  model_failed:
+    "A grading model broke while reading the card. The photographs were not the problem.",
+  job_dead_lettered:
+    "The analysis stopped after several attempts, and nothing suggests the photographs were the problem.",
+  timed_out: "The analysis took longer than it is allowed to and was stopped.",
+  stalled: "The analysis stopped moving and was given up on.",
 };
 
 export function reasonCopy(code: string): string {

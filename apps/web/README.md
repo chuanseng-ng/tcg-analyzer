@@ -256,9 +256,13 @@ between the last two. Nine decisions shape it:
   the endpoint §65 says a client polls, and `completed` means every input the
   results need is recorded — the configuration write reaches it, so arriving
   from `/configure` the first read already says so. The poll exists for a
-  reload, a direct arrival and for `failed`; it runs at `/analyze`'s cadence,
-  stops on a terminal state or when the screen is left, and `lib/analysis-state.ts`
-  is the one place the web spells §65's nine state names.
+  reload, a direct arrival and for `failed`; it starts at `/analyze`'s cadence
+  and doubles to a ten-second cap, stops on a terminal state or when the
+  screen is left, and at two minutes — the run's hard time limit in
+  `docs/observability.md` — it stops and says the analysis is stuck, with the
+  poll offered again and the way back to `/analyze` (#271). `stuck` is a
+  screen state, never one of §65's, and `lib/analysis-state.ts` is the one
+  place the web spells §65's nine state names.
 - **"Not asked yet" and "not enough information" are two screens.** A `null`
   recommendation means no configuration or no stored prediction — nobody has
   asked. `insufficient_information` means the engine was asked and the data did
@@ -340,12 +344,15 @@ between the last two. Nine decisions shape it:
   — the analyzers store most of them as sentences rather than codes, and they
   are keyed exactly as stored, with an unmet one named. Nothing on the block is
   a coordinate, an overlay or a score.
-- **`failed` is explained from the photographs.** The poll endpoint carries no
-  error envelope; `confirm-card` decides between `image_quality_failure` and
-  `analysis_failed` by whether any photograph is `unusable`, and this screen
-  applies the same rule to the same field — naming the side and the gate's own
-  words from `lib/quality-copy.ts` — rather than making a second request to learn
-  a code. Any other failure is said without blaming the photographs.
+- **`failed` is explained from the record.** The poll carries
+  `failure: {code, reason}`, the fact the worker stored in the same statement
+  as the state (#265), and the reason's sentence is `lib/results-copy.ts`'s —
+  one per `FailureReason`, keyed exactly as the row spells it, with an unmet
+  one named. Nothing here infers a reason from `images[]` any more (#271).
+  When the reason is the gate's, each refused side is named beside it with the
+  gate's own words from `lib/quality-copy.ts` — a fact about the photographs,
+  never a second reading of why. `/identify` reads the same reason off the
+  `confirm-card` 409's `details.reason` through the same lookup.
 
 `lib/results-errors.ts` is a fifth error sibling: the bare 404 is `restart`, a
 store that would not answer is `retry`, and anything else is `unexpected`. Display
