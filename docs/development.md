@@ -192,6 +192,15 @@ with no exception anywhere to record, and this is what fails it. See
 celery --app tcg_api.analysis.worker call tcg_api.analysis.sweep_stalled
 ```
 
+And a third, the **orphan sweep**: the retention sweep works from rows, so an
+object whose row was never committed is invisible to it. This one works from
+the day prefix in the key instead, deleting every object under an expired day
+that no `images` row names.
+
+```bash
+celery --app tcg_api.analysis.worker call tcg_api.analysis.sweep_orphans
+```
+
 ## Logs
 
 Every line the API and the worker write is one structlog event, rendered as
