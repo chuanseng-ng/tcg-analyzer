@@ -313,12 +313,15 @@ four requests wide, so a client polling on schedule never has two in flight.
   can be there is four attempts of 120 s plus three backoffs of at most 60 s,
   eleven minutes. Changing any of these three changes this section in the
   same PR.
-- **#271 — the `/results` poll.** Today it polls at 1 s with no cap; #271
-  will keep the first interval at **1 s** and back off to a cap of **10 s** (the poll route answers in milliseconds; the cap is for the
-  tab left open, not the request). The screen will stop polling and say the
+- **#271 — the `/results` poll.** Before #271 it polled at 1 s with no cap;
+  it now keeps the first interval at **1 s** and backs off to a cap of
+  **10 s** (the poll route answers in milliseconds; the cap is for the tab
+  left open, not the request). The screen stops polling and says the
   analysis is stuck at **2 min**, the hard limit above: a row still
   `identifying` then has been hard-killed or is between retries, and neither
-  is worth a spinner. `stuck` is a screen state, never a §65 state.
+  is worth a spinner. `stuck` is a screen state, never a §65 state. The two
+  minutes are counted as the sum of the pauses, not the clock, so a slow
+  answer does not shorten the wait.
 - **`/analyze`'s wait** stays at 20 × 1 s (`VERDICT_POLL_ATTEMPTS`): twice
   the analysis budget, so the gate's verdict is on screen for every run
   inside it.
