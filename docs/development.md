@@ -183,6 +183,15 @@ celery --app tcg_api.analysis.worker call tcg_api.analysis.purge_expired
 [`retention.md`](retention.md) is the policy, and it records the gaps
 that remain open as gaps rather than pretending they are closed.
 
+Beat runs a second hourly task, the **stall sweep**: a run killed by its hard
+time limit acks its message and rolls back, leaving an analysis at `uploaded`
+with no exception anywhere to record, and this is what fails it. See
+[`analysis-pipeline.md`](analysis-pipeline.md#bounding-a-run).
+
+```bash
+celery --app tcg_api.analysis.worker call tcg_api.analysis.sweep_stalled
+```
+
 ## Logs
 
 Every line the API and the worker write is one structlog event, rendered as
