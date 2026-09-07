@@ -184,9 +184,9 @@ function NothingSelected() {
     <div className={styles.gate}>
       <h1 className={styles.heading}>No card is selected.</h1>
       <p className={styles.body}>
-        This screen confirms a card you have already found in the catalog. Nothing has analysed a
-        photograph — uploading them arrives in M2 — so there is no detected card to show you here
-        yet.
+        This screen confirms a card you have already found in the catalog. Photographs do not pick a
+        card out on their own yet, so there is no detected card to show you here — searching the
+        catalog is how one is chosen.
       </p>
       <div className={styles.actions}>
         <Link className={styles.confirm} href="/cards">
@@ -376,7 +376,7 @@ function Confirmed({
 
       <p className={styles.body}>
         {saved
-          ? "Your photographs are now recorded as being of this card. Nothing has analysed them yet — next is what grading it would cost you, and what you paid for it if you know."
+          ? "Your photographs are recorded as being of this card, and its condition has already been read from them. Confirming the card is what the economics were waiting for — next is what grading it would cost you, and what you paid for it if you know."
           : "Nothing has been analysed, because this tab holds no photographs of it. Photographing the card is what starts an analysis — of its condition, the likely grades from PSA, TAG and BGS, and whether sending it in is worth it."}
       </p>
       <p className={styles.footnote}>

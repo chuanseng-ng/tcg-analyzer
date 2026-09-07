@@ -10,7 +10,7 @@ import styles from "./page.module.css";
 export const metadata: Metadata = {
   title: "Confirm your card",
   description:
-    "Confirm which card you are holding before anything is analysed. " +
+    "Confirm which card you are holding before its grading is priced. " +
     "Set, number, variant and rarity are what you check against.",
 };
 

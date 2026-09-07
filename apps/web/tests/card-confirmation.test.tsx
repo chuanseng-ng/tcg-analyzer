@@ -212,9 +212,11 @@ describe("the confirmation gate", () => {
     expect(screen.getByText(/recorded as being of this card/i)).toBeInTheDocument();
   });
 
-  it("says nothing is analysing the photographs yet", async () => {
-    // The analysis rests in `analyzing` until the condition stages exist, so
-    // this screen must not imply that work is under way.
+  it("says the photographs have already been read, and the costs are next", async () => {
+    // Since #227 the condition is assessed and the grades predicted at the
+    // worker's claim, before the analysis rests at `awaiting_confirmation`;
+    // confirming moves it to `analyzing`, which waits only for the costs
+    // (#244). This screen must not claim the photographs are unread (#278).
     getCardMock.mockResolvedValue(card());
     withPhotographs();
 
@@ -222,7 +224,8 @@ describe("the confirmation gate", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm this card" }));
     await screen.findByRole("heading", { name: /^Confirmed/ });
 
-    expect(screen.getByText(/nothing has analysed them yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/already been read from them/i)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing has analysed/i)).not.toBeInTheDocument();
   });
 
   it("leads on to the costs once the confirmation was recorded", async () => {
@@ -384,6 +387,10 @@ describe("the confirmation gate", () => {
     expect(screen.getByRole("heading", { name: "No card is selected." })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Find a card" })).toHaveAttribute("href", "/cards");
     expect(getCardMock).not.toHaveBeenCalled();
+    // Photographs upload since M2 and are read since M7; what is still true is
+    // that nothing picks a card out of them (#278).
+    expect(screen.getByText(/no detected card/i)).toBeInTheDocument();
+    expect(screen.queryByText(/arrives in M2/)).not.toBeInTheDocument();
   });
 
   it("treats a blank card_id the same as an absent one", () => {
