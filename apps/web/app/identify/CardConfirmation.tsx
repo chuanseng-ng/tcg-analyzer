@@ -184,8 +184,8 @@ function NothingSelected() {
     <div className={styles.gate}>
       <h1 className={styles.heading}>No card is selected.</h1>
       <p className={styles.body}>
-        This screen confirms a card you have already found in the catalog. Photographs do not pick
-        a card out on their own yet, so there is no detected card to show you here — searching the
+        This screen confirms a card you have already found in the catalog. Photographs do not pick a
+        card out on their own yet, so there is no detected card to show you here — searching the
         catalog is how one is chosen.
       </p>
       <div className={styles.actions}>
