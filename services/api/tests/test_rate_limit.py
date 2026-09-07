@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from tcg_api import rate_limit
 from tcg_api.config import get_settings
 from tcg_api.rate_limit import analysis_rate_limit, client_key
-from tcg_api.routers import analyses, cards
+from tcg_api.routers import analyses, cards, economics
 
 LIMIT = 3
 WINDOW = 60
@@ -252,14 +252,91 @@ def test_a_request_with_no_client_still_keys() -> None:
     assert client_key(_request_from(None)).startswith(rate_limit.RATE_LIMIT_KEY_PREFIX)
 
 
-def _request_from(host: str | None) -> Any:
-    """The smallest thing `client_key` reads: a request with a client address."""
+def _request_from(host: str | None, forwarded: str | None = None) -> Any:
+    """The smallest thing `client_key` reads: an address, and maybe a header."""
     from starlette.requests import Request
 
-    scope: dict[str, Any] = {"type": "http", "headers": []}
+    headers = [] if forwarded is None else [(b"x-forwarded-for", forwarded.encode())]
+    scope: dict[str, Any] = {"type": "http", "headers": headers}
     if host is not None:
         scope["client"] = (host, 51234)
     return Request(scope)
+
+
+def _trusting(monkeypatch: pytest.MonkeyPatch, proxies: int) -> None:
+    """Run the next `client_key` call as a deployment behind `proxies` proxies."""
+    monkeypatch.setenv("TCG_API_TRUSTED_PROXY_COUNT", str(proxies))
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Who a client is behind a proxy — #269, ADR 0005's addendum
+# ---------------------------------------------------------------------------
+def test_the_forwarded_header_is_ignored_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At the default count the header is not read, so ADR 0005 stands unchanged.
+
+    This is the half of #269 that must not move: nothing changes for a
+    deployment with no proxy, and CI runs at zero.
+    """
+    _trusting(monkeypatch, 0)
+
+    assert client_key(_request_from("198.51.100.7", forwarded="203.0.113.9")) == client_key(
+        _request_from("198.51.100.7")
+    )
+
+
+def test_one_trusted_proxy_keys_on_the_hop_it_appended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Otherwise every user behind the proxy shares one bucket."""
+    _trusting(monkeypatch, 1)
+
+    behind_the_proxy = client_key(_request_from("10.0.0.1", forwarded="198.51.100.7"))
+
+    _trusting(monkeypatch, 0)
+    assert behind_the_proxy == client_key(_request_from("198.51.100.7"))
+
+
+def test_hops_the_caller_wrote_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The leftmost entries are the caller's to write, so position is the whole defence.
+
+    A client that sends its own `X-Forwarded-For` to a proxy that appends rather
+    than overwrites gets those values carried through — and counted from the
+    right they are junk in front of the hop that matters.
+    """
+    _trusting(monkeypatch, 1)
+
+    forwarded = "not-an-address, 203.0.113.9, 198.51.100.7"
+    spoofed = client_key(_request_from("10.0.0.1", forwarded=forwarded))
+
+    _trusting(monkeypatch, 0)
+    assert spoofed == client_key(_request_from("198.51.100.7"))
+
+
+def test_fewer_hops_than_proxies_keys_on_the_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request that did not come through the proxies is keyed as it always was.
+
+    Reading the leftmost hop here instead would hand the key to whoever reached
+    the API directly — the bypass the header was refused over.
+    """
+    _trusting(monkeypatch, 2)
+
+    direct = client_key(_request_from("10.0.0.1", forwarded="198.51.100.7"))
+
+    _trusting(monkeypatch, 0)
+    assert direct == client_key(_request_from("10.0.0.1"))
+
+
+def test_two_clients_behind_one_proxy_get_two_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#269's acceptance criterion: one heavy user must not throttle the others."""
+    _trusting(monkeypatch, 1)
+
+    first = client_key(_request_from("10.0.0.1", forwarded="198.51.100.7"))
+    second = client_key(_request_from("10.0.0.1", forwarded="203.0.113.9"))
+
+    assert first != second
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +345,15 @@ def _request_from(host: str | None) -> Any:
 def test_the_analysis_writes_are_limited_and_the_poll_is_not() -> None:
     """Spec §55 names the analysis endpoints; #98 reads that as the writes.
 
-    `GET /analyses/{id}` is the endpoint spec §65 requires a client to poll, so
-    limiting it would throttle the product's own progress reporting.
+    All five of them, on two routers: the list grew with the milestones and the
+    assertion did not, which #263 found and #269 fixes. `GET /analyses/{id}` is
+    the endpoint spec §65 requires a client to poll, so limiting it would
+    throttle the product's own progress reporting.
     """
     limited = {
         (route.path, method)
-        for route in analyses.router.routes
+        for router in (analyses.router, economics.router)
+        for route in router.routes
         for method in route.methods
         if any(
             dependency.call is analysis_rate_limit for dependency in route.dependant.dependencies
@@ -281,7 +361,10 @@ def test_the_analysis_writes_are_limited_and_the_poll_is_not() -> None:
     }
 
     assert ("/analyses", "POST") in limited
+    assert ("/analyses/{analysis_id}/images", "POST") in limited
+    assert ("/analyses/{analysis_id}/confirm-card", "POST") in limited
     assert ("/analyses/{analysis_id}/run", "POST") in limited
+    assert ("/analyses/{analysis_id}/economic-configuration", "POST") in limited
     assert ("/analyses/{analysis_id}", "GET") not in limited
 
 

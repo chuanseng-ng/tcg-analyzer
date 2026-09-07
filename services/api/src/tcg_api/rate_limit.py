@@ -22,9 +22,16 @@ Celery, so this is the same instance and not a second piece of infrastructure.
 **A client is its address, hashed.** `POST /analyses` opens the session, so on
 the call that matters most there is no cookie to key on; a cookie-keyed limit
 with an address fallback is reset by discarding the cookie, which makes the
-fallback the real limit. `X-Forwarded-For` is deliberately not read: a header
-anyone can set is a bypass rather than an identity, and trusting one requires
-knowing which proxy is in front of this service.
+fallback the real limit.
+
+**Which address, behind a proxy, is `TCG_API_TRUSTED_PROXY_COUNT`** — issue
+#269, and ADR 0005's dated addendum. ADR 0005 refused `X-Forwarded-For`
+outright, because a header anyone can set is a bypass rather than an identity
+and trusting one requires knowing which proxy is in front of this service. The
+setting is that knowledge: at `0`, the default, the header is not read at all
+and this is exactly ADR 0005's limiter; at *n* the client is the address *n*
+hops from the right, the one the *n*-th proxy this deployment operates
+appended. Never the leftmost entry — those are the caller's to write.
 
 **It fails open.** A limiter whose counter store is unreachable answers by
 letting the request through and logging, because the alternative is that a blip
@@ -109,8 +116,24 @@ def client_key(request: Request) -> str:
     A request whose peer the server did not report keys to a shared bucket
     rather than raising. That is the wrong answer for exactly one deployment
     shape and a 500 is the wrong answer for all of them.
+
+    **This is the one place the trusted-proxy question is decided.** The count
+    is read per call rather than closed over, because `get_settings` is cached
+    and a limiter that ignored a changed setting until restart would be a second
+    surprise on top of the first.
     """
+    count = get_settings().trusted_proxy_count
     host = request.client.host if request.client else "unknown"
+    if count:
+        # Guarded rather than parsed-and-ignored, so "at 0 the header is never
+        # read" is a property of the code and not of the arithmetic below.
+        hops = [
+            hop.strip()
+            for hop in request.headers.get("x-forwarded-for", "").split(",")
+            if hop.strip()
+        ]
+        if len(hops) >= count:
+            host = hops[-count]
     return RATE_LIMIT_KEY_PREFIX + sha256(host.encode()).hexdigest()[:_DIGEST_LENGTH]
 
 

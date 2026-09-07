@@ -268,15 +268,18 @@ declared confidence of 0.35 sits below the provisional `minimum_grade_confidence
 of 0.50, and the response says so with the value and the threshold rather than
 forcing a verdict.
 
-The four writes — `POST /analyses`, `POST /analyses/{id}/images`,
-`POST /analyses/{id}/confirm-card` and
-`POST /analyses/{id}/run` — are rate-limited
+The five writes — `POST /analyses`, `POST /analyses/{id}/images`,
+`POST /analyses/{id}/confirm-card`, `POST /analyses/{id}/run` and
+`POST /analyses/{id}/economic-configuration` — are rate-limited
 per client address (spec §55, which names analysis endpoints *and* image
 uploads), `TCG_API_RATE_LIMIT_REQUESTS` per
 `TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
 runs on so the limit holds across replicas. A throttled request is a 429
 carrying `Retry-After`, deliberately outside the spec §66 error envelope —
-see [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). A 500
+see [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). The address is
+the socket's unless `TCG_API_TRUSTED_PROXY_COUNT` is set, in which case it is
+the address that many hops from the *right* of `X-Forwarded-For` — the one the
+deployment's own proxy appended, never a leftmost entry the caller wrote. A 500
 `internal_error` — the catch-all's answer to an exception nobody anticipated —
 carries CORS headers like every other status, so a browser reads it as a failure
 it can classify rather than as a network outage. Polling

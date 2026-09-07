@@ -105,3 +105,50 @@ window — and is a fair trade for a mechanism that is one round trip and thirty
 lines. Per-route buckets were not built: an analysis is four or five requests
 end to end, so one budget expresses the policy where four numbers would only be
 four numbers to tune.
+
+## Addendum — 2026-09-07 (#269)
+
+The decision above stands for a deployment with nothing in front of the API.
+Two things about it are out of date, and this addendum records both rather than
+rewriting a decision that was correct on the day it was taken.
+
+**The limited routes are five, not three.** The Decision section names
+`POST /analyses` and `POST /analyses/{id}/run` "today, and #33's upload on
+arrival". The upload arrived, and two more writes joined it as the milestones
+landed: `POST /analyses/{id}/confirm-card` (#104) and
+`POST /analyses/{id}/economic-configuration` (#65). All five carry
+`Depends(analysis_rate_limit)` and share the one bucket, which is still the
+policy — an analysis is four or five requests end to end.
+`test_rate_limit.py` and `test_openapi.py` assert all five since #269; they
+asserted two and three before, which is how the list drifted unnoticed.
+
+**`X-Forwarded-For` is read when, and only when, a setting says how.** The
+refusal above — *"a header any client can set is a bypass rather than an
+identity, and trusting one requires knowing which proxy is in front of this
+service"* — is right about the risk and right about what is missing. #273's
+production overlay supplies what is missing by terminating TLS in a proxy this
+project operates; without a way to say so, `request.client.host` is that
+proxy's address and every beta user shares one bucket of thirty requests a
+minute. The determination, made by #263's security review and implemented here:
+
+- **`TCG_API_TRUSTED_PROXY_COUNT`** (`Settings.trusted_proxy_count`), default
+  `0`. At `0` the header is not read at all and the limiter is exactly the one
+  above; local development and CI run at `0`.
+- At *n*, the client is the address **n hops from the right** of
+  `X-Forwarded-For` — the one the *n*-th trusted proxy appended. Never the
+  leftmost entry: everything to the left of the deployment's own hops is what
+  the caller chose to send, and reading it restores the bypass. Setting the
+  count higher than the number of proxies actually operated is that same
+  mistake spelled as configuration.
+- A request carrying **fewer than *n* hops** did not come through those proxies
+  and keys on `request.client.host`, as before.
+- The overlay's proxy **overwrites** the header rather than appending to a
+  client-supplied one (#273), which makes the junk to the left disappear
+  entirely; counting from the right is what keeps the limiter correct if it
+  ever appends instead.
+- One header and one count. No `Forwarded` (RFC 7239) and no `X-Real-IP`: a
+  second syntax to parse is a second way to be wrong about the same question.
+
+`client_key` in `tcg_api/rate_limit.py` remains the single place this is
+decided. The window, the limit, the shared bucket, the fail-open rule, the
+hashing and the 429's shape are all unchanged.
