@@ -18,6 +18,7 @@ reordering its keys, does not fail the suite.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +264,23 @@ def test_every_image_this_repository_builds_runs_unprivileged(service: str) -> N
     dockerfile = REPO_ROOT / compose()["services"][service]["build"]["dockerfile"]
 
     assert "USER tcg" in dockerfile.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("service", ["web", "annotation"])
+def test_the_default_build_target_is_the_development_stage(service: str) -> None:
+    """The two Next images carry a production stage as well as a development one.
+
+    Neither service names a `target`, and neither does the `docker build`
+    command the READMEs document, so what both get is whichever stage comes
+    last. The development one has to be it: ADR 0003's file sync syncs source
+    into a running `next dev`, and a production image would accept the synced
+    files and ignore them. Reordering the stages is a silent way to break that,
+    which is why it is asserted here rather than left to a comment.
+    """
+    dockerfile = REPO_ROOT / compose()["services"][service]["build"]["dockerfile"]
+    stages = re.findall(r"^FROM .+ AS (\S+)", dockerfile.read_text(encoding="utf-8"), re.MULTILINE)
+
+    assert stages[-1] == "development", stages
 
 
 # ---------------------------------------------------------------------------

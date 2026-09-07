@@ -128,3 +128,50 @@ run as uid 1001, and every service sets `no-new-privileges`.
 - Adding the M6 GPU service is an addition rather than a restructure: it joins
   the same file, inherits the same hardening anchor, and gains the extra
   isolation §56 requires on top.
+
+## Addendum — 2026-09-07: the web images gained a production stage
+
+- **Refs:** M10, #268
+
+The fourth question above — *what shape the web image is* — was answered
+"development-shaped, and there is no production stage", on two grounds: #20's
+non-goals excluded deployment packaging, and a standalone build "would require
+moving `outputFileTracingRoot` back to the repository root, past the second
+(Python) workspace it was pinned to avoid".
+
+M10 spends the first ground: a beta serves strangers, and #273's deployment
+overlay needs an image to run. The second turned out to be a smaller obstacle
+than it reads.
+
+**Pinning the trace root at the repository root is not the inference the pin
+avoided.** The setting exists so Next does not *infer* a root by walking up
+past two lockfiles; naming the root explicitly is the same fix aimed one
+directory higher. And it has to be the root: pnpm links every dependency out of
+the store there, so a trace rooted at the app directory produces a
+`.next/standalone` missing all of them. Tracing follows imports, so the Python
+workspace it was pinned away from is walked past rather than copied.
+
+The consequence is that the standalone tree mirrors repository-root-relative
+paths — `standalone/node_modules/`, `standalone/apps/web/server.js` — which is
+the layout `web.Dockerfile`'s production stage copies onto `/app`.
+
+**`output: "standalone"` is behind `NEXT_OUTPUT_STANDALONE`, which only the
+Dockerfile sets.** Producing that tree means recreating pnpm's symlinked store
+inside the output, and creating a symlink on Windows needs a privilege an
+ordinary account does not have. Left unconditional, `pnpm --filter @tcg/web
+build` — a command `docs/development.md` documents as a host workflow — would
+fail on a Windows host. The image builds on Linux, so the variable belongs
+there; the standalone path is covered by CI's `docker` job, which builds the
+production target and runs it.
+
+**`development` is the last stage in both Dockerfiles, deliberately.** Neither
+Compose service names a `target`, and neither does the `docker build` command
+this repository's READMEs document, so both get whichever stage comes last.
+That has to stay the development one, or the file sync above would sync source
+into an image that ignores it. `tests/test_compose_stack.py` asserts the
+ordering rather than trusting the comment that explains it.
+
+Nothing else here changes: the file sync, the migration service, the `no-new-privileges`
+baseline and the uid 1001 claim are the same, and the production stage drops to
+the same user. The last consequence above — "the web app's production packaging
+remains genuinely unbuilt" — is what this addendum retires.
