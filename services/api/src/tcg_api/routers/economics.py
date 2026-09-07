@@ -1714,6 +1714,120 @@ async def _load_predictions(
     return outlooks, refusals, freshness
 
 
+@dataclass(frozen=True, slots=True)
+class ComputedResults:
+    """What one analysis has arrived at, from the record it stored.
+
+    Everything here is read from the analysis's own spec §57 record — the
+    configuration it references, the snapshot it was computed against and the
+    predictions the worker stored — rather than resolved now. The one thing
+    asked *now* is each price's age (#55), which is why `at` is a parameter and
+    not `datetime.now()` inside.
+    """
+
+    configuration: EconomicConfiguration | None
+    snapshot: MarketSnapshot | None
+    stale_after: timedelta
+    outlooks: tuple[CompanyOutlook, ...]
+    refusals: dict[str, InsufficientInformation]
+    freshness: dict[str, PriceFreshness]
+    recommendation: Recommendation | None
+    #: Whether both inputs the figures need — a configuration and a stored
+    #: prediction — were there. `outlooks` can be empty with both present, when
+    #: every configured company's model refused, so emptiness answers a
+    #: different question and callers must not use it for this one.
+    predicted: bool
+
+
+async def compute_results(
+    db: AsyncSession,
+    record: AnalysisRecord,
+    settings: Settings,
+    *,
+    at: datetime,
+) -> ComputedResults:
+    """Every figure `GET /analyses/{id}/results` reports, and §44's verdict.
+
+    Here rather than inside the route because #270 mints a return code over the
+    same numbers: a feedback row stores the recommendation the user was shown,
+    and a second copy of this orchestration is how the two would start
+    disagreeing about what the product said.
+
+    The recommendation needs three things and is `None` without any of them: a
+    configuration (the mode and the thresholds), a stored prediction, and an
+    assessed photograph (§44's third confidence source). The three reads raise
+    three distinct 503 reasons, so an operator learns which statement failed
+    rather than guessing from the path.
+
+    Logs nothing. `economics.results_computed` belongs to the route that serves
+    the results, so minting a code does not write a second line claiming a user
+    was shown one.
+    """
+    try:
+        configuration = (
+            None
+            if record.economic_configuration_id is None
+            else await read_configuration(db, record.economic_configuration_id)
+        )
+    except EconomicConfigurationUnavailable as error:
+        logger.warning("economics.configuration_could_not_be_read", exc_info=True)
+        raise _unreachable(
+            "economic_configuration_store_unreachable", _CONFIGURATION_UNREACHABLE
+        ) from error
+
+    try:
+        snapshot = (
+            None
+            if record.market_snapshot_id is None
+            else await get_snapshot(db, record.market_snapshot_id)
+        )
+    except MarketSnapshotUnavailable as error:
+        logger.warning("economics.snapshot_could_not_be_read", exc_info=True)
+        raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
+
+    stale_after = timedelta(days=settings.market_stale_after_days)
+    predicted = (
+        None
+        if configuration is None
+        else await _load_predictions(
+            db, record, configuration, snapshot, at=at, stale_after=stale_after
+        )
+    )
+
+    outlooks: tuple[CompanyOutlook, ...] = ()
+    refusals: dict[str, InsufficientInformation] = {}
+    freshness: dict[str, PriceFreshness] = {}
+    recommendation: Recommendation | None = None
+    if configuration is not None and predicted is not None:
+        outlooks, refusals, freshness = predicted
+        try:
+            quality = _image_quality(await read_quality(db, record.id))
+        except AnalysisStoreUnavailable as error:
+            logger.warning("economics.image_quality_could_not_be_read", exc_info=True)
+            raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
+        if quality is not None:
+            recommendation = _with_refusals(
+                recommend(
+                    outlooks,
+                    strategy_for(configuration.optimization_mode),
+                    image_quality=quality,
+                    thresholds=configuration.thresholds,
+                ),
+                refusals,
+            )
+
+    return ComputedResults(
+        configuration=configuration,
+        snapshot=snapshot,
+        stale_after=stale_after,
+        outlooks=outlooks,
+        refusals=refusals,
+        freshness=freshness,
+        recommendation=recommendation,
+        predicted=predicted is not None,
+    )
+
+
 @router.get(
     "/{analysis_id}/results",
     response_model=ResultsResponse,
@@ -1784,28 +1898,7 @@ async def read_results(
     document (#187), served whenever that step ran.
     """
     record = await _owned_analysis(db, request, analysis_id)
-
-    try:
-        configuration = (
-            None
-            if record.economic_configuration_id is None
-            else await read_configuration(db, record.economic_configuration_id)
-        )
-    except EconomicConfigurationUnavailable as error:
-        logger.warning("economics.configuration_could_not_be_read", exc_info=True)
-        raise _unreachable(
-            "economic_configuration_store_unreachable", _CONFIGURATION_UNREACHABLE
-        ) from error
-
-    try:
-        snapshot = (
-            None
-            if record.market_snapshot_id is None
-            else await get_snapshot(db, record.market_snapshot_id)
-        )
-    except MarketSnapshotUnavailable as error:
-        logger.warning("economics.snapshot_could_not_be_read", exc_info=True)
-        raise _unreachable("market_store_unreachable", _MARKET_UNREACHABLE) from error
+    computed = await compute_results(db, record, settings, at=datetime.now(UTC))
 
     try:
         condition_document = await read_condition(db, record.id)
@@ -1813,41 +1906,10 @@ async def read_results(
         logger.warning("economics.condition_could_not_be_read", exc_info=True)
         raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
 
-    stale_after = timedelta(days=settings.market_stale_after_days)
-    predicted = (
-        None
-        if configuration is None
-        else await _load_predictions(
-            db,
-            record,
-            configuration,
-            snapshot,
-            at=datetime.now(UTC),
-            stale_after=stale_after,
-        )
-    )
-
-    outlooks: tuple[CompanyOutlook, ...] = ()
-    refusals: dict[str, InsufficientInformation] = {}
-    freshness: dict[str, PriceFreshness] = {}
-    recommendation: Recommendation | None = None
-    if configuration is not None and predicted is not None:
-        outlooks, refusals, freshness = predicted
-        try:
-            quality = _image_quality(await read_quality(db, record.id))
-        except AnalysisStoreUnavailable as error:
-            logger.warning("economics.image_quality_could_not_be_read", exc_info=True)
-            raise _unreachable("analysis_store_unreachable", _UNREACHABLE) from error
-        if quality is not None:
-            recommendation = _with_refusals(
-                recommend(
-                    outlooks,
-                    strategy_for(configuration.optimization_mode),
-                    image_quality=quality,
-                    thresholds=configuration.thresholds,
-                ),
-                refusals,
-            )
+    configuration = computed.configuration
+    snapshot = computed.snapshot
+    recommendation = computed.recommendation
+    if computed.predicted:
         # Identifiers, which companies answered, the verdict, the gate that
         # decided it and how far each model trusted its own distribution (spec
         # §67; the confidence describes the model, not the card — #266) —
@@ -1856,20 +1918,20 @@ async def read_results(
         logger.info(
             "economics.results_computed",
             analysis_id=str(record.id),
-            companies=[outlook.company for outlook in outlooks],
-            refused={company: admission.reason for company, admission in refusals.items()},
+            companies=[outlook.company for outlook in computed.outlooks],
+            refused={company: admission.reason for company, admission in computed.refusals.items()},
             recommended_action=(
                 None if recommendation is None else str(recommendation.recommended_action)
             ),
             reason=None if recommendation is None else recommendation.reason.code,
             distribution_confidence={
                 outlook.company: round(outlook.distribution_confidence.value, 3)
-                for outlook in outlooks
+                for outlook in computed.outlooks
             },
             market_snapshot_id=None if snapshot is None else str(snapshot.id),
         )
 
-    refused = {company: admission.reason for company, admission in refusals.items()}
+    refused = {company: admission.reason for company, admission in computed.refusals.items()}
     response.headers["Cache-Control"] = _CACHE_CONTROL
     return ResultsResponse(
         analysis_id=record.id,
@@ -1886,11 +1948,14 @@ async def read_results(
                 id=snapshot.id,
                 generated_at=snapshot.generated_at,
                 data_version=str(snapshot.data_version),
-                stale_after_seconds=int(stale_after.total_seconds()),
+                stale_after_seconds=int(computed.stale_after.total_seconds()),
             )
         ),
         condition=None if condition_document is None else _condition(condition_document),
-        companies=[_company_economics(outlook, freshness[outlook.company]) for outlook in outlooks],
+        companies=[
+            _company_economics(outlook, computed.freshness[outlook.company])
+            for outlook in computed.outlooks
+        ],
         refused=refused,
         recommendation=None if recommendation is None else _recommendation(recommendation),
         failure=failure_of(record),
