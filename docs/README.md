@@ -14,6 +14,7 @@ Project documentation.
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
 | [`training-image-provenance-research.md`](training-image-provenance-research.md) | The rubric training-image sources are judged against, and what each one's licence actually permits |
 | [`image-quality-gate-research.md`](image-quality-gate-research.md) | Spec §19's gate measured against the corpus's real photographs, and the issues the disagreements became |
+| [`security-review.md`](security-review.md) | Spec §55's twelve and §56's four security requirements read against the tree at one commit: a verdict per bullet, the evidence, and the issues the gaps became |
 | [`adr/`](adr) | Architecture decision records, one numbered file per decision |
 | [`adr/template.md`](adr/template.md) | Starting point for a new ADR |
 
