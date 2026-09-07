@@ -74,6 +74,49 @@ statement about where it belongs — and there is no authentication, because V1
 excludes accounts and an internal tool on a private network is the shape this
 repository already assumes.
 
+## Docker images
+
+```bash
+docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
+docker build -f infrastructure/docker/worker.Dockerfile -t tcg-worker:dev .
+docker build -f infrastructure/docker/web.Dockerfile -t tcg-web:dev .
+docker build -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:dev .
+```
+
+The API and worker images are production-shaped already — they run `uvicorn` and
+`celery` as a deployment would. The two Next images carry **two stages**:
+
+| Target | Runs | Who runs it |
+| --- | --- | --- |
+| `development` | `next dev` | the Compose stack above, and the file sync |
+| `production` | the built `.next/standalone` server, as `tcg` | a deployment |
+
+The commands above name no `--target`, and neither does either Compose service,
+so both get `development` — it is the **last** stage in each file for exactly
+that reason, and `tests/test_compose_stack.py` asserts the ordering. Ask for the
+other shape:
+
+```bash
+docker build --target production -f infrastructure/docker/web.Dockerfile -t tcg-web:prod .
+docker build --target production -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:prod .
+```
+
+`NEXT_PUBLIC_API_BASE_URL` is a **build argument** there rather than an
+environment variable, because Next inlines `NEXT_PUBLIC_*` into the browser
+bundle when it builds: a production image is built per deployment, and nothing
+inlined this way may ever be a secret.
+
+```bash
+docker build --target production --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.example.com -f infrastructure/docker/web.Dockerfile -t tcg-web:prod .
+```
+
+`output: "standalone"` in each app's `next.config.mjs` is behind
+`NEXT_OUTPUT_STANDALONE`, which only the Dockerfile sets: producing that tree
+recreates pnpm's symlinked store inside the output, and creating a symlink on
+Windows needs a privilege an ordinary account does not have, so unconditionally
+the `pnpm … build` above would fail on a Windows host. See
+[ADR 0003](adr/0003-the-local-development-stack.md) and its 2026-09-07 addendum.
+
 ## Object storage
 
 Uploaded card images live in S3-compatible object storage — MinIO locally, any

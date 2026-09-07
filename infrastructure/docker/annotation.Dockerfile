@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# apps/annotation — the internal annotation tool, for local development.
+# apps/annotation — the internal annotation tool.
 #
 # A near-copy of web.Dockerfile, and deliberately so: the two applications share
 # a stack (ADR 0001), so they share a build. Two files rather than one
@@ -12,15 +12,23 @@
 # member of the pnpm workspace and the lockfile lives at the root.
 #
 #   docker build -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:dev .
+#   docker build --target production -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:prod .
 #
-# This image is DEVELOPMENT-SHAPED: it runs `next dev`, and it is what
-# `infrastructure/local/docker-compose.yml` starts. There is deliberately no
-# production stage — packaging for deployment is out of scope for M0 (#20), and
-# a standalone build would require moving `outputFileTracingRoot` in
-# `next.config.mjs` back to the repository root, undoing a fix whose reason is
-# recorded in that file. See docs/adr/0003-the-local-development-stack.md.
+# Two shapes, and `development` is the LAST stage on purpose, so the command
+# above with no `--target` and the Compose service that names none both still
+# get the development image:
+#
+#   development   runs `next dev`; what infrastructure/local/docker-compose.yml
+#                 starts, and what ADR 0003's file sync syncs into
+#   production    runs the built `.next/standalone` server; ADR 0009 keeps this
+#                 one off the public origin, so the deployment overlay runs it
+#                 on the internal network only
+#
+# Reordering the two silently changes what an untargeted build produces —
+# `tests/test_compose_stack.py` asserts the ordering. See
+# docs/adr/0003-the-local-development-stack.md and its 2026-09-07 addendum.
 
-FROM node:26-bookworm-slim AS development
+FROM node:26-bookworm-slim AS base
 
 # Corepack provisions the exact pnpm pinned by the root `package.json`'s
 # `packageManager` field, hash and all, so the image resolves dependencies with
@@ -40,11 +48,15 @@ RUN npm install --global corepack && corepack enable
 
 # Uploaded card images are untrusted input, and nothing here needs root. The
 # same uid/gid as the API image, so the two are consistent when a future
-# service shares a volume with either.
+# service shares a volume with either. Declared once here, so both shapes drop
+# to the same user.
 RUN groupadd --system --gid 1001 tcg \
     && useradd --system --uid 1001 --gid tcg --create-home tcg
 
 WORKDIR /app
+
+
+FROM base AS dependencies
 
 # Manifests first: an edit to a component must not reinstall the dependency
 # tree. `pnpm-workspace.yaml` is required for `apps/annotation` to resolve as a
@@ -57,6 +69,59 @@ COPY apps/annotation/package.json apps/annotation/
 # built from exactly the resolution that was reviewed and tested.
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
+
+
+FROM dependencies AS build
+
+COPY apps/annotation/ apps/annotation/
+
+# `NEXT_PUBLIC_*` values are INLINED INTO THE BROWSER BUNDLE at build time
+# (`apps/annotation/lib/env.ts` says so), so this is a build argument and not a
+# runtime setting: a production image is built per deployment, and the value
+# can never be a secret. Deliberately without a default — unset leaves
+# `lib/env.ts`'s own fallback as the single place that decides one.
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+
+# Asks `next.config.mjs` for `output: "standalone"`; see the reason it is
+# behind a variable there.
+ENV NEXT_OUTPUT_STANDALONE=1
+
+RUN pnpm --filter @tcg/annotation build
+
+
+FROM base AS production
+
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0 \
+    PORT=3001
+
+# The standalone tree mirrors repository-root-relative paths, because
+# `outputFileTracingRoot` is the repository root — so this unpacks onto `/app`
+# and the server lands at /app/apps/annotation/server.js beside /app/node_modules.
+# `.next/static` and `public/` are excluded from that tree on the assumption a
+# CDN serves them; copied in, `server.js` serves them itself. There is no
+# `public/` in this application to copy.
+COPY --from=build --chown=tcg:tcg /app/apps/annotation/.next/standalone ./
+COPY --from=build --chown=tcg:tcg /app/apps/annotation/.next/static ./apps/annotation/.next/static
+
+USER tcg
+
+EXPOSE 3001
+
+# The same probe as the development stage's, on a short start period: the app
+# is already built, so the first request pays for no compilation.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["node", "-e", "fetch('http://127.0.0.1:3001/').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+
+# `HOSTNAME=0.0.0.0` above is what the standalone server binds; the default
+# binds the loopback interface only, which no other container and no browser on
+# the host could reach.
+CMD ["node", "apps/annotation/server.js"]
+
+
+# LAST — see the header. An untargeted build is the development image.
+FROM dependencies AS development
 
 COPY apps/annotation/ apps/annotation/
 

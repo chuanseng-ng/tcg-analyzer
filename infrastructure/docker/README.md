@@ -13,6 +13,15 @@ needing the root `pnpm-lock.yaml`.
 docker build -f infrastructure/docker/api.Dockerfile -t tcg-api:dev .
 docker build -f infrastructure/docker/worker.Dockerfile -t tcg-worker:dev .
 docker build -f infrastructure/docker/web.Dockerfile -t tcg-web:dev .
+docker build -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:dev .
+```
+
+The two Next images carry two stages. The commands above name no `--target`,
+so they build the development one; the deployment shape is asked for:
+
+```bash
+docker build --target production -f infrastructure/docker/web.Dockerfile -t tcg-web:prod .
+docker build --target production -f infrastructure/docker/annotation.Dockerfile -t tcg-annotation:prod .
 ```
 
 ## What exists today
@@ -21,7 +30,8 @@ docker build -f infrastructure/docker/web.Dockerfile -t tcg-web:dev .
 | --- | --- | --- |
 | `api.Dockerfile` | `services/api` — FastAPI, and the Alembic migrations | production |
 | `worker.Dockerfile` | `services/api` run as the Celery analysis worker | production |
-| `web.Dockerfile` | `apps/web` — Next.js | development |
+| `web.Dockerfile` | `apps/web` — Next.js | development + production |
+| `annotation.Dockerfile` | `apps/annotation` — the internal tool | development + production |
 
 `api.Dockerfile` carries `alembic.ini` and `database/` as well as the
 application, so the local stack's one-shot `migrate` service runs the migrations
@@ -40,10 +50,22 @@ gate from inside the function that runs a job, because the API imports that
 module merely to enqueue. Move it to the top of the file and the API container
 stops starting. `services/api/tests/test_import_purity.py` asserts it.
 
-`web.Dockerfile` is **development-shaped**: it runs `next dev`. Production
-packaging for the web app is deliberately absent — it is a deployment concern,
-and M0 (#20) explicitly excludes deployment configuration. See
-[ADR 0003](../../docs/adr/0003-the-local-development-stack.md).
+`web.Dockerfile` and `annotation.Dockerfile` are one file each with two shapes.
+`development` runs `next dev` and is what
+[`../local/docker-compose.yml`](../local/docker-compose.yml) starts and what
+ADR 0003's file sync syncs source into. `production` runs the built
+`.next/standalone` server as `tcg`, and is what the deployment overlay runs.
+
+**`development` is the last stage in both, on purpose.** An untargeted build
+gets whichever stage comes last, and both Compose services and the commands
+above name no target; a production image would accept the synced files and
+ignore them. `tests/test_compose_stack.py` asserts the ordering.
+
+`NEXT_PUBLIC_API_BASE_URL` is a **build argument** on the production stage, not
+a runtime setting: Next inlines `NEXT_PUBLIC_*` into the browser bundle at build
+time, so a production image is built per deployment and the value can never be a
+secret. See [ADR 0003](../../docs/adr/0003-the-local-development-stack.md) and
+its 2026-09-07 addendum.
 
 ## Non-root is the baseline, not an optimisation
 

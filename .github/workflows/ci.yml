@@ -242,29 +242,72 @@ jobs:
         run: docker compose -f infrastructure/local/docker-compose.yml down -v
 
   docker:
-    name: Docker — ${{ matrix.image }} image builds
+    name: Docker — ${{ matrix.image }} ${{ matrix.target || 'development' }} image builds
     runs-on: ubuntu-latest
     strategy:
       # Every image builds independently, and a failure should name the one
-      # that broke rather than stop at whichever came first.
+      # that broke rather than stop at whichever came first. The two Next
+      # applications appear twice: their Dockerfiles carry a development and a
+      # production stage, and an untargeted build is the development one, so
+      # the production shape the deployment overlay runs needs naming (#268).
       fail-fast: false
       matrix:
-        image: [api, worker, web, annotation]
+        include:
+          - image: api
+          - image: worker
+          - image: web
+          - image: web
+            target: production
+          - image: annotation
+          - image: annotation
+            target: production
+    env:
+      SCOPE: ${{ matrix.image }}-${{ matrix.target || 'development' }}
+      TAG: tcg-${{ matrix.image }}:${{ matrix.target || 'development' }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
       # Build only. Publishing is a deployment concern and deliberately out of
-      # scope; this answers "would this image build for anyone else?".
+      # scope; this answers "would this image build for anyone else?". The
+      # production images are additionally loaded into the daemon, because the
+      # step below runs one.
       - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: infrastructure/docker/${{ matrix.image }}.Dockerfile
+          target: ${{ matrix.target }}
           push: false
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          load: ${{ matrix.target == 'production' }}
+          tags: ${{ env.TAG }}
+          cache-from: type=gha,scope=${{ env.SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.SCOPE }}
+
+      # The acceptance criterion of #268 is an image that serves the built app,
+      # which no build can show. The image's own HEALTHCHECK is already the
+      # request that matters — `fetch('/')` and a check on `response.ok` — so
+      # this waits for it rather than publishing a port and repeating it.
+      - name: Smoke — the built image serves the application
+        if: matrix.target == 'production'
+        run: |
+          docker run --detach --name smoke "$TAG"
+          for _ in $(seq 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' smoke)"
+            if [ "$status" = healthy ]; then
+              # "as `tcg`", the other half of the acceptance criterion.
+              test "$(docker exec smoke id -u)" = 1001
+              exit 0
+            fi
+            if [ "$status" = unhealthy ]; then
+              break
+            fi
+            sleep 2
+          done
+          echo "::error::the image never reported healthy (last status: $status)"
+          docker logs smoke
+          exit 1
 
   compose:
     name: Compose — the whole stack starts
