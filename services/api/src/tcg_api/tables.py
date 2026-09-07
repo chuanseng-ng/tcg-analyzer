@@ -22,6 +22,7 @@ Table modules import `metadata` from here and attach to it:
   `dataset_versions` with their `dataset_members`, and §30's `image_annotations`
   and `centering_measurements`.
 * `tcg_api.models.tables` — spec §58's `model_bundles`.
+* `tcg_api.feedback.tables` — spec §68's `grade_feedback`.
 
 This module imports nothing from `tcg_api`, and must not: the table modules
 import *it*, so anything here that reached back for them would be a cycle. What
@@ -74,6 +75,22 @@ PRINTED: Final = sa.Text(collation="C")
 #: An empty JSONB bag, for the `metadata` columns that carry whatever a source
 #: recorded that has no column of its own.
 NO_METADATA: Final = sa.text("'{}'::jsonb")
+
+#: One point on a grade scale, as `tcg_domain.Grade` renders it. `10` is spelled
+#: out because `10.5` is not a grade and `[0-9](\.5)?` cannot say so —
+#: `market_observations._GRADE_KEY_PATTERN`, minus spec §24's collapsed tails.
+#:
+#: **Dropping `_or_lower` / `_or_higher` is the difference and it is deliberate.**
+#: A collapsed tail is something a model emits when it will not commit to one
+#: point. A slab prints one point, so a bucket here would be a distribution
+#: wearing an outcome's clothes.
+#:
+#: Here rather than in a domain module because two domains now write it:
+#: `tcg_api.datasets.tables` for the grade a company issued (#165) and
+#: `tcg_api.feedback.tables` for the grade a user reports receiving (#270).
+#: Both are the *grammar* — the per-company scale is Python's in both places,
+#: so that a fourth company costs no migration.
+ISSUED_GRADE_PATTERN: Final = r"^(10|[0-9](\.5)?)$"
 
 
 def one_of(column: str, values: Iterable[str]) -> str:

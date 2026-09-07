@@ -47,7 +47,8 @@ catalog in `tcg_api/catalog/tables.py`, the analysis spine in
 `tcg_api/grading/tables.py`, the market data in `tcg_api/market/tables.py`, the
 economic configuration in `tcg_api/economics/tables.py`, the dataset,
 provenance, annotation and membership records in `tcg_api/datasets/tables.py`
-and the model registry in `tcg_api/models/tables.py` —
+the model registry in `tcg_api/models/tables.py` and spec §68's reported
+grades in `tcg_api/feedback/tables.py` —
 and `tcg_api/table_registry.py` imports them all,
 which is what makes that `MetaData` complete. `env.py` reads it from the registry
 for exactly that reason. Declare a new table in one of those modules as well as in
