@@ -36,8 +36,19 @@ import { Fact } from "./Fact";
 import { GradeDistribution } from "./GradeDistribution";
 import styles from "./page.module.css";
 
-/** Between polls — the cadence `/analyze` waits for the quality gate at. */
+/**
+ * The first pause between polls — `/analyze`'s cadence at the gate. Each pause
+ * after it doubles, up to the cap; the numbers are `docs/observability.md`'s
+ * (#267), and the cap is for a tab left open, not for the request.
+ */
 const POLL_INTERVAL_MS = 1_000;
+const POLL_INTERVAL_CAP_MS = 10_000;
+/**
+ * How long the screen waits in total before it stops and says so: the run's
+ * hard time limit. A row still unfinished past it has been killed or is between
+ * retries, and neither is worth a spinner.
+ */
+const POLL_BUDGET_MS = 120_000;
 
 type ImageQuality = AnalysisResponse["images"][number];
 
@@ -45,6 +56,8 @@ type State =
   | { readonly status: "no_analysis" }
   /** Not finished; `step` is what the analysis is doing, in words. */
   | { readonly status: "working"; readonly step: string }
+  /** Polled to the budget and still not finished. A screen state, never §65's (#271). */
+  | { readonly status: "stuck" }
   | { readonly status: "failed"; readonly analysis: AnalysisResponse }
   | { readonly status: "unavailable"; readonly failure: ResultsFailure }
   | {
@@ -61,10 +74,12 @@ type State =
  * the endpoint §65 says a client polls, and `completed` — which the
  * configuration write reaches (#244) — means every input the results need is
  * recorded. Arriving from `/configure` the first read already says so, so the
- * poll is for a reload, a direct arrival and for `failed`. It runs at the
- * `/analyze` cadence and stops on a terminal state or when the screen is left;
- * the `AbortController` covers every request and the sleep timer is cleared,
- * so nothing sets state after unmount.
+ * poll is for a reload, a direct arrival and for `failed`. It starts at the
+ * `/analyze` cadence, doubles to a ten-second cap, and stops on a terminal
+ * state, when the screen is left, or at the two-minute budget — the run's hard
+ * limit (`docs/observability.md`) — where the screen says the analysis is
+ * stuck and offers the poll again; the `AbortController` covers every request
+ * and the sleep timer is cleared, so nothing sets state after unmount.
  *
  * **Two states that must never collapse.** `recommendation: null` is "nobody
  * has asked" — no configuration, or no stored prediction — and
@@ -74,11 +89,12 @@ type State =
  * shows it as an admission with its numbers rather than hiding it or inventing
  * a verdict; the companies' figures stay below it, not behind it.
  *
- * **`failed` is explained from the photographs.** The poll endpoint carries no
- * error envelope; `confirm-card`'s `_failed()` decides between
- * `image_quality_failure` and `analysis_failed` by whether any photograph is
- * `unusable`, and this screen applies the same rule to the same field rather
- * than making a second request to learn a code.
+ * **`failed` is explained from the record.** The poll carries `failure:
+ * {code, reason}`, the fact the worker stored in the same statement as the
+ * state (#265), and the reason's sentence is `lib/results-copy`'s; nothing here
+ * infers one from `images[]`. When the reason is the gate's, the refused sides
+ * and their faults are named beside it — those are facts about the photographs,
+ * not a second reading of why.
  *
  * Everything an amount is stays the decimal string the wire carried, prefixed
  * with the currency (#66); nothing here is a total (#58); and display names come
@@ -105,9 +121,9 @@ export function Results() {
     const controller = new AbortController();
     const { signal } = controller;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const pause = () =>
+    const pause = (ms: number) =>
       new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, POLL_INTERVAL_MS);
+        timer = setTimeout(resolve, ms);
       });
 
     setState({ status: "working", step: "Looking up the analysis." });
@@ -121,11 +137,20 @@ export function Results() {
 
     (async () => {
       let analysis = await readAnalysis(analysisId, signal);
-      // ponytail: polls at 1 s for as long as the tab is open on an unfinished
-      // analysis; add a cap or a backoff if a stuck one ever shows up in practice.
+      // `waited` is the sum of the pauses, not the clock: what the budget bounds
+      // is how long this screen keeps asking, and a request's own duration is
+      // the service's to answer for.
+      let delay = POLL_INTERVAL_MS;
+      let waited = 0;
       while (!isTerminal(analysis.status)) {
+        if (waited >= POLL_BUDGET_MS) {
+          setState({ status: "stuck" });
+          return;
+        }
         setState({ status: "working", step: stepCopy(analysis.status) });
-        await pause();
+        await pause(delay);
+        waited += delay;
+        delay = Math.min(delay * 2, POLL_INTERVAL_CAP_MS);
         analysis = await readAnalysis(analysisId, signal);
       }
       if (isFailed(analysis.status)) {
@@ -156,6 +181,8 @@ export function Results() {
           {state.step}
         </p>
       );
+    case "stuck":
+      return <Stuck onRetry={() => setAttempt((previous) => previous + 1)} />;
     case "failed":
       return <Failed analysis={state.analysis} />;
     case "unavailable":
@@ -192,31 +219,54 @@ function NoAnalysis() {
 }
 
 /**
+ * Polled to the budget and still unfinished. Nothing is known to be wrong —
+ * the row may yet move, or the run may have been killed and the sweep not
+ * reached it — so this says only that, and offers the poll again beside the
+ * way to start over.
+ */
+function Stuck({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <div className={styles.failure} role="alert">
+      <h1 className={styles.failureHeading}>This is taking longer than it should.</h1>
+      <p className={styles.failureBody}>
+        The analysis has not finished after two minutes. It may still finish, or it may have
+        stopped; nothing has been lost either way.
+      </p>
+      <div className={styles.actions}>
+        <button className={styles.retry} type="button" onClick={onRetry}>
+          Try again
+        </button>
+        <Link className={styles.action} href="/analyze">
+          Photograph the card again
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
  * §65 has no way out of `failed`, so this offers new photographs and nothing
- * else. A photograph the gate refused is named with the gate's own words
- * (`lib/quality-copy`); any other failure is said without blaming them, because
- * nothing here suggests they were the problem.
+ * else. Why is the row's own reason (#265), in `lib/results-copy`'s words; when
+ * it is the gate's, each photograph the gate refused is named with the gate's
+ * own words (`lib/quality-copy`) — a fact about the photographs, beside the
+ * reason and never in place of it.
  */
 function Failed({ analysis }: { readonly analysis: AnalysisResponse }) {
-  const refused = analysis.images.filter(isUnusable);
+  const reason = analysis.failure?.reason ?? "no_reason_given";
+  const refused = reason === "unusable_photograph" ? analysis.images.filter(isUnusable) : [];
 
   return (
     <div className={styles.failure} role="alert">
       <h1 className={styles.failureHeading}>This analysis could not be completed.</h1>
-      {refused.length > 0 ? (
-        refused.map((image) => (
-          <div key={image.side}>
-            <p className={styles.body}>
-              The {nameOf(image.side)} photograph could not support an analysis.
-            </p>
-            <PhotographFaults image={image} />
-          </div>
-        ))
-      ) : (
-        <p className={styles.body}>
-          This analysis did not finish, and nothing suggests the photographs were the problem.
-        </p>
-      )}
+      <p className={styles.body}>{reasonCopy(reason)}</p>
+      {refused.map((image) => (
+        <div key={image.side}>
+          <p className={styles.body}>
+            The {nameOf(image.side)} photograph could not support an analysis.
+          </p>
+          <PhotographFaults image={image} />
+        </div>
+      ))}
       <div className={styles.actions}>
         <Link className={styles.action} href="/analyze">
           Photograph the card again

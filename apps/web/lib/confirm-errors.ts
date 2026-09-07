@@ -24,6 +24,7 @@
  */
 
 import { ApiError } from "./api";
+import { reasonCopy } from "./results-copy";
 
 /**
  * What the screen should offer.
@@ -64,25 +65,29 @@ export function classifyConfirmFailure(error: unknown): ConfirmFailure {
     };
   }
 
-  // The gate refused the photographs (spec §19). Permanent: §65 has no way out
-  // of `failed`, so this needs new photographs rather than another tap. What
-  // was wrong with them was already said on `/analyze`, which is where the
-  // retake is — and a link to it from the confirmation gate is exactly what
-  // #91 refuses to open, in this branch as in every other.
+  // The analysis has `failed`. Permanent: §65 has no way out of it, so this
+  // needs a new analysis rather than another tap — and a link to `/analyze`
+  // from the confirmation gate is exactly what #91 refuses to open, in this
+  // branch as in every other. *Why* is the row's stored reason (#265), carried
+  // as `details.reason` and said in the same words `/results` uses; the code
+  // alone falls back to a sentence that blames the photographs only when the
+  // gate refused them.
+  const reason = error.details?.reason;
   if (error.code === "image_quality_failure") {
     return {
       message:
-        "These photographs could not be analysed. Start again with new ones when you are ready.",
+        typeof reason === "string"
+          ? reasonCopy(reason)
+          : "These photographs could not be analysed. Start again with new ones when you are ready.",
       action: "gone",
     };
   }
-
-  // The analysis failed for some other reason — a job that ran out of retries,
-  // or a dependency that never came back. Said without blaming the photographs,
-  // because nothing here suggests they were the problem.
   if (error.code === "analysis_failed") {
     return {
-      message: "This analysis did not finish. Starting again is the only way on from here.",
+      message:
+        typeof reason === "string"
+          ? reasonCopy(reason)
+          : "This analysis did not finish. Starting again is the only way on from here.",
       action: "gone",
     };
   }
