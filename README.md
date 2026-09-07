@@ -233,6 +233,7 @@ not merely out of the working tree.
 | [`docs/development.md`](docs/development.md) | Host-based workflows — web, object storage, background jobs |
 | [`docs/retention.md`](docs/retention.md) | How long uploaded photographs are kept, and what deletes them |
 | [`docs/observability.md`](docs/observability.md) | The latency budgets, the events they are read from, and the first measurement |
+| [`docs/security-review.md`](docs/security-review.md) | Spec §55 and §56 read against the tree: a verdict per requirement, and the issues the gaps became |
 | [`docs/market-provider-research.md`](docs/market-provider-research.md) | The rubric, the survey, and the licensing determinations |
 | [`docs/adr/`](docs/adr) | Why things are the way they are, one decision per file |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Commits, pull requests, Definition of Done |
