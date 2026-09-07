@@ -20,15 +20,17 @@ Two rules, both from the specification:
 
 The vocabulary is the analyzers' pattern (#249): the strings stored here are
 what the client keys its copy off, exactly. Rewording one re-keys a sentence.
-`timed_out` and `stalled` are declared here and written by nobody yet — the
-bounding issue (#272) writes them, so they exist before their writer for the
-same reason `SessionStatus.EXPIRED` did.
+`timed_out` is written by the run's soft time limit and `stalled` by the stall
+sweep, both #272's — the first through this mapping, because a soft limit
+arrives as an exception on the same path as every other failure, and the
+second by `stalls.sweep_stalled`, which has no exception to key on.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
 
+from celery.exceptions import SoftTimeLimitExceeded
 from tcg_domain.errors import CatalogUnavailable, InvalidConditionAssessment
 from tcg_grading_companies.errors import GradingCompanyError
 from tcg_shared.storage.errors import StorageError
@@ -55,9 +57,12 @@ class FailureReason(StrEnum):
     #: including the analysis store itself, whose outage is the one `_fail`
     #: cannot record.
     JOB_DEAD_LETTERED = "job_dead_lettered"
-    #: Reserved for #272's soft time limit. Declared, not yet written.
+    #: The run passed `SOFT_TIME_LIMIT_SECONDS` and was stopped (#272). Never
+    #: retried: a run that ran out of time once will run out of time again.
     TIMED_OUT = "timed_out"
-    #: Reserved for #272's stall sweep. Declared, not yet written.
+    #: The stall sweep found the analysis still `uploaded` long after its last
+    #: photograph arrived (#272) — the residue of a hard kill, which acks the
+    #: message and rolls the run's transaction back with no exception anywhere.
     STALLED = "stalled"
 
     @property
@@ -76,6 +81,8 @@ def failure_reason(error: BaseException) -> FailureReason:
     so it names none of them. Anything unnamed is `job_dead_lettered` — the
     honest bucket, not a guess.
     """
+    if isinstance(error, SoftTimeLimitExceeded):
+        return FailureReason.TIMED_OUT
     if isinstance(error, CatalogUnavailable):
         return FailureReason.CATALOG_UNAVAILABLE
     if isinstance(error, GradingRulesUnavailable):
