@@ -9,10 +9,10 @@ that needs Redis is the process that fails without it.
 Importing `jobs` is what defines the task. It is a `shared_task`, so it attaches
 itself to the application built below rather than the other way round.
 
-The worker is started from the API's own image with this command, exactly as the
-`migrate` service is — see `infrastructure/local/docker-compose.yml`. Its
-isolation (spec §56) is the container's: no published port, no capabilities, no
-new privileges.
+The worker is started from an image of its own with this command — see
+`infrastructure/docker/worker.Dockerfile`, which is `api.Dockerfile` plus the
+`worker` uv extra and with it OpenCV (#36). Its isolation (spec §56) is the
+container's: no published port, no capabilities, no new privileges.
 """
 
 from __future__ import annotations
