@@ -45,7 +45,9 @@ from tcg_api.analysis.sessions import execute
 from tcg_api.analysis.tables import images
 
 __all__ = [
+    "NORMALIZED_NAMESPACE",
     "PIPELINE_KEY",
+    "UPLOAD_NAMESPACE",
     "CachedPipelineResult",
     "ImageQuality",
     "ImageRecord",
@@ -61,6 +63,23 @@ __all__ = [
     "upsert_image",
     "v1_sides_present",
 ]
+
+#: The prefix every uploaded photograph is stored under. `generate_key` adds a
+#: `YYYY/MM/DD` partition beneath it, which is what makes spec §54's retention
+#: sweep a prefix scan rather than a listing of the whole bucket.
+UPLOAD_NAMESPACE: Final = "uploads"
+
+#: Where normalized artifacts are stored. Its own prefix rather than the
+#: upload's, so that an artifact is never mistaken for a photograph a user sent
+#: — they have different retention consequences and only one of them is
+#: irreplaceable.
+NORMALIZED_NAMESPACE: Final = "normalized"
+
+#: Both live here rather than beside their writers because #264's orphan sweep
+#: needs them too, and neither writer can be imported from it: `quality.py`
+#: binds OpenCV (worker-only) and `routers/analyses.py` imports `jobs.py`, which
+#: is what would run the sweep. This module is the one both already import, and
+#: is the one that owns the rows these keys are written into.
 
 #: Where `quality_details` carries the identifier of the pipeline that produced
 #: a row's derived columns — issue #39. In the document rather than in a column

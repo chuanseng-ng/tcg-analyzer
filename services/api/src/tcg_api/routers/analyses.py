@@ -79,6 +79,7 @@ from tcg_shared.storage import ObjectStorage, StorageError, StorageKey, generate
 from tcg_api.analysis.failures import FailureReason
 from tcg_api.analysis.image_validation import InvalidImage, ValidatedImage, validate_image
 from tcg_api.analysis.images import (
+    UPLOAD_NAMESPACE,
     ImageQuality,
     ImageRecord,
     read_image_objects,
@@ -108,7 +109,6 @@ from tcg_api.version import application_version
 
 __all__ = [
     "SESSION_COOKIE",
-    "UPLOAD_NAMESPACE",
     "AnalysisResponse",
     "AnalysisRunResponse",
     "CardConfirmationRequest",
@@ -168,11 +168,6 @@ _ALREADY_CONFIRMED = "This analysis has already been confirmed."
 #: reading a 503 is told which of three dependencies is down rather than
 #: guessing.
 _IMAGES_UNREACHABLE = "The image could not be stored."
-
-#: The prefix every uploaded photograph is stored under. `generate_key` adds a
-#: `YYYY/MM/DD` partition beneath it, which is what makes spec §54's retention
-#: sweep a prefix scan rather than a listing of the whole bucket.
-UPLOAD_NAMESPACE: Final = "uploads"
 
 #: The sides a V1 upload may name. A `Literal` rather than `ImageSide`, which
 #: admits all six of spec §11's values: the schema accepts the four
@@ -1347,8 +1342,10 @@ async def _discard(storage: ObjectStorage, key: StorageKey) -> None:
     Two callers, both about orphans: a row that could not be committed, and the
     photograph a retake replaced. Neither is worth turning into an error a user
     sees — the upload either did or did not happen, and this is housekeeping —
-    but both are worth a log line, because an object no row names is one a
-    retention sweep working from rows will never find (spec §54, #41).
+    but both are worth a log line, because an object no row names is one the
+    row-driven retention sweep will never find (spec §54, #41). What does find
+    it is `analysis/orphans.py`, which sweeps by prefix and age a day after the
+    retention period (#264); this line is how one is noticed before then.
     """
     try:
         await storage.delete(key)

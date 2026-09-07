@@ -76,6 +76,7 @@ from tcg_grading_companies import ADAPTERS
 from tcg_grading_companies.errors import GradingCompanyError
 
 from tcg_api.analysis.failures import FailureReason, failure_reason
+from tcg_api.analysis.orphans import sweep_orphans
 from tcg_api.analysis.retention import (
     SWEEP_INTERVAL_SECONDS,
     SWEEP_LIMIT,
@@ -97,12 +98,14 @@ __all__ = [
     "PURGE_EXPIRED",
     "QUEUE",
     "RUN_ANALYSIS",
+    "SWEEP_ORPHANS",
     "SWEEP_STALLED",
     "JobQueueUnavailable",
     "enqueue_analysis",
     "get_celery_app",
     "purge_expired_sessions",
     "run_analysis",
+    "sweep_orphan_objects",
     "sweep_stalled_analyses",
 ]
 
@@ -124,6 +127,9 @@ PURGE_EXPIRED = "tcg_api.analysis.purge_expired"
 
 #: The stall sweep's name on the wire (#272). Same contract again.
 SWEEP_STALLED = "tcg_api.analysis.sweep_stalled"
+
+#: The orphan sweep's name on the wire (#264). Same contract again.
+SWEEP_ORPHANS = "tcg_api.analysis.sweep_orphans"
 
 #: How many times a failing run is retried before it is dead-lettered. Four
 #: attempts in total.
@@ -261,6 +267,15 @@ def get_celery_app() -> Celery:
             # not worth a scheduler of its own.
             "sweep-stalled-analyses": {
                 "task": SWEEP_STALLED,
+                "schedule": SWEEP_INTERVAL_SECONDS,
+                "options": {"queue": QUEUE},
+            },
+            # #264's orphan sweep, on the same schedule as the sweep whose blind
+            # spot it covers. It reads the day prefixes the retention sweep has
+            # already finished with, so running the two an arbitrary distance
+            # apart would change nothing.
+            "sweep-orphan-objects": {
+                "task": SWEEP_ORPHANS,
                 "schedule": SWEEP_INTERVAL_SECONDS,
                 "options": {"queue": QUEUE},
             },
@@ -638,6 +653,21 @@ async def _sweep_stalled(limit: int) -> int:
         await engine.dispose()
 
 
+async def _sweep_orphans(limit: int) -> int:
+    """Run one orphan sweep. Engine built and disposed here, as `_purge` does."""
+    engine = create_engine()
+    try:
+        async with create_session_factory(engine)() as db:
+            return await sweep_orphans(
+                db,
+                get_object_storage(),
+                ttl_seconds=get_settings().session_ttl_seconds,
+                limit=limit,
+            )
+    finally:
+        await engine.dispose()
+
+
 # No retries. A tick that cannot reach PostgreSQL or the object store is far
 # more likely to be an outage than a fluke, and the next tick is an hour away —
 # which is a gentler retry than any backoff, and leaves the rows due until it
@@ -668,3 +698,19 @@ def sweep_stalled_analyses() -> None:
     and takes no arguments for the reason the retention sweep does not.
     """
     asyncio.run(_sweep_stalled(SWEEP_LIMIT))
+
+
+# No retries and no time limit, for the two sweeps above: the next tick is a
+# gentler retry than any backoff, and this one leaves nothing half-done — it
+# writes no row at all.
+@shared_task(name=SWEEP_ORPHANS, max_retries=0, acks_late=True)
+def sweep_orphan_objects() -> None:
+    """Delete expired objects that no row names — #264, spec §54.
+
+    The retention sweep's blind spot. It works from rows, and an object whose
+    row was never committed has no row to be found from; this one works from the
+    day prefix in the key instead. It takes no arguments for the reason neither
+    of the others does: what has expired is a fact about the database's clock
+    and the configured period, not something a caller gets to assert.
+    """
+    asyncio.run(_sweep_orphans(SWEEP_LIMIT))

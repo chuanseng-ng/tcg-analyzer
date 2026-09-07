@@ -61,6 +61,7 @@ from tcg_shared.storage.keys import StorageKey, generate_key
 from tcg_shared.storage.port import ObjectStorage
 
 from tcg_api.analysis.images import (
+    NORMALIZED_NAMESPACE,
     apply_cached_pipeline_result,
     read_cached_pipeline_result,
     read_v1_image_keys,
@@ -72,12 +73,6 @@ from tcg_api.storage import get_object_storage
 __all__ = ["prepare_images"]
 
 logger = structlog.get_logger(__name__)
-
-#: Where normalized artifacts are stored. Its own prefix rather than the
-#: upload's, so that an artifact is never mistaken for a photograph a user sent
-#: — they have different retention consequences and only one of them is
-#: irreplaceable.
-NORMALIZED_NAMESPACE = "normalized"
 
 #: Which pipeline produced a row's derived columns — issue #39's cache key,
 #: alongside the content digest. Composed from the three stage constants rather
@@ -342,15 +337,14 @@ async def _store_artifact(
     That order is the upload endpoint's, and for its reason: a committed row must
     always name bytes that are there.
 
-    ponytail: the reverse failure is not handled. A job that dies between this
-    `put` and `_advance`'s commit leaves an object no row points at, which the
-    row-driven retention sweep cannot see — bounded at three per side by the
-    task's retry limit, since each attempt mints a fresh key. Handling it means
-    threading the written keys out to the one place that commits, which is a
-    larger change than the leak is worth; sweep by prefix and age if it ever is.
-    :func:`_copy_artifact` reaches the same leak by a second path, at the same
-    bound and for the same reason, which is the one thing #39 makes marginally
-    harder for #41 rather than easier.
+    The reverse failure is not handled *here*, deliberately. A job that dies
+    between this `put` and `_advance`'s commit leaves an object no row points at
+    — bounded at three per side by the task's retry limit, since each attempt
+    mints a fresh key. Threading the written keys out to the one place that
+    commits is a larger change than the leak is worth, so the leak is swept
+    instead: `analysis/orphans.py` deletes it by prefix and age a day after the
+    retention period (#264). :func:`_copy_artifact` reaches the same leak by a
+    second path, at the same bound and swept the same way.
     """
     key = generate_key(NORMALIZED_NAMESPACE)
     try:

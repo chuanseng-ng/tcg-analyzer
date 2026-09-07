@@ -211,7 +211,7 @@ def test_a_run_is_bounded_by_the_budgets_two_limits(configured: Any) -> None:
 
 def test_the_sweeps_carry_no_time_limit(configured: Any) -> None:
     """Both are re-runnable and hourly; a kill mid-sweep costs nothing."""
-    for name in (jobs.PURGE_EXPIRED, jobs.SWEEP_STALLED):
+    for name in (jobs.PURGE_EXPIRED, jobs.SWEEP_STALLED, jobs.SWEEP_ORPHANS):
         assert configured.tasks[name].soft_time_limit is None
         assert configured.tasks[name].time_limit is None
 
@@ -233,6 +233,20 @@ def test_the_stall_sweep_is_scheduled_beside_retention(configured: Any) -> None:
 def test_the_stall_sweep_is_registered_and_not_retried(configured: Any) -> None:
     assert jobs.SWEEP_STALLED in configured.tasks
     assert configured.tasks[jobs.SWEEP_STALLED].max_retries == 0
+
+
+def test_the_orphan_sweep_is_scheduled_beside_retention(configured: Any) -> None:
+    """#264 covers the row-driven sweep's blind spot, so it runs with it."""
+    entry = configured.conf.beat_schedule["sweep-orphan-objects"]
+
+    assert entry["task"] == jobs.SWEEP_ORPHANS
+    assert entry["options"]["queue"] == jobs.QUEUE
+    assert entry["schedule"] == configured.conf.beat_schedule["purge-expired-sessions"]["schedule"]
+
+
+def test_the_orphan_sweep_is_registered_and_not_retried(configured: Any) -> None:
+    assert jobs.SWEEP_ORPHANS in configured.tasks
+    assert configured.tasks[jobs.SWEEP_ORPHANS].max_retries == 0
 
 
 # ---------------------------------------------------------------------------

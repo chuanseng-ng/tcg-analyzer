@@ -19,6 +19,7 @@ from tcg_shared.storage.keys import (
     MAX_FILENAME_LENGTH,
     MAX_KEY_LENGTH,
     StorageKey,
+    day_prefix,
     generate_key,
     sanitise_filename,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "StorageError",
     "StorageKey",
     "StorageUnavailable",
+    "day_prefix",
     "generate_key",
     "sanitise_filename",
 ]

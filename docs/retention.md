@@ -105,9 +105,57 @@ would re-pick the same rows every hour, and one permanently unreadable key would
 stall retention entirely. A skipped session logs
 `retention.session_not_swept` and stays due.
 
+### Objects that no row names
+
+The sweep above works from rows, and the row is the only pointer to its
+objects. So an object whose row was never committed is invisible to it
+permanently — spec §54's failure reached through spec §54's own mechanism.
+Three paths leak one: a run killed between writing a normalized artifact and
+committing the row that names it (bounded at three per side by the task's retry
+limit, since each attempt mints a fresh key), the same leak reached through the
+preprocessing cache's copy, and a failed cleanup after a retake, which logs
+`image.orphaned`.
+
+A second hourly sweep covers them — `services/api/src/tcg_api/analysis/orphans.py`,
+issue #264 — and it works from the key rather than from a row:
+
+1. Ask the database for the time, as the sweep above does, and take the day
+   the retention period plus **one day of margin** ago — eight days, today.
+2. For each of the **seven day prefixes** ending there, under `uploads/` and
+   `normalized/` only, list the keys the object store holds. Up to two hundred
+   keys a run.
+3. Read which of those keys an `images` row still names — `original_uri` **and**
+   `normalized_uri`, the pair the sweep above reads.
+4. Delete the rest. Log `retention.orphans_swept` with two counts.
+
+**The margin is a day because a key's date is the day it was minted**, while
+retention counts from when the session was *opened*: a session opened at 23:59
+names objects under that day and expires almost a full day later. The period
+plus a day clears that boundary and the run's own retry window, which is
+minutes.
+
+**A key any live row names is never touched**, which is what makes this safe
+while the sweep above is behind: a backlogged session's photographs are still
+named, so they go when their session does and not before. A row committed
+between the listing and the delete names an object minted *today*, which is not
+under a prefix this sweep walks.
+
+**It never lists the bucket root.** `generate_key`'s `namespace/YYYY/MM/DD/`
+layout exists precisely so this can be a prefix scan (ADR 0002), and
+`day_prefix` is the only thing that builds one. The corpus namespaces —
+`training/` and `training-normalized/` — are outside the walk on purpose: no
+`images` row names one, and retaining a training image is the separately
+justified purpose below.
+
+The seven-day window is what makes a week of worker downtime recoverable; a day
+older than that is never reached again. That is a stated bound rather than an
+oversight, and what makes it affordable is that the leak is small by
+construction — three objects per side, per killed run.
+
 ### What is logged
 
 `retention.swept` carries `sessions`, `objects` and `failed` — counts.
+`retention.orphans_swept` carries `candidates` and `objects` — counts again.
 `retention.session_not_swept` carries the internal session UUID (never the
 cookie's token) and the exception's type name.
 
@@ -117,7 +165,9 @@ expires is no better than a bucket nobody expires.
 
 ## What this does not cover
 
-Four things, named here so that none of them is an exemption nobody wrote down.
+Three things, named here so that none of them is an exemption nobody wrote
+down. A fourth — objects that no row names — was uncovered until #264, and is
+now a sweep of its own; it is described above rather than here.
 
 **Market prices and the snapshots of them.** `market_observations`,
 `market_providers` and `market_snapshots` are outside the sweep entirely, and
@@ -131,16 +181,6 @@ over 49,399 cards is millions of observations a year, the immutability triggers
 guard `UPDATE` and not `DELETE` precisely so that a prune stays possible, and
 nobody has written the policy that would say which rows go and when. Until
 somebody does, nothing is deleted — which is a decision, not an oversight.
-
-**Objects that no row names.** The sweep works from rows. A worker killed
-between writing a normalized artifact and committing the row that names it
-leaves an object behind — bounded at three per side by the task's retry limit,
-since each attempt mints a fresh key — as does a failed cleanup after a retake,
-which logs `image.orphaned`. Both carry `ponytail:` comments where they occur.
-Closing this needs a `list` method on the `ObjectStorage` port and a sweep by
-prefix and age; `generate_key`'s `namespace/YYYY/MM/DD/` layout exists so that
-that sweep can be a prefix scan rather than a full listing. Not built, because
-nothing yet needs it.
 
 **Dead-letter records.** They expire by construction rather than by policy: the
 record is a log line carrying the job id, the analysis id, the exception's type
@@ -166,4 +206,6 @@ three places, because no single one of them can make it:
 PostgreSQL, `packages/shared/tests/test_storage_contract.py` proves `delete`
 really removes an object from MinIO, and CI's `compose` job uploads a
 photograph, backdates its session, sweeps, and then asks object storage whether
-the object is still there.
+the object is still there. The orphan sweep is split the same way:
+`services/api/tests/test_analysis_orphans.py` drives the set it computes against
+real PostgreSQL, and the contract suite proves `list` against MinIO.
