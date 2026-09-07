@@ -68,11 +68,12 @@ from uuid import UUID
 
 import structlog
 from celery import Celery, Task, shared_task
-from celery.exceptions import OperationalError
+from celery.exceptions import OperationalError, SoftTimeLimitExceeded
 from celery.utils.time import get_exponential_backoff_interval
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
 from tcg_grading_companies import ADAPTERS
+from tcg_grading_companies.errors import GradingCompanyError
 
 from tcg_api.analysis.failures import FailureReason, failure_reason
 from tcg_api.analysis.retention import (
@@ -82,6 +83,7 @@ from tcg_api.analysis.retention import (
     purge_expired,
 )
 from tcg_api.analysis.sessions import record_reproducibility
+from tcg_api.analysis.stalls import sweep_stalled
 from tcg_api.analysis.state import transition
 from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
@@ -95,11 +97,13 @@ __all__ = [
     "PURGE_EXPIRED",
     "QUEUE",
     "RUN_ANALYSIS",
+    "SWEEP_STALLED",
     "JobQueueUnavailable",
     "enqueue_analysis",
     "get_celery_app",
     "purge_expired_sessions",
     "run_analysis",
+    "sweep_stalled_analyses",
 ]
 
 logger = structlog.get_logger(__name__)
@@ -118,6 +122,9 @@ RUN_ANALYSIS = "tcg_api.analysis.run"
 #: the name `celery call` takes to run one by hand.
 PURGE_EXPIRED = "tcg_api.analysis.purge_expired"
 
+#: The stall sweep's name on the wire (#272). Same contract again.
+SWEEP_STALLED = "tcg_api.analysis.sweep_stalled"
+
 #: How many times a failing run is retried before it is dead-lettered. Four
 #: attempts in total.
 MAX_RETRIES = 3
@@ -131,6 +138,52 @@ RETRY_BACKOFF_SECONDS = 2
 
 #: The ceiling on a single wait, so a long backoff cannot outlive the analysis.
 RETRY_BACKOFF_MAX_SECONDS = 60
+
+#: When a run is stopped and recorded as `timed_out` — `docs/observability.md`,
+#: "What reads these numbers": six times the analysis-latency budget, past both
+#: `/analyze`'s 20 s wait and CI's 30 s ceiling. A run still going here is not
+#: slow, it is stuck. Celery raises `SoftTimeLimitExceeded` **inside** the task,
+#: so this is the limit that can write a reason; changing it changes that
+#: document in the same pull request.
+SOFT_TIME_LIMIT_SECONDS = 60
+
+#: The backstop, at twice the soft limit. A soft limit is a signal, and a signal
+#: cannot interrupt a C call — an OpenCV kernel that never returns would ignore
+#: it. This one kills the child instead, which with `acks_late` and the prefork
+#: pool **acks the message**: there is no exception to catch, the run's single
+#: transaction rolls back, and the row is left at `uploaded` for the stall sweep
+#: below. `/results` stops polling at this number too (#271's `POLL_BUDGET_MS`).
+HARD_TIME_LIMIT_SECONDS = 120
+
+#: How many runs one prefork child takes before it is replaced. Every run decodes
+#: several megapixels through OpenCV, and a long-lived child's heap only grows —
+#: glibc does not return freed arenas to the operating system, so the resident
+#: size a container is killed for is the high-water mark of every run it ever did.
+#:
+#: ponytail: a round number, not a measurement. Lower it if the worker's memory
+#: is what a deployment runs out of; nothing here is worth a setting until then.
+MAX_TASKS_PER_CHILD = 100
+
+#: Failures a second attempt cannot fix, so the runner does not make one.
+#:
+#: * `SoftTimeLimitExceeded` — a run that exhausted a minute will exhaust the
+#:   next one; four attempts of it is eight minutes of a worker slot.
+#: * `GradingCompanyError` — the adapter translates any predictor exception into
+#:   one, so a model that raised on this condition document raises on it again.
+#: * `ValueError` — a fact about the input rather than about the world. It
+#:   covers `InvalidConditionAssessment` (a `ValueError` by declaration) and the
+#:   worker's own `UnreadableImage`, which is deliberately **not** imported here:
+#:   `tcg_ml_image_quality` is worker-extra only and this module is imported by
+#:   the API image (`test_import_purity.py`).
+#:
+#: Everything else retries: `OSError`, `StorageError`, the driver's
+#: `OperationalError` and every store's `ConnectionError` are outages, and an
+#: outage is the one thing a backoff is for.
+PERMANENT_ERRORS: tuple[type[BaseException], ...] = (
+    SoftTimeLimitExceeded,
+    GradingCompanyError,
+    ValueError,
+)
 
 
 @lru_cache(maxsize=1)
@@ -170,6 +223,9 @@ def get_celery_app() -> Celery:
         # A worker that starts before Redis is up should wait rather than exit;
         # Compose orders them, but a restarting broker should not need Compose.
         broker_connection_retry_on_startup=True,
+        # #272. Configuration rather than a command-line flag for the reason the
+        # beat schedule below is: a deployment that starts a worker gets it.
+        worker_max_tasks_per_child=MAX_TASKS_PER_CHILD,
         # A publish that cannot reach the broker must fail the HTTP request
         # quickly rather than retry inside it. Celery's default policy retries
         # three times with a growing interval, which is right for a worker and
@@ -196,6 +252,15 @@ def get_celery_app() -> Celery:
         beat_schedule={
             "purge-expired-sessions": {
                 "task": PURGE_EXPIRED,
+                "schedule": SWEEP_INTERVAL_SECONDS,
+                "options": {"queue": QUEUE},
+            },
+            # #272's stall sweep, on the retention sweep's schedule because it
+            # answers the same kind of question — what has been sitting here too
+            # long — and because an analysis nobody is waiting on any more is
+            # not worth a scheduler of its own.
+            "sweep-stalled-analyses": {
+                "task": SWEEP_STALLED,
                 "schedule": SWEEP_INTERVAL_SECONDS,
                 "options": {"queue": QUEUE},
             },
@@ -453,6 +518,11 @@ async def _fail(analysis_id: UUID, reason: FailureReason) -> None:
     name=RUN_ANALYSIS,
     max_retries=MAX_RETRIES,
     acks_late=True,
+    # #272. On the task rather than in the configuration, so the two sweeps
+    # below — hourly, re-runnable, and bounded by the work that is due rather
+    # than by one photograph — do not inherit a limit meant for a decode.
+    soft_time_limit=SOFT_TIME_LIMIT_SECONDS,
+    time_limit=HARD_TIME_LIMIT_SECONDS,
 )
 def run_analysis(self: Task, analysis_id: str) -> None:
     """Advance one analysis as far as this milestone's pipeline goes.
@@ -487,7 +557,11 @@ def run_analysis(self: Task, analysis_id: str) -> None:
             )
     except Exception as error:
         attempts = (self.request.retries or 0) + 1
-        if attempts <= MAX_RETRIES:
+        # A permanent failure skips the backoff and lands on the record below on
+        # its first attempt — `attempts` is what tells the two apart in the log.
+        # `SoftTimeLimitExceeded` arrives here like any other exception, which
+        # is what lets the soft limit write a reason at all (#272).
+        if attempts <= MAX_RETRIES and not isinstance(error, PERMANENT_ERRORS):
             # The countdown is computed rather than left to `retry_backoff`:
             # that setting is only consulted by the wrapper `autoretry_for`
             # installs, and this task catches its own exceptions so it can write
@@ -554,6 +628,16 @@ async def _purge(limit: int) -> Swept:
         await engine.dispose()
 
 
+async def _sweep_stalled(limit: int) -> int:
+    """Run one stall sweep. Engine built and disposed here, as `_purge` does."""
+    engine = create_engine()
+    try:
+        async with create_session_factory(engine)() as db:
+            return await sweep_stalled(db, limit=limit)
+    finally:
+        await engine.dispose()
+
+
 # No retries. A tick that cannot reach PostgreSQL or the object store is far
 # more likely to be an outage than a fluke, and the next tick is an hour away —
 # which is a gentler retry than any backoff, and leaves the rows due until it
@@ -568,3 +652,19 @@ def purge_expired_sessions() -> None:
     gets to assert.
     """
     asyncio.run(_purge(SWEEP_LIMIT))
+
+
+# No retries and no time limit, for `purge_expired_sessions`' reasons: the next
+# tick is a gentler retry than any backoff, and a sweep killed halfway leaves
+# rows that are still stalled an hour later.
+@shared_task(name=SWEEP_STALLED, max_retries=0, acks_late=True)
+def sweep_stalled_analyses() -> None:
+    """Fail every analysis whose run was killed without saying so — #272.
+
+    The backstop's backstop. A hard time limit kills the prefork child, and
+    Celery acks the message on the way out: no exception reaches
+    `run_analysis`, so nothing writes a failure and the row is left exactly
+    where the rolled-back transaction put it. This is what reaches those rows,
+    and takes no arguments for the reason the retention sweep does not.
+    """
+    asyncio.run(_sweep_stalled(SWEEP_LIMIT))

@@ -299,27 +299,28 @@ four requests wide, so a client polling on schedule never has two in flight.
 
 ## What reads these numbers
 
-- **#272 — the run's time limits.** Neither exists yet; #272 will set
-  `task_soft_time_limit` to **60 s** and `task_time_limit` to **120 s**.
+- **#272 — the run's time limits.** Landed 2026-09-07:
+  `soft_time_limit` is **60 s** and `time_limit` **120 s** on `run_analysis`.
   Sixty seconds is six times the analysis
   budget, past `/analyze`'s 20 s wait and CI's 30 s ceiling: a run there is
-  not slow, it is stuck, and the soft limit will write `timed_out` through
+  not slow, it is stuck, and the soft limit writes `timed_out` through
   `transition(..., failure=)` so the row says so. `RETRY_BACKOFF_MAX_SECONDS`
   is already 60 s — "so a long backoff cannot outlive the analysis" — and the
   two now agree on what that means. The hard limit is the backstop at twice
-  the soft one; with `acks_late` and prefork a hard kill acks the message,
-  so the row is left for the stall sweep, which will treat an analysis
-  `identifying` for **≥ 15 min** as stalled — the longest a legitimate run
-  can be there is four attempts of 120 s plus three backoffs of at most 60 s,
-  eleven minutes. Changing any of these three changes this section in the
-  same PR.
+  the soft one; with `acks_late` and prefork a hard kill acks the message and
+  rolls the run's one transaction back, so the row is left **at `uploaded`**
+  — `identifying` is never committed — for the stall sweep, which treats an
+  analysis still `uploaded` **≥ 15 min after its last photograph arrived** as
+  stalled: the longest a legitimate run can take is four attempts of 120 s
+  plus three backoffs of at most 60 s, eleven minutes. Changing any of these
+  three changes this section in the same PR.
 - **#271 — the `/results` poll.** Before #271 it polled at 1 s with no cap;
   it now keeps the first interval at **1 s** and backs off to a cap of
   **10 s** (the poll route answers in milliseconds; the cap is for the tab
   left open, not the request). The screen stops polling and says the
-  analysis is stuck at **2 min**, the hard limit above: a row still
-  `identifying` then has been hard-killed or is between retries, and neither
-  is worth a spinner. `stuck` is a screen state, never a §65 state. The two
+  analysis is stuck at **2 min**, the hard limit above: a row that has not
+  reached a terminal state by then has been hard-killed or is between
+  retries, and neither is worth a spinner. `stuck` is a screen state, never a §65 state. The two
   minutes are counted as the sum of the pauses, not the clock, so a slow
   answer does not shorten the wait.
 - **`/analyze`'s wait** stays at 20 × 1 s (`VERDICT_POLL_ATTEMPTS`): twice

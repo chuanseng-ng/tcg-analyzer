@@ -14,6 +14,7 @@ import asyncio
 import uuid
 
 import pytest
+from celery.exceptions import SoftTimeLimitExceeded
 from tcg_api.analysis.failures import FailureReason, failure_reason
 from tcg_api.analysis.sessions import AnalysisStoreUnavailable
 from tcg_api.analysis.state import transition
@@ -56,6 +57,7 @@ def test_only_an_unusable_photograph_is_the_users_to_fix() -> None:
         (GradingCompanyError("broke"), FailureReason.MODEL_FAILED),
         (GradePredictionFailed("broke"), FailureReason.MODEL_FAILED),
         (InvalidConditionAssessment("broke"), FailureReason.MODEL_FAILED),
+        (SoftTimeLimitExceeded(), FailureReason.TIMED_OUT),
     ],
     ids=lambda value: type(value).__name__ if isinstance(value, Exception) else str(value),
 )

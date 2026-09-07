@@ -333,8 +333,8 @@ from the exception's *type* where the worker gives up, never its message
 | `analysis_failed` | `image_store_unavailable` | the object store could not be read during the run |
 | `analysis_failed` | `model_failed` | a grading model *raised* (`GradingCompanyError`), or the stored condition assessment was one the domain refused (`InvalidConditionAssessment`) — a model that declined is a stored refusal in the results, never a failure |
 | `analysis_failed` | `job_dead_lettered` | the runner gave up after its retries on something with no name here, the analysis store's own outage included |
-| `analysis_failed` | `timed_out` | reserved for the run's soft time limit; written by nobody yet |
-| `analysis_failed` | `stalled` | reserved for the stall sweep; written by nobody yet |
+| `analysis_failed` | `timed_out` | the run passed its soft time limit (60 s) and was stopped — never retried, because a run that exhausted a minute will exhaust the next one |
+| `analysis_failed` | `stalled` | the hourly stall sweep found the analysis still `uploaded` 15 min after its last photograph arrived — the residue of a hard time limit, which kills the worker's child and leaves no exception to record |
 
 Caching follows from what a body claims rather than from how expensive it was to
 build. `GET /grading-companies` is `public, max-age=3600` — slow-moving reference

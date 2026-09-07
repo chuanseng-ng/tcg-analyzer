@@ -24,9 +24,10 @@ from typing import Any
 
 import pytest
 import structlog
-from celery.exceptions import Retry
+from celery.exceptions import Retry, SoftTimeLimitExceeded
 from kombu.exceptions import ContentDisallowed
 from kombu.serialization import dumps, loads, prepare_accept_content
+from sqlalchemy.exc import OperationalError
 from structlog.testing import CapturingLogger
 from tcg_api.analysis import jobs
 from tcg_api.analysis.failures import FailureReason
@@ -34,6 +35,8 @@ from tcg_api.config import REDIS_URL_ENV_VAR, Settings, get_settings
 from tcg_api.logging import configure_logging
 from tcg_api.version import application_version
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
+from tcg_domain.errors import InvalidConditionAssessment
+from tcg_grading_companies.errors import GradePredictionFailed
 from tcg_shared.storage.errors import StorageUnavailable
 
 BROKER = "redis://:local@localhost:6379/0"
@@ -189,6 +192,50 @@ def test_there_is_no_result_backend(configured: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Bounding a run — issue #272, `docs/observability.md`
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_is_bounded_by_the_budgets_two_limits(configured: Any) -> None:
+    """The numbers are `docs/observability.md`'s: soft 60 s, hard 120 s.
+
+    The soft limit is the one that writes `timed_out`; the hard limit is the
+    backstop for a C call the signal cannot interrupt. `POLL_BUDGET_MS` on
+    `/results` is the hard limit, so moving it moves the client too.
+    """
+    task = configured.tasks[jobs.RUN_ANALYSIS]
+
+    assert task.soft_time_limit == jobs.SOFT_TIME_LIMIT_SECONDS == 60
+    assert task.time_limit == jobs.HARD_TIME_LIMIT_SECONDS == 120
+
+
+def test_the_sweeps_carry_no_time_limit(configured: Any) -> None:
+    """Both are re-runnable and hourly; a kill mid-sweep costs nothing."""
+    for name in (jobs.PURGE_EXPIRED, jobs.SWEEP_STALLED):
+        assert configured.tasks[name].soft_time_limit is None
+        assert configured.tasks[name].time_limit is None
+
+
+def test_a_worker_slot_is_recycled_after_a_bounded_number_of_runs(configured: Any) -> None:
+    """Each run decodes megapixels through OpenCV; the child's heap only grows."""
+    assert configured.conf.worker_max_tasks_per_child == jobs.MAX_TASKS_PER_CHILD
+    assert 0 < jobs.MAX_TASKS_PER_CHILD <= 1000
+
+
+def test_the_stall_sweep_is_scheduled_beside_retention(configured: Any) -> None:
+    entry = configured.conf.beat_schedule["sweep-stalled-analyses"]
+
+    assert entry["task"] == jobs.SWEEP_STALLED
+    assert entry["options"]["queue"] == jobs.QUEUE
+    assert entry["schedule"] == configured.conf.beat_schedule["purge-expired-sessions"]["schedule"]
+
+
+def test_the_stall_sweep_is_registered_and_not_retried(configured: Any) -> None:
+    assert jobs.SWEEP_STALLED in configured.tasks
+    assert configured.tasks[jobs.SWEEP_STALLED].max_retries == 0
+
+
+# ---------------------------------------------------------------------------
 # The retention sweep's schedule — issue #41, spec §54
 # ---------------------------------------------------------------------------
 def test_the_retention_sweep_is_scheduled(configured: Any) -> None:
@@ -220,18 +267,23 @@ def test_the_sweep_is_not_retried(configured: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def failing(_: Any) -> AnalysisStatus | None:
-    raise ConnectionError("the store is down")
-
-
 async def already_done(_: Any) -> AnalysisStatus | None:
     """What `_advance` answers when the analysis has already been claimed."""
     return None
 
 
+#: The errors a retry can plausibly outlive: a store, a socket, the driver.
+TRANSIENT = [
+    ConnectionError("the store is down"),
+    StorageUnavailable("the bucket is down"),
+    OperationalError("COMMIT", {}, Exception("connection reset")),
+]
+
+
+@pytest.mark.parametrize("error", TRANSIENT, ids=lambda error: type(error).__name__)
 @pytest.mark.parametrize("retries", [0, 1, 2], ids=["first", "second", "third"])
 def test_a_failing_run_is_retried_with_a_bounded_backoff(
-    monkeypatch: pytest.MonkeyPatch, configured: Any, retries: int
+    monkeypatch: pytest.MonkeyPatch, configured: Any, retries: int, error: Exception
 ) -> None:
     """With a computed backoff, because this task catches its own exceptions.
 
@@ -246,6 +298,10 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
     and retrying them all on the same schedule is how a recovering database gets
     knocked over a second time.
     """
+
+    async def failing(_: Any) -> AnalysisStatus | None:
+        raise error
+
     recorder = CapturingLogger()
     monkeypatch.setattr(jobs, "_advance", failing)
     monkeypatch.setattr(jobs, "logger", recorder)
@@ -266,8 +322,58 @@ def test_a_failing_run_is_retried_with_a_bounded_backoff(
     # Spec §67's provider errors: a run that retries and then succeeds would
     # otherwise leave no record of what went wrong. The type, never the message.
     (retrying,) = [call for call in recorder.calls if call.args == ("analysis.job_retrying",)]
-    assert retrying.kwargs["error"] == "ConnectionError"
+    assert retrying.kwargs["error"] == type(error).__name__
     assert retrying.kwargs["attempts"] == retries + 1
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (SoftTimeLimitExceeded(), FailureReason.TIMED_OUT),
+        (GradePredictionFailed("the model raised"), FailureReason.MODEL_FAILED),
+        (InvalidConditionAssessment("the domain refused it"), FailureReason.MODEL_FAILED),
+        # `UnreadableImage` is a `ValueError` from the worker extra, which this
+        # suite cannot import; a bare one takes the same path for the same
+        # reason — the same input raises it again.
+        (ValueError("the stored bytes do not decode"), FailureReason.JOB_DEAD_LETTERED),
+    ],
+    ids=lambda value: type(value).__name__ if isinstance(value, Exception) else str(value),
+)
+def test_a_permanent_failure_fails_on_the_first_attempt_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch, configured: Any, error: Exception, reason: FailureReason
+) -> None:
+    """Retrying a model that raised, or a run that ran out of time, changes nothing.
+
+    The soft limit is the one place `timed_out` is written (#265's vocabulary,
+    #272's writer): caught here like any other failure, recorded, never
+    retried. `_fail_quietly` moves the row from `uploaded`, because a run that
+    raised never committed its claim.
+    """
+
+    async def raising(_: Any) -> AnalysisStatus | None:
+        raise error
+
+    failed: list[tuple[uuid.UUID, FailureReason]] = []
+    recorder = CapturingLogger()
+    monkeypatch.setattr(jobs, "_advance", raising)
+    monkeypatch.setattr(
+        jobs, "_fail_quietly", lambda analysis_id, reason: failed.append((analysis_id, reason))
+    )
+    monkeypatch.setattr(jobs, "logger", recorder)
+
+    analysis_id = uuid.uuid4()
+    jobs.run_analysis.push_request(retries=0, id="job-6", called_directly=False, is_eager=True)
+    try:
+        with pytest.raises(type(error)):
+            jobs.run_analysis.run(str(analysis_id))
+    finally:
+        jobs.run_analysis.pop_request()
+
+    assert failed == [(analysis_id, reason)]
+    assert not [call for call in recorder.calls if call.args == ("analysis.job_retrying",)]
+    (record,) = [call for call in recorder.calls if call.args == ("analysis.dead_lettered",)]
+    assert record.kwargs["reason"] == reason.value
+    assert record.kwargs["attempts"] == 1
 
 
 @pytest.mark.parametrize(
