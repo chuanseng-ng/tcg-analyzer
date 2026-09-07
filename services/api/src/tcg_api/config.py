@@ -272,6 +272,21 @@ class Settings(BaseSettings):
     That is a known and deliberate ceiling; see `tcg_api.rate_limit`.
     """
 
+    trusted_proxy_count: int = Field(default=0, ge=0)
+    """How many proxies **this deployment operates** sit in front of the API.
+
+    At `0` — the default, what CI runs and what a local stack runs —
+    `X-Forwarded-For` is never read and the limiter keys on the socket address,
+    exactly as ADR 0005 decided. At *n* the client is the address *n* hops from
+    the right of that header, the one the *n*-th trusted proxy appended; the
+    leftmost entries are the caller's to write and are never trusted. A request
+    carrying fewer than *n* hops keys on the socket address.
+
+    Set it to the number of proxies you operate and no more. Too high reads an
+    address the caller supplied — the bypass ADR 0005 refused the header over —
+    and too low keys every user behind the proxy into one bucket.
+    """
+
     # ----------------------------------------------------------------
     # Image uploads — spec §55, §56, #33.
     #

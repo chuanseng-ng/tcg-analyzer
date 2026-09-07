@@ -159,19 +159,22 @@ def test_openapi_documents_the_upload_rejection() -> None:
 
 
 def test_openapi_documents_the_throttled_response() -> None:
-    """#98 limits the three writes spec §55 names, and says so in the contract.
+    """#98 limits the five writes spec §55 names, and says so in the contract.
 
     §55 names analysis endpoints *and image uploads*, so #33's endpoint carries
     the same dependency and shares the same bucket. Documented without a model,
     exactly as the 404 and the 409 are: a 429 is a transport-level failure
     outside the spec §66 envelope (ADR 0005), so there is no `ErrorResponse` for
-    a generated client to expect.
+    a generated client to expect. All five are asserted since #269 — the list
+    grew with the milestones and this test did not, which #263 found.
     """
     paths = create_app().openapi()["paths"]
 
     assert "429" in paths["/analyses"]["post"]["responses"]
     assert "429" in paths["/analyses/{analysis_id}/run"]["post"]["responses"]
     assert "429" in paths["/analyses/{analysis_id}/images"]["post"]["responses"]
+    assert "429" in paths["/analyses/{analysis_id}/confirm-card"]["post"]["responses"]
+    assert "429" in paths["/analyses/{analysis_id}/economic-configuration"]["post"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
     assert "429" not in paths["/cards/search"]["get"]["responses"]
     assert "429" not in paths["/cards/{card_id}/market"]["get"]["responses"]

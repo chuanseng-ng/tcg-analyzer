@@ -518,9 +518,13 @@ FastAPI OpenAPI schema — see
 [ADR 0001](adr/0001-language-boundaries-in-the-monorepo.md).
 
 The endpoints that create work — starting an analysis, adding a photograph to
-one, confirming its card, running it — are rate-limited per client address (spec §55, which names
+one, confirming its card, running it, configuring its economics — are
+rate-limited per client address (spec §55, which names
 analysis endpoints *and* image uploads),
-counted in that same Redis so one limit holds across replicas. A throttled
+counted in that same Redis so one limit holds across replicas. The address is
+the socket's, or — where `TCG_API_TRUSTED_PROXY_COUNT` says how many proxies
+this deployment operates — the hop that many places from the right of
+`X-Forwarded-For`. A throttled
 request is a 429 with `Retry-After` and sits outside the spec §66 envelope, as
 the 404 and the 409 already do — see
 [ADR 0005](adr/0005-rate-limiting-the-analysis-endpoints.md). Polling is not
