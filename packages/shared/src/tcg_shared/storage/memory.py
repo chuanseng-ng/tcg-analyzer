@@ -60,6 +60,12 @@ class InMemoryObjectStorage:
         # Absent is the outcome deletion wants; it already holds.
         self.objects.pop(key, None)
 
+    async def list(self, prefix: str) -> list[StorageKey]:
+        # Sorted, because S3 answers lexicographically and a dict answers in
+        # insertion order — a contract test that both must pass has to compare
+        # against one of them.
+        return sorted((key for key in self.objects if str(key).startswith(prefix)), key=str)
+
     async def signed_upload_url(
         self,
         key: StorageKey,

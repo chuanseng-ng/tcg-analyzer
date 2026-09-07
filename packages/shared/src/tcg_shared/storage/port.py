@@ -8,9 +8,11 @@ port that leaked them would make the provider part of the calling contract.
 That is CLAUDE.md's "external providers are replaceable" invariant, expressed
 as a type.
 
-The five operations are exactly the ones the product needs and no more. `list`
-and `exists` are absent because nothing needs them yet; retention sweeps
-(spec §54) will say what they need when M2 builds them.
+The six operations are exactly the ones the product needs and no more.
+`list` is the newest and was earned rather than anticipated: #264's sweep of
+objects no row names cannot be written without it, and the dated key layout
+exists so that it can be a prefix scan. `exists` is still absent, because
+nothing needs it.
 
 Every method is `async` because the API service is async throughout and a
 blocking call on the event loop is an outage under load. An adapter over a
@@ -77,6 +79,21 @@ class ObjectStorage(Protocol):
         Deleting a key that holds nothing succeeds. Deletion is used for
         retention (spec §54), where the outcome that matters is "it is gone" —
         and it already was.
+
+        Raises:
+            StorageUnavailable: If the store could not be reached.
+        """
+
+    async def list(self, prefix: str) -> list[StorageKey]:
+        """Return every key under ``prefix``, in lexicographic order.
+
+        Build ``prefix`` with :func:`tcg_shared.storage.keys.day_prefix`, which
+        is the only thing that makes one. A short prefix is not an error here
+        and cannot be made one — the store would answer ``""`` with the whole
+        bucket — so the discipline lives at the call site: spec §54's sweep asks
+        for one expired day of one namespace at a time (#264).
+
+        An empty list is an ordinary answer: most days hold nothing.
 
         Raises:
             StorageUnavailable: If the store could not be reached.

@@ -15,13 +15,14 @@ never consulted when building a key.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from tcg_shared.storage import (
     MAX_KEY_LENGTH,
     InvalidStorageKey,
     StorageKey,
+    day_prefix,
     generate_key,
     sanitise_filename,
 )
@@ -125,6 +126,42 @@ def test_generate_key_accepts_no_filename() -> None:
 def test_a_malformed_namespace_is_rejected(rejected: str) -> None:
     with pytest.raises(InvalidStorageKey):
         generate_key(rejected)
+
+
+# ---------------------------------------------------------------------------
+# day_prefix — the other half of the layout, and the only thing that builds one
+# ---------------------------------------------------------------------------
+
+
+def test_a_day_prefix_names_a_day_under_a_namespace() -> None:
+    assert day_prefix("uploads", date(2026, 8, 17)) == "uploads/2026/08/17/"
+
+
+def test_a_day_prefix_ends_in_a_separator() -> None:
+    """Without the trailing slash, `uploads/2026/08/1` would match the 1st and
+    the 17th alike — a prefix scan that reaches days it was not asked for."""
+    assert day_prefix("uploads", date(2026, 8, 1)).endswith("/")
+
+
+def test_a_key_minted_today_sits_under_todays_prefix() -> None:
+    """The one property #264's sweep rests on: a key's prefix is the day it was
+    minted, so age can be read off the key without asking the store."""
+    today = datetime.now(UTC)
+
+    key = generate_key("uploads")
+
+    assert str(key).startswith(day_prefix("uploads", today.date()))
+
+
+@pytest.mark.parametrize(
+    "rejected",
+    ["", "../uploads", "uploads/nested", "Uploads", "up loads", "uploads/"],
+)
+def test_a_day_prefix_rejects_a_malformed_namespace(rejected: str) -> None:
+    """`generate_key`'s rule, on the function that now holds it: a namespace
+    carrying a slash would let a caller widen its own reach."""
+    with pytest.raises(InvalidStorageKey):
+        day_prefix(rejected, date(2026, 8, 17))
 
 
 # ---------------------------------------------------------------------------

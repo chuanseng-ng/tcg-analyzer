@@ -41,6 +41,12 @@ __all__ = ["S3ObjectStorage", "create_s3_client"]
 #: GetObject and `404` from HeadObject; both mean the same thing to a caller.
 _NOT_FOUND_CODES: Final = frozenset({"NoSuchKey", "NoSuchBucket", "404"})
 
+#: How many keys one ListObjectsV2 response carries. S3's own maximum, because
+#: a listing is one round trip per page and #264's sweep asks for a day at a
+#: time. Named rather than left to the paginator's default so that a test can
+#: shrink it and actually drive the continuation loop.
+_PAGE_SIZE: Final = 1000
+
 
 def create_s3_client(
     *,
@@ -121,6 +127,26 @@ class S3ObjectStorage:
         # S3's DeleteObject is already idempotent: removing an absent key
         # succeeds, which is the outcome the caller wanted either way.
         await self._offload(_delete)
+
+    async def list(self, prefix: str) -> list[StorageKey]:
+        def _list() -> list[StorageKey]:
+            # The paginator blocks on *iteration*, not on construction, so the
+            # whole walk has to happen inside the offloaded callable. Consuming
+            # it outside would put every continuation request back on the event
+            # loop, which is the one thing `_offload` exists to prevent.
+            pages = self.client.get_paginator("list_objects_v2").paginate(
+                Bucket=self.bucket,
+                Prefix=prefix,
+                PaginationConfig={"PageSize": _PAGE_SIZE},
+            )
+            # S3 returns keys in lexicographic order within a page and across
+            # pages, which is the order the port promises. `Contents` is absent
+            # rather than empty when nothing matches.
+            return [
+                StorageKey(entry["Key"]) for page in pages for entry in page.get("Contents", ())
+            ]
+
+        return await self._offload(_list)
 
     async def signed_upload_url(
         self,

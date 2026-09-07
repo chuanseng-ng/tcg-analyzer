@@ -24,7 +24,8 @@ import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -32,7 +33,10 @@ from tcg_shared.storage import (
     InMemoryObjectStorage,
     ObjectNotFound,
     ObjectStorage,
+    StorageKey,
+    day_prefix,
     generate_key,
+    s3,
 )
 from tcg_shared.storage.s3 import S3ObjectStorage, create_s3_client
 
@@ -63,6 +67,17 @@ def run[T](scenario: Callable[[], Awaitable[T]]) -> T:
     a dependency in exchange for a decorator.
     """
     return asyncio.run(scenario())
+
+
+def _namespace() -> str:
+    """A namespace nothing else has used.
+
+    MinIO keeps what a previous run put there, so a listing test that shared
+    `contract` with its neighbours would see their objects. A fresh namespace
+    per test is the cheapest isolation there is, and `[a-z0-9-]` is exactly what
+    a namespace may contain.
+    """
+    return f"contract-{uuid4().hex}"
 
 
 def _s3_storage() -> S3ObjectStorage:
@@ -159,6 +174,31 @@ def test_objects_under_different_keys_do_not_collide(storage: ObjectStorage) -> 
     assert run(scenario) == (b"one", b"two")
 
 
+def test_listing_a_prefix_answers_exactly_what_is_under_it(storage: ObjectStorage) -> None:
+    """#264's sweep is a prefix scan, so this is the property it rests on."""
+    namespace = _namespace()
+    wanted = date(2026, 8, 17)
+    mine = [StorageKey(f"{day_prefix(namespace, wanted)}{uuid4()}") for _ in range(3)]
+    another_day = StorageKey(f"{day_prefix(namespace, date(2026, 8, 18))}{uuid4()}")
+    another_namespace = StorageKey(f"{day_prefix(_namespace(), wanted)}{uuid4()}")
+
+    async def scenario() -> list[StorageKey]:
+        for key in [*mine, another_day, another_namespace]:
+            await storage.put(key, b"bytes", content_type=JPEG)
+        return await storage.list(day_prefix(namespace, wanted))
+
+    assert run(scenario) == sorted(mine, key=str)
+
+
+def test_listing_a_prefix_nothing_was_put_under_is_empty(storage: ObjectStorage) -> None:
+    """An expired day nobody uploaded on is the common case, not an error."""
+
+    async def scenario() -> list[StorageKey]:
+        return await storage.list(day_prefix(_namespace(), date(2020, 1, 1)))
+
+    assert run(scenario) == []
+
+
 @pytest.mark.parametrize("operation", ["signed_upload_url", "signed_download_url"])
 def test_a_signed_url_records_a_timezone_aware_expiry(
     storage: ObjectStorage, operation: str
@@ -206,6 +246,31 @@ def test_a_signed_url_is_scoped_to_the_one_key_it_was_minted_for(
 # An in-memory store can mint a URL but cannot honour or refuse one, so these
 # are the tests that only a real S3-compatible implementation can pass.
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.object_storage
+@needs_minio
+def test_a_listing_longer_than_one_page_still_answers_in_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The continuation loop, driven rather than assumed.
+
+    A page of a thousand is the size worth shipping and the size no test wants
+    to write, so the size is a named constant and this shrinks it. In-memory
+    holds a dict and has no pages, which is why this one is MinIO's alone.
+    """
+    monkeypatch.setattr(s3, "_PAGE_SIZE", 2)
+    storage = _s3_storage()
+    namespace = _namespace()
+    day = date(2026, 8, 17)
+    keys = [StorageKey(f"{day_prefix(namespace, day)}{uuid4()}") for _ in range(5)]
+
+    async def scenario() -> list[StorageKey]:
+        for key in keys:
+            await storage.put(key, b"bytes", content_type=JPEG)
+        return await storage.list(day_prefix(namespace, day))
+
+    assert run(scenario) == sorted(keys, key=str)
 
 
 @pytest.mark.object_storage

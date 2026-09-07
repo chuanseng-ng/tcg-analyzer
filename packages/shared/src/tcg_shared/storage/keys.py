@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Final
 from uuid import uuid4
 
@@ -29,6 +29,7 @@ __all__ = [
     "MAX_FILENAME_LENGTH",
     "MAX_KEY_LENGTH",
     "StorageKey",
+    "day_prefix",
     "generate_key",
     "sanitise_filename",
 ]
@@ -103,12 +104,45 @@ class StorageKey:
         return self.value
 
 
+def day_prefix(namespace: str, day: date) -> str:
+    """Return the prefix every key minted under ``namespace`` on ``day`` sits under.
+
+    This is the other half of :func:`generate_key`, and the reason the layout is
+    dated at all: a key carries the day it was minted, so #264's orphan sweep
+    can ask the store for one expired day at a time instead of listing the
+    bucket. It is the **only** thing that builds a prefix — pass the result to
+    :meth:`~tcg_shared.storage.port.ObjectStorage.list` rather than assembling a
+    string, so that "never list the bucket root" has nowhere to go wrong.
+
+    The trailing slash is load-bearing: without it ``uploads/2026/08/1`` would
+    also match the 17th, and a scan would reach days it was not asked for.
+
+    Args:
+        namespace: A lowercase slug naming the kind of object, e.g. ``uploads``.
+        day: The day whose objects are wanted, in UTC — the clock
+            :func:`generate_key` mints against.
+
+    Returns:
+        A prefix of the form ``<namespace>/<YYYY>/<MM>/<DD>/``.
+
+    Raises:
+        InvalidStorageKey: If ``namespace`` is not a single lowercase slug.
+    """
+    if not isinstance(namespace, str) or not _NAMESPACE_PATTERN.match(namespace):
+        raise InvalidStorageKey(
+            f"namespace must be a single lowercase slug such as 'uploads', got {namespace!r}"
+        )
+
+    return f"{namespace}/{day:%Y/%m/%d}/"
+
+
 def generate_key(namespace: str) -> StorageKey:
     """Return a fresh key under ``namespace``, owing nothing to any client input.
 
     The date partition is not decoration: spec §54 requires that stored images
     expire, and a ``namespace/YYYY/MM/DD/`` layout makes that sweep a prefix
-    scan instead of a full listing of the bucket.
+    scan instead of a full listing of the bucket. :func:`day_prefix` builds the
+    dated part, so the layout is written down once.
 
     Args:
         namespace: A lowercase slug naming the kind of object, e.g. ``uploads``.
@@ -119,13 +153,7 @@ def generate_key(namespace: str) -> StorageKey:
     Raises:
         InvalidStorageKey: If ``namespace`` is not a single lowercase slug.
     """
-    if not isinstance(namespace, str) or not _NAMESPACE_PATTERN.match(namespace):
-        raise InvalidStorageKey(
-            f"namespace must be a single lowercase slug such as 'uploads', got {namespace!r}"
-        )
-
-    today = datetime.now(UTC)
-    return StorageKey(f"{namespace}/{today:%Y/%m/%d}/{uuid4()}")
+    return StorageKey(f"{day_prefix(namespace, datetime.now(UTC).date())}{uuid4()}")
 
 
 def sanitise_filename(value: str) -> str:
