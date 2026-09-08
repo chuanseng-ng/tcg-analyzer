@@ -94,6 +94,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analyses/{analysis_id}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a return code over this analysis's prediction
+         * @description Spec §68's way back. The analysis and its predictions are deleted with the session at seven days and a grading company takes weeks, so this copies what was predicted — the distributions, the versions and the recommendation the user was shown — into a row addressed by a code, and returns the code.
+         *
+         *     **The code appears in this body and nowhere else, ever.** Only its sha256 is stored, it is never logged, and no route returns it again. A lost code is a lost row.
+         *
+         *     **The row carries no image, no session and no address**, and expires on its own clock (`TCG_API_FEEDBACK_TTL_SECONDS`, 180 days) rather than with the session — the one exemption in `docs/retention.md`, justified there before the table existed.
+         *
+         *     **Once per analysis.** Only on `completed`, and a second request is a 409: the code was shown once and cannot be reproduced.
+         */
+        post: operations["mint_return_code_analyses__analysis_id__feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analyses/{analysis_id}/images": {
         parameters: {
             query?: never;
@@ -242,6 +268,38 @@ export interface paths {
         get: operations["read_catalog_version_catalog_version_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What was predicted, for the code a user kept
+         * @description The prediction snapshot the code addresses, so a screen can show what was predicted beside the question of what actually happened.
+         *
+         *     **No session is read.** Weeks later there is none: the cookie has expired and spec §53 forbids the account that would otherwise carry the identity. The code is the whole of the authorisation, and holding one proves that somebody was shown it.
+         *
+         *     **A code is spent by the answer.** Unknown, expired, already-answered and malformed are one bare 404, so a well-formed guess learns nothing a malformed one would not.
+         */
+        get: operations["read_feedback_feedback__code__get"];
+        put?: never;
+        /**
+         * Report the grade this card actually received
+         * @description Spec §68's answer. Recorded against the prediction the code addresses, and **not** used to retrain anything: §68 puts a validation step in between, and that step is an operator reading the row by hand.
+         *
+         *     **Once.** The code is spent by this call, so a second answer is the same 404 an unknown code gets. There is no edit path — a wrong grade is a new code from a new analysis.
+         *
+         *     **The grade is checked against that company's scale** — PSA and TAG issue no 9.5 and BGS does — and a grade off the scale is a 422 whether or not the code exists, so the refusal cannot be used to test a guess. A designation with no grade is a whole answer: PSA issues `authentic` in place of a grade.
+         */
+        post: operations["report_grade_feedback__code__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1644,6 +1702,52 @@ export interface components {
             reason: components["schemas"]["FailureReason"];
         };
         /**
+         * FeedbackSnapshotResponse
+         * @description What was predicted, for the screen that asks what actually happened.
+         */
+        FeedbackSnapshotResponse: {
+            /**
+             * Card Id
+             * Format: uuid
+             * @description The printed card the analysis confirmed. Read it from `/cards/{id}`.
+             */
+            card_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the code was minted.
+             */
+            created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             * @description When it stops addressing anything.
+             */
+            expires_at: string;
+            /**
+             * Grading Rules Version
+             * @description Spec §57's grading rules version.
+             */
+            grading_rules_version: string | null;
+            /**
+             * Model Bundle Version
+             * @description Spec §57's model bundle version.
+             */
+            model_bundle_version: string | null;
+            /**
+             * Predictions
+             * @description The grade prediction document as the worker stored it (#227), copied whole at mint time — per-company distributions, each model's confidence, and the versions that dated it.
+             */
+            predictions: {
+                [key: string]: unknown;
+            };
+            /**
+             * Recommended Action
+             * @description Spec §44's verdict as the user was shown it, or `null` where the results screen showed none at all.
+             */
+            recommended_action: string | null;
+        };
+        /**
          * GradeProbabilityResponse
          * @description One term of a grade distribution — spec §2.1's `P(g)`.
          */
@@ -2311,6 +2415,79 @@ export interface components {
             severity: components["schemas"]["DefectSeverity"] | null;
         };
         /**
+         * ReportedGradeRequest
+         * @description Spec §68's question, answered.
+         *
+         *     Validated here rather than in the handler, so a grade no company issues is
+         *     FastAPI's own 422 **before** the code is looked up. That ordering is
+         *     deliberate: a bad grade must answer the same way whether or not the code
+         *     exists, or the refusal itself would tell a guesser their code was real.
+         */
+        ReportedGradeRequest: {
+            /**
+             * Certification Number
+             * @description The number printed on the slab, if the user has it. Optional: this is a person answering weeks later, not an operator holding the slab.
+             * @example 12345678
+             */
+            certification_number?: string | null;
+            /**
+             * Designation
+             * @description A designation the slab carries — PSA's `authentic` in place of a grade, BGS's `black_label` on top of a 10.
+             * @example null
+             */
+            designation?: string | null;
+            /**
+             * Grade
+             * @description The grade printed on the slab, as one point on that company's scale. `null` for a slab that carries a designation in place of a grade.
+             * @example 9
+             */
+            grade?: string | null;
+            /**
+             * Grading Company
+             * @description Which company issued it — `psa`, `tag` or `bgs`.
+             * @example psa
+             */
+            grading_company: string;
+        };
+        /**
+         * ReportedGradeResponse
+         * @description What was recorded, so the screen can say it back.
+         */
+        ReportedGradeResponse: {
+            /**
+             * Certification Number
+             * @example 12345678
+             */
+            certification_number: string | null;
+            /**
+             * Designation
+             * @example null
+             */
+            designation: string | null;
+            /**
+             * Grade
+             * @example 9
+             */
+            grade: string | null;
+            /**
+             * Grading Company
+             * @example psa
+             */
+            grading_company: string;
+            /**
+             * Status
+             * @description `submitted`. An operator reviews it from here.
+             * @example submitted
+             */
+            status: string;
+            /**
+             * Submitted At
+             * Format: date-time
+             * @description When this answer was recorded.
+             */
+            submitted_at: string;
+        };
+        /**
          * ReproducibilityResponse
          * @description What this analysis was computed against — spec §57's record, whole.
          *
@@ -2421,6 +2598,25 @@ export interface components {
              * @description The analysis's state, so a client can tell 'not finished yet' from 'we could not tell'. Spec §65's states; poll `GET /analyses/{id}` for it.
              */
             status: string;
+        };
+        /**
+         * ReturnCodeResponse
+         * @description The code, in the only place it will ever appear.
+         */
+        ReturnCodeResponse: {
+            /**
+             * Expires At
+             * Format: date-time
+             * @description After this the code addresses nothing, and the row is swept.
+             * @example 2027-03-07T09:15:00Z
+             */
+            expires_at: string;
+            /**
+             * Return Code
+             * @description Shown once, in this body, and nowhere else ever. The row stores only its sha256 and cannot produce it again, and it is never logged. Write it down: a lost code is a lost row, deliberately.
+             * @example A3KDM-9F2QT-BXWR7-N0HJ5
+             */
+            return_code: string;
         };
         /**
          * SellingFeeRequest
@@ -2908,6 +3104,77 @@ export interface operations {
             };
         };
     };
+    mint_return_code_analyses__analysis_id__feedback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReturnCodeResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. The bare 404 `GET /analyses/{id}` answers with. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The analysis is not `completed`, it stored no prediction, or a code has already been minted for it. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A store would not answer. `details.reason` names which: `analysis_store_unreachable`, `feedback_store_unreachable`, `economic_configuration_store_unreachable`, `market_store_unreachable` or `catalog_unreachable`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     upload_image_analyses__analysis_id__images_post: {
         parameters: {
             query: {
@@ -3337,6 +3604,136 @@ export interface operations {
                 };
             };
             /** @description The catalog could not be reached, or no version has been registered. `details.reason` says which. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_feedback_feedback__code__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The return code, as it was shown or as a person wrote it down — case, hyphens and spacing are all forgiven. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackSnapshotResponse"];
+                };
+            };
+            /** @description No feedback is recorded under that code — unknown, expired, already answered, or not a code at all. All four, deliberately indistinguishable. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `details.reason` is `feedback_store_unreachable`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    report_grade_feedback__code__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The return code. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportedGradeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportedGradeResponse"];
+                };
+            };
+            /** @description No feedback is recorded under that code — unknown, expired, already answered, or not a code at all. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report names no grade and no designation, or names a grade that company does not issue. FastAPI's own validation shape, outside the spec §66 taxonomy. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `details.reason` is `feedback_store_unreachable`. */
             503: {
                 headers: {
                     [name: string]: unknown;

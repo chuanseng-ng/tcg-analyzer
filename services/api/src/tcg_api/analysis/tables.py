@@ -399,6 +399,21 @@ analyses = sa.Table(
             "none. NULL on every analysis that has not failed."
         ),
     ),
+    sa.Column(
+        "feedback_minted_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=True,
+        comment=(
+            "When this analysis was turned into a spec §68 return code (#270), "
+            "and the whole of what links the two. NULL means no code has been "
+            "minted, and the mint is a conditional UPDATE on that being so, "
+            "which is what makes a code mintable exactly once. Deliberately a "
+            "timestamp rather than a foreign key: `grade_feedback` outlives "
+            "this row by six months, and a reference either way would make a "
+            "prediction that carries no session joinable to one. Nothing reads "
+            "it but the mint."
+        ),
+    ),
     sa.CheckConstraint(
         one_of("status", AnalysisStatus),
         name="status_is_a_known_analysis_state",

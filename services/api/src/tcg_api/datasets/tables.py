@@ -58,7 +58,7 @@ Nine things about this schema are load-bearing:
   company issues is checked in Python.** `market_observations` set that split
   and the reason transfers unchanged: PSA and TAG issue no 9.5 and BGS does, so
   a per-company `CHECK` would make a fourth company — or a scale revision —
-  cost a migration of `grading_outcomes`. See :data:`_ISSUED_GRADE_PATTERN`, and
+  cost a migration of `grading_outcomes`. See :data:`~tcg_api.tables.ISSUED_GRADE_PATTERN`, and
   `tcg_api.datasets.outcomes` for the guard that reads
   `GradeScale.supports`.
 * **An annotation's coordinates are fractions of the representation the row
@@ -107,7 +107,7 @@ from tcg_grading_companies import Designation, GradingCompany
 # and to mypy, and cannot be a silent typo. The direction is safe — nothing in
 # the catalog reads this domain.
 from tcg_api.catalog.tables import cards
-from tcg_api.tables import NO_METADATA, PRINTED, metadata, one_of
+from tcg_api.tables import ISSUED_GRADE_PATTERN, NO_METADATA, PRINTED, metadata, one_of
 
 __all__ = [
     "PROVENANCE_FIELDS",
@@ -169,16 +169,6 @@ _VERSION_PATTERN: Final = VERSION_PATTERN.pattern
 #: 64 lowercase hex characters, bare — the spelling `images.sha256` already
 #: uses, because the column already names the algorithm.
 _SHA256_PATTERN: Final = "^[0-9a-f]{64}$"
-
-#: One point on a grade scale, as `tcg_domain.Grade` renders it. `10` is spelled
-#: out because `10.5` is not a grade and `[0-9](\.5)?` cannot say so —
-#: `market_observations._GRADE_KEY_PATTERN`, minus §24's collapsed tails.
-#:
-#: **Dropping `_or_lower` / `_or_higher` is the difference and it is deliberate.**
-#: A collapsed tail is something a model emits when it will not commit to one
-#: point. A slab prints one point, so a bucket here would be a distribution
-#: wearing an outcome's clothes.
-_ISSUED_GRADE_PATTERN: Final = r"^(10|[0-9](\.5)?)$"
 
 
 physical_copies = sa.Table(
@@ -1189,7 +1179,7 @@ _SUBGRADES_ARE_A_SET: Final = f"num_nulls({', '.join(SUBGRADE_COLUMNS)}) IN (0, 
 #: The same grammar as `grade`, over each subgrade. One constraint rather than
 #: four, so a failure names the rule rather than an arbitrary one of them.
 _SUBGRADES_ARE_GRADES: Final = " AND ".join(
-    f"({column} IS NULL OR {column} ~ '{_ISSUED_GRADE_PATTERN}')" for column in SUBGRADE_COLUMNS
+    f"({column} IS NULL OR {column} ~ '{ISSUED_GRADE_PATTERN}')" for column in SUBGRADE_COLUMNS
 )
 
 
@@ -1292,7 +1282,7 @@ grading_outcomes = sa.Table(
         one_of("grading_company", GradingCompany), name="grading_company_is_supported"
     ),
     sa.CheckConstraint(
-        f"grade IS NULL OR grade ~ '{_ISSUED_GRADE_PATTERN}'", name="grade_is_an_issued_grade"
+        f"grade IS NULL OR grade ~ '{ISSUED_GRADE_PATTERN}'", name="grade_is_an_issued_grade"
     ),
     sa.CheckConstraint(
         f"designation IS NULL OR {one_of('designation', Designation)}",

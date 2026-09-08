@@ -28,6 +28,7 @@ from tcg_api.routers import (
     cards,
     catalog,
     economics,
+    feedback,
     grading,
     health,
     market,
@@ -136,6 +137,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(market.router, responses=ERROR_RESPONSES)
     app.include_router(analyses.router, responses=ERROR_RESPONSES)
     app.include_router(economics.router, responses=ERROR_RESPONSES)
+    # Spec §68's feedback loop (#270). Two of its three paths are addressed by
+    # a return code rather than by an analysis, so the router carries no prefix
+    # and each route spells its own path.
+    app.include_router(feedback.router, responses=ERROR_RESPONSES)
     # Last, and the only one that is not spec §64's. `/internal/annotation` is
     # the annotation tool's surface: in this application because §7 forbids an
     # unnecessary microservice and ADR 0009 declined a second FastAPI app, and in

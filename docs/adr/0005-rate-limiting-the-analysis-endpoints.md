@@ -152,3 +152,34 @@ minute. The determination, made by #263's security review and implemented here:
 `client_key` in `tcg_api/rate_limit.py` remains the single place this is
 decided. The window, the limit, the shared bucket, the fail-open rule, the
 hashing and the 429's shape are all unchanged.
+
+## Addendum — 2026-09-08 (#270)
+
+**The limited endpoints are eight, and one of them is a read.**
+
+Spec §68's feedback loop added three: `POST /analyses/{id}/feedback`, which
+mints a return code, and `GET /feedback/{code}` / `POST /feedback/{code}`,
+which are the way back to it weeks later. All three carry
+`Depends(analysis_rate_limit)` and share the one bucket, which is still the
+policy — the Consequences above argue that per-route buckets would be four
+numbers expressing one decision, and eight would be worse.
+
+**The GET is the first read this service limits, and that is not a drift.** The
+Decision above limits writes because a read is cheap and `GET /analyses/{id}` is
+the endpoint spec §65 requires a client to poll. `GET /feedback/{code}` is
+different in kind: its path parameter is a **bearer capability**, so the request
+is an assertion of authority rather than a question about an identifier the
+caller already holds. A hundred bits of entropy is what makes one guess
+worthless; this limit is what stops a client making many. Neither is sufficient
+alone, which is why the route carries the dependency rather than relying on the
+code's length. `GET /analyses/{id}` stays unlimited: a session cookie is a
+bearer capability too, but polling it is the product's own progress reporting.
+
+`test_rate_limit.py` now asserts the set of limited routes as an **equality**
+rather than by membership. The list drifted twice before anybody noticed (#263
+found it at three-versus-five), and membership assertions are what let it: a
+ninth limited route now has to be written down rather than merely working.
+
+Nothing else changes. The window, the limit, the shared bucket, the fail-open
+rule, the hashing, the 429's shape and `client_key` are all as the addendum
+above left them.

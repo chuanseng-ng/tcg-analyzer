@@ -121,6 +121,12 @@ def test_the_whole_schema_is_these_tables_and_the_catalogs() -> None:
                 # photographs.
                 "failure_code",
                 "failure_reason",
+                # The whole of what links an analysis to spec §68's feedback
+                # row (#270), and it lives on this side because this is the
+                # row that expires. A timestamp rather than a reference: a
+                # foreign key either way would make a prediction that carries
+                # no session joinable to one.
+                "feedback_minted_at",
             },
         ),
         (

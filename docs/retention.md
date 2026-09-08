@@ -10,7 +10,8 @@ analysis worker.
 ## The policy
 
 **Everything a user gives this product is deleted seven days after their session
-started, and nothing is kept beyond that.**
+started.** One row survives that, holds nothing a session held, and is named in
+the table below rather than left to be discovered.
 
 | What | Kept for | Where it lives |
 | --- | --- | --- |
@@ -23,6 +24,7 @@ started, and nothing is kept beyond that.**
 | The per-company grade predictions (#227) | 7 days | `analyses.grade_predictions` — a column on the row above, listed for the same reason |
 | The anonymous session | 7 days | `analysis_sessions` |
 | The economic configuration, including what the user said they paid | 7 days | `economic_configurations` |
+| The §68 feedback row and its hashed return code (#270) | **180 days**, on its own clock | `grade_feedback` — the one exemption, justified below |
 
 Seven days is `TCG_API_SESSION_TTL_SECONDS`, and it is the only knob. It is
 applied once, in Python, when the session is opened —
@@ -43,6 +45,33 @@ and is not a fact about a printed card the way a market price is. So the sweep
 reads the identifiers before the cascade and deletes the rows after it, which is
 the order the foreign key's `RESTRICT` requires. The `economic_configurations`
 immutability trigger guards `UPDATE` and not `DELETE` for exactly this reason.
+
+**One row has a horizon of its own, and it is the only one.** Spec §68 asks a
+user what grade their card actually received, and the answer arrives weeks after
+the session that predicted it is gone — so `grade_feedback` (#270) expires on
+`TCG_API_FEEDBACK_TTL_SECONDS`, a hundred and eighty days, counted from when the
+user asked for a return code rather than from when their session opened. That is
+the second horizon the paragraph above argues against, and it is written here
+because it is the exception, not because the rule has softened.
+
+What makes it defensible is what the row does **not** hold. There is no
+photograph, no object key, no `session_id`, no `analysis_id`, no address and no
+acquisition cost — nothing a session ever held and nothing that names a person.
+It holds the grade distribution the models predicted, the versions that produced
+it, the recommendation the user was shown, the catalog card the analysis
+confirmed, and a **hash** of a return code that was displayed once and is stored
+nowhere else. The code is a bearer capability rather than an identity: it is not
+joined to a session, it is not an account, and holding one proves only that
+somebody was shown it. So the seven-day cascade still deletes every photograph
+on time, and what survives it is a prediction with no subject.
+
+**This is not the training exemption below, and it must not become one.** A
+feedback row is a label with no features: it names no image, joins to no
+`physical_copies` row and enters no dataset version. Nothing under
+`tcg_api/datasets/` or in `ml/*` may import the domain, and an import-purity
+test holds that — §68's own diagram puts validation between a user's answer and
+any future training, and that validation is an operator reading the row by hand
+(`tcg-review-grade-feedback`), never a pipeline.
 
 ### Why expiry is the default rather than the exception
 
@@ -152,10 +181,29 @@ older than that is never reached again. That is a stated bound rather than an
 oversight, and what makes it affordable is that the leak is small by
 construction — three objects per side, per killed run.
 
+### Feedback rows past their own expiry
+
+A third hourly sweep, `services/api/src/tcg_api/feedback/store.py` (#270), and
+the simplest of the three: one `DELETE` of every `grade_feedback` row whose
+`expires_at` has passed, up to two hundred a run, compared against the
+database's clock like the two above. It touches no object storage, because the
+row names none — which is the whole reason it can be one statement where the
+session sweep needs a transaction per session.
+
+Deleting one loses a user's answer as well as the question. That is the intended
+trade: the answer is a grade and a certification number, its purpose is §67's
+*"predicted grade vs actual submitted grade"*, and a label kept forever is a
+label kept for a purpose nobody wrote down. An operator who has validated a row
+and wants it to outlive the horizon copies it into `grading_outcomes`, which is
+the corpus's record and has provenance rules of its own.
+
 ### What is logged
 
 `retention.swept` carries `sessions`, `objects` and `failed` — counts.
 `retention.orphans_swept` carries `candidates` and `objects` — counts again.
+`retention.feedback_swept` carries `count`, and never a return code: the code
+is a bearer capability, so a log line holding one is a log line that can answer
+somebody else's question.
 `retention.session_not_swept` carries the internal session UUID (never the
 cookie's token) and the exception's type name.
 
@@ -209,3 +257,12 @@ photograph, backdates its session, sweeps, and then asks object storage whether
 the object is still there. The orphan sweep is split the same way:
 `services/api/tests/test_analysis_orphans.py` drives the set it computes against
 real PostgreSQL, and the contract suite proves `list` against MinIO.
+The feedback sweep needs neither split — it deletes rows and no objects, so
+`services/api/tests/test_retention.py` is the whole claim.
+
+The feedback sweep is run the same way, by its own name:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml exec -T worker \
+  celery --app tcg_api.analysis.worker call tcg_api.feedback.sweep_expired
+```

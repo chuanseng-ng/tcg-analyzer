@@ -89,6 +89,7 @@ from tcg_api.analysis.state import transition
 from tcg_api.catalog.versions import PostgresCardDatabaseVersionRepository
 from tcg_api.config import REDIS_URL_ENV_VAR, get_settings
 from tcg_api.database import create_engine, create_session_factory
+from tcg_api.feedback.store import sweep_expired
 from tcg_api.grading.rules import rules_in_force
 from tcg_api.market.snapshots import current_snapshot
 from tcg_api.storage import get_object_storage
@@ -98,6 +99,7 @@ __all__ = [
     "PURGE_EXPIRED",
     "QUEUE",
     "RUN_ANALYSIS",
+    "SWEEP_FEEDBACK",
     "SWEEP_ORPHANS",
     "SWEEP_STALLED",
     "JobQueueUnavailable",
@@ -105,6 +107,7 @@ __all__ = [
     "get_celery_app",
     "purge_expired_sessions",
     "run_analysis",
+    "sweep_expired_feedback",
     "sweep_orphan_objects",
     "sweep_stalled_analyses",
 ]
@@ -130,6 +133,10 @@ SWEEP_STALLED = "tcg_api.analysis.sweep_stalled"
 
 #: The orphan sweep's name on the wire (#264). Same contract again.
 SWEEP_ORPHANS = "tcg_api.analysis.sweep_orphans"
+
+#: #270's feedback sweep. In this module because every task this application
+#: registers is declared here; the statement it runs is the feedback domain's.
+SWEEP_FEEDBACK = "tcg_api.analysis.sweep_grade_feedback"
 
 #: How many times a failing run is retried before it is dead-lettered. Four
 #: attempts in total.
@@ -276,6 +283,14 @@ def get_celery_app() -> Celery:
             # apart would change nothing.
             "sweep-orphan-objects": {
                 "task": SWEEP_ORPHANS,
+                "schedule": SWEEP_INTERVAL_SECONDS,
+                "options": {"queue": QUEUE},
+            },
+            # #270's feedback sweep, on the same schedule and for the same
+            # reason: `grade_feedback` expires on its own 180-day clock, so the
+            # granularity that matters is "well inside a day".
+            "sweep-expired-grade-feedback": {
+                "task": SWEEP_FEEDBACK,
                 "schedule": SWEEP_INTERVAL_SECONDS,
                 "options": {"queue": QUEUE},
             },
@@ -653,6 +668,16 @@ async def _sweep_stalled(limit: int) -> int:
         await engine.dispose()
 
 
+async def _sweep_feedback(limit: int) -> int:
+    """Run one feedback sweep. Engine built and disposed here, as `_purge` does."""
+    engine = create_engine()
+    try:
+        async with create_session_factory(engine)() as db:
+            return await sweep_expired(db, limit=limit)
+    finally:
+        await engine.dispose()
+
+
 async def _sweep_orphans(limit: int) -> int:
     """Run one orphan sweep. Engine built and disposed here, as `_purge` does."""
     engine = create_engine()
@@ -703,6 +728,18 @@ def sweep_stalled_analyses() -> None:
 # No retries and no time limit, for the two sweeps above: the next tick is a
 # gentler retry than any backoff, and this one leaves nothing half-done — it
 # writes no row at all.
+@shared_task(name=SWEEP_FEEDBACK, max_retries=0, acks_late=True)
+def sweep_expired_feedback() -> None:
+    """Delete every spec §68 return code past its expiry — #270, spec §54.
+
+    The simplest of the four, because the row it deletes names no object: one
+    statement, where the retention sweep needs a transaction per session and an
+    ordering argument to go with it. Takes no arguments for the reason none of
+    the others does.
+    """
+    asyncio.run(_sweep_feedback(SWEEP_LIMIT))
+
+
 @shared_task(name=SWEEP_ORPHANS, max_retries=0, acks_late=True)
 def sweep_orphan_objects() -> None:
     """Delete expired objects that no row names — #264, spec §54.

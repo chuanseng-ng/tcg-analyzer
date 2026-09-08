@@ -24,6 +24,7 @@ from tcg_api.analysis.tables import TABLES as ANALYSIS_TABLES
 from tcg_api.catalog.tables import TABLES as CATALOG_TABLES
 from tcg_api.datasets.tables import TABLES as DATASETS_TABLES
 from tcg_api.economics.tables import TABLES as ECONOMICS_TABLES
+from tcg_api.feedback.tables import TABLES as FEEDBACK_TABLES
 from tcg_api.grading.tables import TABLES as GRADING_TABLES
 from tcg_api.market.tables import TABLES as MARKET_TABLES
 from tcg_api.models.tables import TABLES as MODELS_TABLES
@@ -44,4 +45,5 @@ DECLARED_TABLES: Final = (
     *ECONOMICS_TABLES,
     *DATASETS_TABLES,
     *MODELS_TABLES,
+    *FEEDBACK_TABLES,
 )

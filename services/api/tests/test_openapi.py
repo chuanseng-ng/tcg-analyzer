@@ -159,14 +159,15 @@ def test_openapi_documents_the_upload_rejection() -> None:
 
 
 def test_openapi_documents_the_throttled_response() -> None:
-    """#98 limits the five writes spec §55 names, and says so in the contract.
+    """#98 limits the writes spec §55 names, and says so in the contract.
 
     §55 names analysis endpoints *and image uploads*, so #33's endpoint carries
     the same dependency and shares the same bucket. Documented without a model,
     exactly as the 404 and the 409 are: a 429 is a transport-level failure
     outside the spec §66 envelope (ADR 0005), so there is no `ErrorResponse` for
-    a generated client to expect. All five are asserted since #269 — the list
-    grew with the milestones and this test did not, which #263 found.
+    a generated client to expect. All five were asserted since #269 — the list
+    grew with the milestones and this test did not, which #263 found — and #270
+    took it to eight, two of them under `/feedback`.
     """
     paths = create_app().openapi()["paths"]
 
@@ -175,9 +176,51 @@ def test_openapi_documents_the_throttled_response() -> None:
     assert "429" in paths["/analyses/{analysis_id}/images"]["post"]["responses"]
     assert "429" in paths["/analyses/{analysis_id}/confirm-card"]["post"]["responses"]
     assert "429" in paths["/analyses/{analysis_id}/economic-configuration"]["post"]["responses"]
+    assert "429" in paths["/analyses/{analysis_id}/feedback"]["post"]["responses"]
+    # The first limited *read*: the path parameter is a bearer capability, so
+    # the limiter is half of what makes guessing one uneconomic (#270).
+    assert "429" in paths["/feedback/{code}"]["get"]["responses"]
+    assert "429" in paths["/feedback/{code}"]["post"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
     assert "429" not in paths["/cards/search"]["get"]["responses"]
     assert "429" not in paths["/cards/{card_id}/market"]["get"]["responses"]
+
+
+def test_openapi_documents_the_feedback_routes() -> None:
+    """Spec §68's three doors — #270.
+
+    The two under `/feedback` take no session cookie and are addressed by the
+    code alone, so `apps/web` needs their shapes generated like any other.
+    """
+    paths = create_app().openapi()["paths"]
+
+    assert "post" in paths["/analyses/{analysis_id}/feedback"]
+    assert "get" in paths["/feedback/{code}"]
+    assert "post" in paths["/feedback/{code}"]
+
+    # The 404 carries no model, as every bare 404 in this service does: unknown,
+    # expired, spent and malformed are one answer, and an envelope would give a
+    # guesser something to read.
+    for method in ("get", "post"):
+        not_found = paths["/feedback/{code}"][method]["responses"]["404"]
+        assert "content" not in not_found
+
+
+def test_the_minted_code_is_returned_by_exactly_one_operation() -> None:
+    """ "Shown once" is a property of the contract, not only of the handler.
+
+    A second operation carrying `return_code` would be a second chance to read
+    it, which is the whole thing #270 is careful about.
+    """
+    schema = create_app().openapi()
+
+    carriers = [
+        name
+        for name, model in schema["components"]["schemas"].items()
+        if "return_code" in model.get("properties", {})
+    ]
+
+    assert carriers == ["ReturnCodeResponse"]
 
 
 # ---------------------------------------------------------------------------
