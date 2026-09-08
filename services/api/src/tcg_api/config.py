@@ -220,6 +220,31 @@ class Settings(BaseSettings):
     """
 
     # ----------------------------------------------------------------
+    # Reported grades — spec §68.
+    #
+    # The one horizon that is not the session's, and the only exemption
+    # `docs/retention.md` carries. It is configuration rather than a constant
+    # for `session_ttl_seconds`' reason: it is policy, and policy belongs
+    # where a reviewer reads it.
+    # ----------------------------------------------------------------
+
+    feedback_ttl_seconds: int = Field(default=15_552_000, gt=0)
+    """How long a return code, and the prediction it addresses, is kept.
+
+    A hundred and eighty days. Spec §68 asks a user what grade their card
+    actually received, and the answer depends on a queue this product does not
+    control: PSA's own turnaround has run to months, and a period that expired
+    first would make the question unanswerable rather than merely unanswered.
+    Long enough to outlast that queue; short enough that a prediction nobody
+    came back for does not sit here indefinitely.
+
+    It is emphatically **not** the retention period for anything a photograph
+    touched — that is `session_ttl_seconds`, seven days, and nothing here
+    changes it. What survives this long holds no image, no session and no
+    address; `docs/retention.md` is the written version.
+    """
+
+    # ----------------------------------------------------------------
     # The job queue — spec §8.
     #
     # Named for Redis rather than for Celery deliberately. Redis arrives with

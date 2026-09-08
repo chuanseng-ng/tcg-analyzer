@@ -1513,8 +1513,13 @@ def _unreachable(reason: str, message: str) -> ApiError:
     )
 
 
-async def _owned_analysis(db: AsyncSession, request: Request, analysis_id: UUID) -> AnalysisRecord:
-    """The analysis, if this session started it. The same 404 for all four misses."""
+async def owned_analysis(db: AsyncSession, request: Request, analysis_id: UUID) -> AnalysisRecord:
+    """The analysis, if this session started it. The same 404 for all four misses.
+
+    Public because `routers/feedback.py` mints a return code over an analysis
+    and must scope it identically — one reading of "whose analysis is this",
+    rather than two that could drift.
+    """
     try:
         session_id = await resolve_session(db, request.cookies.get(SESSION_COOKIE))
         record = None if session_id is None else await read_analysis(db, analysis_id, session_id)
@@ -1610,7 +1615,7 @@ async def configure_economics(
     the same call and the same transaction (#244), so the 201 and `completed`
     are one fact.
     """
-    record = await _owned_analysis(db, request, analysis_id)
+    record = await owned_analysis(db, request, analysis_id)
 
     if record.status != _CONFIGURABLE:
         # Safe to name the state: ownership is established, and the caller can
@@ -1897,7 +1902,7 @@ async def read_results(
     first two. `condition` needs none of them: it is the condition step's own
     document (#187), served whenever that step ran.
     """
-    record = await _owned_analysis(db, request, analysis_id)
+    record = await owned_analysis(db, request, analysis_id)
     computed = await compute_results(db, record, settings, at=datetime.now(UTC))
 
     try:

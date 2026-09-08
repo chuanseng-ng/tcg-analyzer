@@ -382,6 +382,54 @@ slab by hand. Nothing here stores which published standard was in force either �
 that is `rules_in_force(company, returned_at)` over `grading_rules`, and storing
 it would freeze the reading this repository happened to have at the time.
 
+## Reviewing a grade a user reported
+
+Spec §68 lets a user come back weeks later and say what grade their card
+actually received. `grade_feedback` is where that lands, and §68's diagram puts
+a validation step between a user's answer and any future training:
+
+```text
+user feedback → validation → approved dataset → future training
+```
+
+This command is that middle box.
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
+uv run tcg-review-grade-feedback --pending
+uv run tcg-review-grade-feedback --feedback-id <id> --decision validated
+```
+
+**`--pending` is the only way to find a report.** The return code is the user's,
+stored as a sha256 and nothing else, so there is no lookup by code and an
+operator could not answer somebody's report even by accident. The listing shows
+the identifier, what was reported, the certification number if there is one, and
+what the product had recommended — never the code and never its digest.
+
+**It cannot answer on a user's behalf.** `awaiting → submitted` is the route's
+move and `--decision` does not offer it: an operator who could make that move
+could put words in a user's mouth, and the row would afterwards read
+`submitted` as though the user had typed it. What this writes is
+`submitted → validated` or `submitted → rejected`, both terminal.
+
+**A verdict is not changed in place.** The status trigger is a branch rather
+than a ladder, so `validated → rejected` is refused by the database and not
+merely by the command — reviewing twice exits 1 and says to run `--pending`.
+Rejecting is not a judgement about the user: an unreadable certification number
+reaches it too.
+
+**A feedback row is a label with no features.** It names no image, joins to no
+`physical_copies` row and enters no dataset version, and nothing under
+`tcg_api/datasets/` or in `ml/*` may import the domain — two purity tests hold
+that. Turning a validated report into corpus evidence is a separate, deliberate
+act through `tcg-record-grading-outcome`, which has provenance rules of its own.
+
+**The row expires on its own clock**, a hundred and eighty days rather than the
+session's seven. That is the one exemption in
+[Retention and expiry](retention.md), and the justification was written there
+before the table existed.
+
 ## Registering a model bundle
 
 Spec §58's model registry is what lets an analysis record

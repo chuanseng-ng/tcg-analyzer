@@ -268,9 +268,43 @@ declared confidence of 0.35 sits below the provisional `minimum_grade_confidence
 of 0.50, and the response says so with the value and the threshold rather than
 forcing a verdict.
 
-The five writes — `POST /analyses`, `POST /analyses/{id}/images`,
-`POST /analyses/{id}/confirm-card`, `POST /analyses/{id}/run` and
-`POST /analyses/{id}/economic-configuration` — are rate-limited
+`POST /analyses/{id}/feedback` mints spec §68's return code over what this
+analysis predicted. The analysis and its predictions are deleted with the
+session at seven days and a grading company takes weeks, so the row this
+creates is a **copy** — the distributions, the versions that dated them, the
+recommendation the user was shown and the catalog card — addressed by a code
+rather than by a session. It answers 201 with the code, and **that body is the
+only place the code will ever appear**: only its sha256 is stored, no route
+returns it again, and it is never written to a log. A lost code is a lost row,
+deliberately. Only on `completed`, and once — a second request is a 409,
+because the code was shown once and cannot be reproduced. An analysis that
+stored no prediction is a 409 too: a label with nothing to compare against
+would be useless to spec §67. The row carries **no image, no session, no
+analysis identifier and no address**, and expires on its own hundred-and-eighty-day
+clock (`TCG_API_FEEDBACK_TTL_SECONDS`) — the one exemption in
+[Retention and expiry](retention.md), justified there before the table existed.
+
+`GET /feedback/{code}` and `POST /feedback/{code}` are the way back, and
+**neither reads a session cookie**. Weeks later there is none: it has expired,
+the tab is closed, and spec §53 forbids the account that would otherwise carry
+the identity. The code is the whole of the authorisation — a bearer capability,
+which proves somebody was shown it and nothing else. The GET serves the
+prediction snapshot; the POST records what the slab actually said, once.
+**Unknown, expired, already-answered and not-a-code-at-all are one bare 404** on
+both, so a well-formed guess learns nothing a malformed one would not, and a
+code is spent by the answer: there is no edit path, and a wrong grade is a new
+code from a new analysis. A reported grade is checked against **that company's
+scale** — PSA and TAG issue no 9.5 and BGS does — and a grade off the scale is a
+422 raised before the code is looked up, so the refusal itself cannot be used to
+test whether a code exists. A designation with no grade is a whole answer: PSA
+issues `authentic` in place of one. Nothing here retrains anything: §68 puts a
+validation step in between, and that step is an operator running
+`tcg-review-grade-feedback` by hand.
+
+The eight limited endpoints — `POST /analyses`, `POST /analyses/{id}/images`,
+`POST /analyses/{id}/confirm-card`, `POST /analyses/{id}/run`,
+`POST /analyses/{id}/economic-configuration`, `POST /analyses/{id}/feedback`,
+`GET /feedback/{code}` and `POST /feedback/{code}` — are rate-limited
 per client address (spec §55, which names analysis endpoints *and* image
 uploads), `TCG_API_RATE_LIMIT_REQUESTS` per
 `TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
@@ -283,7 +317,11 @@ deployment's own proxy appended, never a leftmost entry the caller wrote. A 500
 `internal_error` — the catch-all's answer to an exception nobody anticipated —
 carries CORS headers like every other status, so a browser reads it as a failure
 it can classify rather than as a network outage. Polling
-`GET /analyses/{id}` is not limited, and neither are the catalog reads. With
+`GET /analyses/{id}` is not limited, and neither are the catalog reads.
+`GET /feedback/{code}` is the one **read** that is, and the exception is
+deliberate: its path parameter is a bearer capability, so a hundred bits of
+entropy is what makes a guess worthless and the limiter is what bounds how many
+guesses there are. With
 `TCG_API_REDIS_URL` unset, or Redis unreachable, the limiter lets requests
 through rather than refusing them. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
@@ -308,6 +346,7 @@ a Postgres outage without correlating timestamps.
 | `market_store_unreachable` | `/cards/{id}/market`, and `/analyses/{id}/results` reading the analysis's snapshot and its prices — deliberately not `market_data_unreachable`, since the market route also raises §66's `market_data_unavailable`, and the two must stay unmistakable in a log |
 | `economic_configuration_store_unreachable` | `POST /analyses/{id}/economic-configuration` |
 | `dataset_store_unreachable` | the `/internal/annotation` routes |
+| `feedback_store_unreachable` | the three spec §68 feedback routes (#270) |
 | `stored_object_missing` | an annotation row naming bytes the store does not hold — a **500** `internal_error`, not a 503, because two stores disagreeing will not come right on a retry |
 
 One other route puts a different vocabulary on the same field: `confirm-card`'s
@@ -344,7 +383,9 @@ build. `GET /grading-companies` is `public, max-age=3600` — slow-moving refere
 data. `GET /cards/{id}/market` and `GET /analyses/{id}/results` are `no-store`,
 because both report a freshness figure computed at the moment of asking, and a
 cached body would report an age frozen when it was built. The annotation bytes
-are `private, no-store`. Everything else sends no cache header at all.
+are `private, no-store`, and so are the two `/feedback/{code}` routes — a bearer
+capability travels in that path, and a shared cache holding the body would
+answer for whoever asked next. Everything else sends no cache header at all.
 
 `/internal/annotation` is **not part of spec §64**. §64's endpoints are the
 consumer product; this is the internal surface `apps/annotation` reads — a work

@@ -32,6 +32,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 PROBE = textwrap.dedent(
     """
     import json
@@ -363,3 +365,64 @@ def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stage
         "tcg_api.datasets.normalization's, and the request path must not reach it."
     )
     assert stages == [], stages
+
+
+# ---------------------------------------------------------------------------
+# Spec §68's feedback never reaches training — #270
+# ---------------------------------------------------------------------------
+#: Every module under `tcg_api.datasets`. The corpus side of the wall: these
+#: build dataset versions, and a report a user sent back must not be reachable
+#: from any of them.
+DATASET_MODULES = (
+    "tcg_api.datasets.annotation",
+    "tcg_api.datasets.deduplication",
+    "tcg_api.datasets.fingerprints",
+    "tcg_api.datasets.ingestion",
+    "tcg_api.datasets.normalization",
+    "tcg_api.datasets.outcomes",
+    "tcg_api.datasets.splitting",
+    "tcg_api.datasets.tables",
+    "tcg_api.datasets.versioning",
+)
+
+
+@pytest.mark.parametrize("module", DATASET_MODULES)
+def test_the_corpus_cannot_reach_a_users_reported_grade(module: str) -> None:
+    """Spec §68: a report is validated by a person before it trains anything.
+
+    The diagram is `user feedback → validation → approved dataset → future
+    training`, and the arrow that must not exist is the one straight from the
+    first box to the third. An import is how that arrow would appear — somebody
+    adding "and also pull the feedback rows" to a corpus builder — so the wall
+    is asserted rather than described.
+
+    `tcg_api.codes` is deliberately outside `tcg_api.feedback` so that #148's
+    consent row can mint a withdrawal code without breaching this.
+    """
+    pulled = _modules_matching("tcg_api.feedback", after_importing=module)
+
+    assert pulled == [], (
+        f"importing {module} pulled in {pulled}. Spec §68 puts an operator's "
+        "validation between a user's reported grade and any future training, "
+        "and nothing under tcg_api.datasets may reach the feedback domain."
+    )
+
+
+def test_the_feedback_routes_are_what_reach_the_feedback_domain() -> None:
+    """Guard the guard: without this, deleting the domain would 'fix' the test above."""
+    pulled = _modules_matching("tcg_api.feedback", after_importing="tcg_api.routers.feedback")
+
+    assert "tcg_api.feedback.store" in pulled
+    assert "tcg_api.feedback.tables" in pulled
+
+
+def test_minting_a_return_code_needs_nothing_but_the_standard_library() -> None:
+    """`tcg_api.codes` is importable from anywhere, which is why it is separate.
+
+    #148's consent row lives under `tcg_api.datasets` and mints a withdrawal
+    code the same way. If this module ever grew a dependency on the feedback
+    domain, that reuse would breach the wall above.
+    """
+    pulled = _modules_matching("tcg_api.feedback", after_importing="tcg_api.codes")
+
+    assert pulled == []

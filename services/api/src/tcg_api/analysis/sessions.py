@@ -31,12 +31,12 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
-from tcg_domain.analysis import SessionStatus
+from tcg_domain.analysis import AnalysisStatus, SessionStatus
 
 from tcg_api.analysis.tables import analyses, analysis_sessions
 
@@ -47,6 +47,7 @@ __all__ = [
     "TOKEN_BYTES",
     "AnalysisRecord",
     "AnalysisStoreUnavailable",
+    "claim_feedback_mint",
     "create_analysis",
     "create_session",
     "execute",
@@ -416,6 +417,41 @@ async def read_grade_predictions(db: AsyncSession, analysis_id: UUID) -> dict[st
     result = await execute(db, statement)
     document = result.scalar_one_or_none()
     return None if document is None else dict(document)
+
+
+async def claim_feedback_mint(db: AsyncSession, analysis_id: UUID) -> bool:
+    """Reserve the one spec §68 return code this analysis may have — #270.
+
+    Returns whether this call is the one that claimed it. `False` means a code
+    has already been minted for this analysis, or the analysis is not
+    `completed`, or it does not exist — and the caller cannot tell those apart
+    from here, which is deliberate: ownership was established by
+    `read_analysis` before this was asked, so all three are the same 409.
+
+    **The conditional `UPDATE` is the whole once-only rule**, and it is the
+    race guard too — `state.transition`'s argument. Two taps of the same button
+    both see `completed`, both reach here, and exactly one matches a row with
+    `feedback_minted_at IS NULL`.
+
+    `feedback_minted_at` is not one of spec §57's columns, so the
+    reproducibility trigger's `WHEN` clause does not fire on this write. Does
+    not commit: the caller owns the transaction, so the claim and the row it
+    permits land together or not at all.
+    """
+    statement = (
+        sa.update(analyses)
+        .where(
+            analyses.c.id == analysis_id,
+            analyses.c.status == AnalysisStatus.COMPLETED.value,
+            analyses.c.feedback_minted_at.is_(None),
+        )
+        .values(feedback_minted_at=sa.func.now())
+    )
+    # `execute` is typed for the reads it was written for; an UPDATE always
+    # produces a `CursorResult`, which is the only kind that counts rows.
+    # `state.transition`'s cast, and unquoted for its reason.
+    result = cast(sa.CursorResult[Any], await execute(db, statement))
+    return result.rowcount == 1
 
 
 async def record_grade_predictions(

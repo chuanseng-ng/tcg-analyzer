@@ -189,6 +189,12 @@ tcg-publish-dataset-version = "tcg_api.datasets.versioning:main"
 # storage, and heuristic analyzer versions never become rows at all. Runs from
 # the API image: registering a bundle decodes no photograph.
 tcg-register-model-bundle = "tcg_api.models.registration:main"
+# Records spec §68's validation step on one grade a user reported back:
+# `submitted` becomes `validated` or `rejected`, and nothing else moves. It
+# never answers on a user's behalf — `awaiting → submitted` is the route's
+# alone — and it never sees a return code, which the row stores only as a
+# digest. Runs from the API image: reviewing a report reads two columns.
+tcg-review-grade-feedback = "tcg_api.feedback.review:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -249,6 +249,34 @@ def test_the_orphan_sweep_is_registered_and_not_retried(configured: Any) -> None
     assert configured.tasks[jobs.SWEEP_ORPHANS].max_retries == 0
 
 
+def test_the_feedback_sweep_is_scheduled_beside_retention(configured: Any) -> None:
+    """#270's row expires on its own clock, but on retention's granularity."""
+    entry = configured.conf.beat_schedule["sweep-expired-grade-feedback"]
+
+    assert entry["task"] == jobs.SWEEP_FEEDBACK
+    assert entry["options"]["queue"] == jobs.QUEUE
+    assert entry["schedule"] == configured.conf.beat_schedule["purge-expired-sessions"]["schedule"]
+
+
+def test_the_feedback_sweep_is_registered_and_not_retried(configured: Any) -> None:
+    assert jobs.SWEEP_FEEDBACK in configured.tasks
+    assert configured.tasks[jobs.SWEEP_FEEDBACK].max_retries == 0
+
+
+def test_every_sweep_is_scheduled(configured: Any) -> None:
+    """Four now. An equality, so a fifth has to be written down here as well.
+
+    A sweep that exists and is never scheduled is a retention policy that does
+    not run, which is the failure `docs/retention.md` is written against.
+    """
+    assert set(configured.conf.beat_schedule) == {
+        "purge-expired-sessions",
+        "sweep-stalled-analyses",
+        "sweep-orphan-objects",
+        "sweep-expired-grade-feedback",
+    }
+
+
 # ---------------------------------------------------------------------------
 # The retention sweep's schedule — issue #41, spec §54
 # ---------------------------------------------------------------------------
