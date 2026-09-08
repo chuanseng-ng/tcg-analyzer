@@ -158,15 +158,25 @@ def client() -> Iterator[TestClient]:
 def another_visitor() -> Iterator[TestClient]:
     """A browser that has never seen this service — no cookie, no session.
 
-    The caches are cleared first so this application builds its own engine. An
-    engine's pooled connections belong to the event loop that opened them and
-    `TestClient` runs its own, so two clients sharing one cached engine is a
-    `got Future attached to a different loop` waiting to happen.
+    The caches are cleared on the way in so this application builds its own
+    engine: an engine's pooled connections belong to the event loop that opened
+    them and `TestClient` runs its own, so two clients sharing one cached engine
+    is a `got Future attached to a different loop` waiting to happen.
+
+    **And cleared again on the way out**, which is the half that is easy to
+    miss. `lifespan` disposes `get_engine()` on shutdown when the cache holds
+    one, so an outer client closing after this one would otherwise dispose
+    *this* application's engine from a portal that has already stopped. The
+    lifespan docstring anticipates exactly this and does the same for Redis.
     """
     for cached in CACHES:
         cached.cache_clear()
-    with TestClient(create_app()) as instance:
-        yield instance
+    try:
+        with TestClient(create_app()) as instance:
+            yield instance
+    finally:
+        for cached in CACHES:
+            cached.cache_clear()
 
 
 def updating(**values: Any) -> Callable[[uuid.UUID], None]:
