@@ -55,8 +55,14 @@ DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = (
 # each quote instead of re-deciding, and it reaches them through links — to the
 # records it declines to reopen, and from the index that now lists every ADR.
 # A link that stops resolving there sends the next reader back to guessing.
+#
+# `SECURITY.md` is here because it is the one document a stranger reads before
+# anything else in the repository: it names the surfaces in scope by path, and a
+# link that stops resolving there sends a vulnerability report to the issue
+# tracker instead of the advisory form.
 LINKED_DOCUMENTS: tuple[str, ...] = (
     *DOCUMENTED_COMMAND_SOURCES,
+    "SECURITY.md",
     "docs/README.md",
     "docs/architecture.md",
     "docs/adr/README.md",
