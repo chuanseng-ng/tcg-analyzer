@@ -130,6 +130,28 @@ export type RegionFindingResponse = components["schemas"]["RegionFindingResponse
 export type SurfaceResponse = components["schemas"]["SurfaceResponse"];
 export type DefectResponse = components["schemas"]["DefectResponse"];
 
+/**
+ * Spec §68's return code, in the only body it will ever appear in (#270).
+ *
+ * The row stores its sha256 and cannot reproduce it, so this response is the
+ * whole of the user's way back. Nothing here writes it anywhere that outlives
+ * the component holding it.
+ */
+export type ReturnCodeResponse = components["schemas"]["ReturnCodeResponse"];
+
+/**
+ * What was predicted, copied whole at mint time.
+ *
+ * `predictions` is `analyses.grade_predictions` as the worker stored it (#227),
+ * not the ordered shape `GET /analyses/{id}/results` renders — see
+ * {@link readFeedback}.
+ */
+export type FeedbackSnapshotResponse = components["schemas"]["FeedbackSnapshotResponse"];
+
+/** Spec §68's question answered: which company, and the grade it printed. */
+export type ReportedGradeRequest = components["schemas"]["ReportedGradeRequest"];
+export type ReportedGradeResponse = components["schemas"]["ReportedGradeResponse"];
+
 /** The snapshot the figures were priced against — what ADR 0006 requires the UI to date-stamp. */
 export type MarketSnapshotReference = components["schemas"]["MarketSnapshotReference"];
 
@@ -312,6 +334,40 @@ function isResultsResponse(payload: unknown): payload is ResultsResponse {
     typeof payload.status === "string" &&
     typeof payload.currency === "string" &&
     Array.isArray(payload.companies)
+  );
+}
+
+function isReturnCodeResponse(payload: unknown): payload is ReturnCodeResponse {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return typeof payload.return_code === "string" && typeof payload.expires_at === "string";
+}
+
+function isFeedbackSnapshotResponse(payload: unknown): payload is FeedbackSnapshotResponse {
+  if (!isRecord(payload) || !isRecord(payload.predictions)) {
+    return false;
+  }
+  // `recommended_action` and both version fields are nullable rather than
+  // optional — `null` in each is a results screen that showed no verdict, or an
+  // analysis with a version missing, not a bad payload.
+  return (
+    typeof payload.card_id === "string" &&
+    typeof payload.created_at === "string" &&
+    typeof payload.expires_at === "string"
+  );
+}
+
+function isReportedGradeResponse(payload: unknown): payload is ReportedGradeResponse {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  // `grade` and `designation` are each nullable and exactly one of them is set,
+  // so neither narrows this.
+  return (
+    typeof payload.status === "string" &&
+    typeof payload.submitted_at === "string" &&
+    typeof payload.grading_company === "string"
   );
 }
 
@@ -684,6 +740,89 @@ export async function readResults(
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     isPayload: isResultsResponse,
     payloadName: "results",
+  });
+}
+
+/**
+ * `POST /analyses/{id}/feedback` — mint the code that leads back here (spec §68).
+ *
+ * **The code is in this response and in no other, ever.** Only its sha256 is
+ * stored, no route returns it again, and it is never logged — so a caller shows
+ * it and keeps it in component state, never in `sessionStorage`, `localStorage`
+ * or a URL. A lost code is a lost row, deliberately.
+ *
+ * Session-scoped like every other analysis write, and once per analysis: a
+ * second call is a 409 whose meaning is "it was already shown", not "try again".
+ * Only on `completed`, and only where a prediction was stored.
+ */
+export async function mintFeedback(
+  analysisId: string,
+  signal?: AbortSignal,
+): Promise<ReturnCodeResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/feedback`,
+    method: "POST",
+    credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isReturnCodeResponse,
+    payloadName: "return code",
+  });
+}
+
+/**
+ * `GET /feedback/{code}` — what was predicted, for the code a user kept.
+ *
+ * **Sent without credentials, and that is the point.** Weeks later there is no
+ * session: the cookie has expired and spec §53 forbids the account that would
+ * carry the identity. The code in the path is the whole of the authorisation.
+ *
+ * Unknown, expired, already-answered and malformed are one bare 404 — the
+ * service tells them apart nowhere, so neither does this.
+ *
+ * **`predictions` is the stored document, not the results route's shape.** Each
+ * company's `distribution` is a `{grade: probability}` mapping, and a JavaScript
+ * object reorders integer-like keys — `"10"` sorts before `"1.5"` — so a caller
+ * that draws a ladder from it must take the order from somewhere else. `GET
+ * /grading-companies`' `grades` is that somewhere.
+ */
+export async function readFeedback(
+  code: string,
+  signal?: AbortSignal,
+): Promise<FeedbackSnapshotResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/feedback/${encodeURIComponent(code)}`,
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isFeedbackSnapshotResponse,
+    payloadName: "feedback snapshot",
+  });
+}
+
+/**
+ * `POST /feedback/{code}` — the grade the card actually received (spec §68).
+ *
+ * **The code is spent by this call.** There is no edit path: a second answer is
+ * the same 404 an unknown code gets, so a screen renders its confirmation from
+ * this response rather than re-reading afterwards.
+ *
+ * A grade the named company does not issue is a 422 raised *before* the code is
+ * looked up, so the refusal cannot be used to test whether a code exists — which
+ * is why the grade select's options come from that company's own scale.
+ */
+export async function submitFeedback(
+  code: string,
+  request: ReportedGradeRequest,
+  signal?: AbortSignal,
+): Promise<ReportedGradeResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/feedback/${encodeURIComponent(code)}`,
+    method: "POST",
+    body: request,
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isReportedGradeResponse,
+    payloadName: "reported grade",
   });
 }
 

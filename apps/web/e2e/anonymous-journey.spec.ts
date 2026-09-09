@@ -130,3 +130,107 @@ test("a new user completes an anonymous analysis without typing a URL", async ({
   );
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+/**
+ * Spec §68's loop, end to end — issue #274. A second scenario rather than an
+ * edit of the first (M9's rule): the journey above asserts what a new user
+ * gets, and this one asserts what happens months later when the slab comes
+ * back.
+ *
+ * The walk to `/results` is repeated rather than lifted out of the first test,
+ * for the same reason: hoisting it would rewrite the scenario this file exists
+ * to protect. It carries no assertions of its own beyond the waits it needs.
+ *
+ * ponytail: two full pipeline runs per CI job. If the `e2e` job's wall clock
+ * starts to matter, a fixture that walks one analysis and hands both tests the
+ * results page is the upgrade — and it has to leave the first test's own
+ * assertions untouched.
+ */
+test("a user who kept their code reports the grade the card actually got", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("link", { name: "Analyze a card" }).click();
+  await page.getByLabel(/Add the front/).setInputFiles(fixture("front.jpg"));
+  await page.getByLabel(/Add the back/).setInputFiles(fixture("back.jpg"));
+  await page.getByRole("button", { name: "Use these photographs" }).click();
+
+  // The gate takes up to 20 s of polling, which is longer than an `expect`
+  // waits — so the verdict is awaited off the browser's own poll first, as the
+  // scenario above does, rather than by waiting on what it navigates to.
+  const settled = page.waitForResponse(async (response) => {
+    if (!/\/analyses\/[^/]+$/.test(response.url()) || response.request().method() !== "GET") {
+      return false;
+    }
+    try {
+      return ((await response.json()) as { status?: string }).status === "awaiting_confirmation";
+    } catch {
+      return false;
+    }
+  });
+  await page.getByRole("button", { name: "Choose which card this is" }).click();
+  await settled;
+
+  const anyway = page.getByRole("button", { name: "Use them anyway" });
+  await expect(page.getByRole("heading", { name: "Find a card" }).or(anyway)).toBeVisible();
+  if (await anyway.isVisible()) {
+    await anyway.click();
+  }
+
+  await page.getByLabel("Card name").fill("Charizard");
+  await page.getByRole("button", { name: "Search" }).click();
+  await page
+    .getByRole("link", { name: /^Charizard Base Set/ })
+    .first()
+    .click();
+  await page.getByRole("link", { name: "This is my card" }).click();
+  await page.getByRole("button", { name: "Confirm this card" }).click();
+  await page.getByRole("link", { name: "Set the costs" }).click();
+  await page.getByRole("button", { name: "Use these figures" }).click();
+  await expect(page).toHaveURL(/\/results$/);
+
+  // --- The offer: nothing is minted until the user asks for it. --------------
+  await expect(page.getByRole("heading", { name: "What grade did it actually get?" })).toBeVisible();
+  await page.getByRole("button", { name: "Give me a code" }).click();
+
+  const code = await page.locator("[data-return-code]").innerText();
+  expect(code).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){3}$/);
+  // Shown once and held nowhere else: the row keeps a sha256 and cannot
+  // reproduce it, so a copy in a browser store would be one the service could
+  // not revoke.
+  const stored = await page.evaluate(() => ({
+    session: JSON.stringify(window.sessionStorage),
+    local: JSON.stringify(window.localStorage),
+    url: window.location.href,
+  }));
+  expect(stored.session).not.toContain(code);
+  expect(stored.local).not.toContain(code);
+  expect(stored.url).not.toContain(code);
+
+  // A second ask cannot produce it again.
+  await expect(page.getByRole("button", { name: "Give me a code" })).toHaveCount(0);
+
+  // --- Weeks later, with the slab in hand and no session left. ---------------
+  await page.context().clearCookies();
+  await page.goto(`/feedback/${code}`);
+  await expect(page.getByRole("heading", { name: "What grade did it actually get?" })).toBeVisible();
+  await expect(page.getByRole("figure", { name: /grade probabilities$/ })).toHaveCount(3);
+
+  await page.getByLabel("Which company graded it").selectOption("psa");
+  // The ladder is the wire's: PSA issues no 9.5 and BGS does.
+  const grades = page.getByLabel("The grade on the slab");
+  await expect(grades.getByRole("option", { name: "9.5", exact: true })).toHaveCount(0);
+  await grades.selectOption("9");
+  await page.getByRole("button", { name: "Send the grade" }).click();
+
+  await expect(page.getByRole("heading", { name: /that is recorded/i })).toBeVisible();
+
+  // --- The code is spent: the same page an unknown one gets. -----------------
+  await page.goto(`/feedback/${code}`);
+  await expect(
+    page.getByRole("heading", { name: "No prediction is recorded under that code." }),
+  ).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
