@@ -82,7 +82,9 @@ function serve(overrides: { feedback?: () => Response; answer?: () => Response }
 
 function gradeOptions(): string[] {
   const select = screen.getByLabelText(/the grade on the slab/i);
-  return within(select).getAllByRole("option").map((option) => option.textContent ?? "");
+  return within(select)
+    .getAllByRole("option")
+    .map((option) => option.textContent ?? "");
 }
 
 afterEach(() => {
@@ -121,7 +123,9 @@ describe("ReportGrade", () => {
 
     // BGS issues a 9.5 and PSA does not. A client copy of either ladder is what
     // this is written to make impossible.
-    fireEvent.change(screen.getByLabelText(/which company graded it/i), { target: { value: "bgs" } });
+    fireEvent.change(screen.getByLabelText(/which company graded it/i), {
+      target: { value: "bgs" },
+    });
     expect(gradeOptions()).toEqual(["1", "9", "9.5", "10"]);
   });
 

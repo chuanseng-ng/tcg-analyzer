@@ -51,7 +51,8 @@ export function FeedbackOffer({ analysisId }: { readonly analysisId: string }) {
       })
       .catch((error: unknown) => {
         const classified = classifyFeedbackFailure(error);
-        if (classified.retryAfterSeconds !== undefined) setWaitSeconds(classified.retryAfterSeconds);
+        if (classified.retryAfterSeconds !== undefined)
+          setWaitSeconds(classified.retryAfterSeconds);
         setFailure(classified);
         setMinting(false);
       });
@@ -73,8 +74,8 @@ export function FeedbackOffer({ analysisId }: { readonly analysisId: string }) {
       <div className={styles.question}>
         <h3 className={styles.questionHeading}>Write this code down.</h3>
         <p className={styles.body}>
-          It is the only way back to this prediction, and it will not be shown again — not on
-          this page, not by us. Nothing else is kept: no photograph, no email, no account.
+          It is the only way back to this prediction, and it will not be shown again — not on this
+          page, not by us. Nothing else is kept: no photograph, no email, no account.
         </p>
         <p className={styles.code} data-return-code>
           {minted.return_code}

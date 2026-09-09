@@ -106,7 +106,11 @@ describe("submitFeedback", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      submitFeedback(CODE, { grading_company: "psa", grade: "9", certification_number: "12345678" }),
+      submitFeedback(CODE, {
+        grading_company: "psa",
+        grade: "9",
+        certification_number: "12345678",
+      }),
     ).resolves.toEqual(ANSWER);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];

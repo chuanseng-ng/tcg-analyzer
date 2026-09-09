@@ -188,7 +188,9 @@ test("a user who kept their code reports the grade the card actually got", async
   await expect(page).toHaveURL(/\/results$/);
 
   // --- The offer: nothing is minted until the user asks for it. --------------
-  await expect(page.getByRole("heading", { name: "What grade did it actually get?" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "What grade did it actually get?" }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Give me a code" }).click();
 
   const code = await page.locator("[data-return-code]").innerText();
@@ -211,7 +213,9 @@ test("a user who kept their code reports the grade the card actually got", async
   // --- Weeks later, with the slab in hand and no session left. ---------------
   await page.context().clearCookies();
   await page.goto(`/feedback/${code}`);
-  await expect(page.getByRole("heading", { name: "What grade did it actually get?" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "What grade did it actually get?" }),
+  ).toBeVisible();
   await expect(page.getByRole("figure", { name: /grade probabilities$/ })).toHaveCount(3);
 
   await page.getByLabel("Which company graded it").selectOption("psa");
