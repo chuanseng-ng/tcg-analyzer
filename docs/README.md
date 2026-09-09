@@ -21,7 +21,9 @@ Project documentation.
 The root [`README.md`](../README.md) is the front page: what the product is, the
 V1 scope, the prerequisites, and the one command that starts the whole stack.
 Anything longer than that lives here. The working conventions live in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md).
+[`CONTRIBUTING.md`](../CONTRIBUTING.md), and a vulnerability goes to
+[`SECURITY.md`](../SECURITY.md) rather than the issue tracker —
+[`security-review.md`](security-review.md) is what it points a reporter at.
 
 [`api.md`](api.md) does not restate the schema — the API documents itself at
 `/openapi.json` and `/docs`, and a hand-written copy of the shapes would fall out

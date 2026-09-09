@@ -237,6 +237,7 @@ not merely out of the working tree.
 | [`docs/market-provider-research.md`](docs/market-provider-research.md) | The rubric, the survey, and the licensing determinations |
 | [`docs/adr/`](docs/adr) | Why things are the way they are, one decision per file |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Commits, pull requests, Definition of Done |
+| [`SECURITY.md`](SECURITY.md) | How to report a vulnerability privately, and what is in scope |
 | [`.env.example`](.env.example) | Every variable the stack reads |
 | `/docs` on the running API | The generated OpenAPI reference |
 
