@@ -178,6 +178,28 @@
   font-weight: var(--weight-medium);
 }
 
+/*
+ * The return code (#274) — the one place a monospace token appears in this app.
+ * Wide letter spacing and `break-all` because it is read off a screen and copied
+ * onto paper: the groups have to stay legible at 375px without a horizontal
+ * scroll, and `O`/`I`/`L` are absent from the alphabet so the shape carries no
+ * ambiguity of its own.
+ */
+.code {
+  align-self: flex-start;
+  max-inline-size: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  letter-spacing: 0.08em;
+  overflow-wrap: break-word;
+  user-select: all;
+}
+
 /* ------------------------------------------------------- grade distribution */
 
 /*

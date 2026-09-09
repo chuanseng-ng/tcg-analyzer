@@ -33,6 +33,7 @@ import { classifyResultsFailure, type ResultsFailure } from "@/lib/results-error
 import { CompanyComparison } from "./CompanyComparison";
 import { ConditionAssessment } from "./ConditionAssessment";
 import { Fact } from "./Fact";
+import { FeedbackOffer } from "./FeedbackOffer";
 import { GradeDistribution } from "./GradeDistribution";
 import styles from "./page.module.css";
 
@@ -381,6 +382,17 @@ function Ready({
           </article>
         ))}
         <MarketStamp snapshot={results.market_snapshot} />
+      </section>
+
+      {/* Spec §68's offer (#274), between the figures and the chart they came
+          from: below the recommendation, above the distribution it is asking
+          the user to correct. §49's four priorities keep their order around
+          it. */}
+      <section className={styles.section} aria-labelledby="feedback">
+        <h2 className={styles.sectionHeading} id="feedback">
+          What grade did it actually get?
+        </h2>
+        <FeedbackOffer analysisId={analysis.id} />
       </section>
 
       {results.companies.length > 0 && (
