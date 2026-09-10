@@ -9,3 +9,18 @@ packages:
 allowBuilds:
   sharp: true
   unrs-resolver: true
+
+# next 15.5.25 pins `postcss` to exactly 8.4.31, which carries two HIGH
+# advisories with fixes published — CVE-2026-45623 and CVE-2026-73646, both
+# found by #284's lockfile audit the first time it ran. postcss 8.5 is
+# semver-compatible with 8.4, and vite already resolves 8.5.x here, so this
+# lifts the one pin holding the tree back rather than recording an acceptance
+# for a vulnerability that is already fixed upstream.
+overrides:
+  postcss: "^8.5.18"
+  # `@redocly/openapi-core` holds `js-yaml` at 4.3.1 (CVE-2026-84375, HIGH,
+  # fixed in 4.3.2), which #284's image scan finds in the two `development`
+  # images — the lockfile audit does not, because it is a dev dependency and
+  # nothing ships it. 4.3.2 is already in this tree via `@eslint/eslintrc`, so
+  # this dedupes rather than adding anything.
+  js-yaml: "^4.3.2"
