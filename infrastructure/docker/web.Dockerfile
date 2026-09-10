@@ -21,7 +21,7 @@
 # `tests/test_compose_stack.py` asserts the ordering. See
 # docs/adr/0003-the-local-development-stack.md and its 2026-09-07 addendum.
 
-FROM node:26-bookworm-slim AS base
+FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS base
 
 # Corepack provisions the exact pnpm pinned by the root `package.json`'s
 # `packageManager` field, hash and all, so the image resolves dependencies with

@@ -26,12 +26,22 @@
 # `services/api/tests/test_import_purity.py` asserts it.
 
 # --------------------------------------------------------------------------
+# uv — the resolver, taken from its own published image.
+#
+# A stage rather than `COPY --from=ghcr.io/astral-sh/uv:…` written inline,
+# because Dependabot's docker ecosystem parses `FROM` and not `COPY --from`
+# (dependabot-core#5103). Inline, the digest below would be pinned once and
+# then never bumped again, which is the opposite of what pinning it is for.
+# --------------------------------------------------------------------------
+FROM ghcr.io/astral-sh/uv:0.9.26@sha256:9a23023be68b2ed09750ae636228e903a54a05ea56ed03a934d00fe9fbeded4b AS uv
+
+# --------------------------------------------------------------------------
 # Builder — resolve the workspace, plus the worker's extra, into a virtual
 # environment.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -56,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --------------------------------------------------------------------------
 # Runtime — the environment and the source, run unprivileged.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
 
 # Uploaded card images are untrusted input and this is the container that
 # *decodes* them (spec §56). Same uid as the API image, so a bind-mounted path

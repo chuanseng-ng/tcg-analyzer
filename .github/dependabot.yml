@@ -74,6 +74,12 @@ updates:
       actions:
         update-types: [minor, patch, major]
 
+  # Every base image is pinned by digest (#284), so most of what arrives here
+  # is a digest bump against the same tag — the reviewable form of "this image
+  # was rebuilt". `ghcr.io/astral-sh/uv` is visible for the first time because
+  # it is now a `FROM … AS uv` stage rather than an inline `COPY --from=`,
+  # which Dependabot does not parse; a uv bump is a normal PR and is not
+  # ignored below.
   - package-ecosystem: docker
     directory: /infrastructure/docker
     schedule:
