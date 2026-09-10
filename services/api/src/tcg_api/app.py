@@ -27,6 +27,7 @@ from tcg_api.routers import (
     annotation,
     cards,
     catalog,
+    consent,
     economics,
     feedback,
     grading,
@@ -141,6 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # a return code rather than by an analysis, so the router carries no prefix
     # and each route spells its own path.
     app.include_router(feedback.router, responses=ERROR_RESPONSES)
+    # ADR 0008's approved class 4 (#148). Same shape and same reason: one of its
+    # three paths is addressed by a withdrawal code rather than by an analysis,
+    # and a photograph kept for training is the corpus's row rather than the
+    # analysis's.
+    app.include_router(consent.router, responses=ERROR_RESPONSES)
     # Last, and the only one that is not spec §64's. `/internal/annotation` is
     # the annotation tool's surface: in this application because §7 forbids an
     # unnecessary microservice and ADR 0009 declined a second FastAPI app, and in

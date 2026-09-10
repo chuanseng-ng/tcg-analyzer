@@ -68,9 +68,11 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Final
 
+import anyio.to_thread
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -248,6 +250,7 @@ async def ingest_training_image(
     provenance: TrainingImageProvenance,
     physical_copy_id: uuid.UUID | None = None,
     card_id: uuid.UUID | None = None,
+    withdrawal_code_hash: str | None = None,
     max_bytes: int,
     max_pixels: int,
 ) -> IngestedImage:
@@ -265,6 +268,9 @@ async def ingest_training_image(
         physical_copy_id: Which `physical_copies` row this is a photograph of.
             `None` for approved class 4, whose copies nothing identifies.
         card_id: The catalog card, where somebody has identified it.
+        withdrawal_code_hash: The sha256 of the code a consenting user was shown
+            once (#148). `None` for every source but approved class 4, which is
+            the only one whose grantor has no other way back to the row.
         max_bytes: The largest file accepted, before anything is decoded.
         max_pixels: The largest bitmap accepted, read from the header.
 
@@ -283,7 +289,10 @@ async def ingest_training_image(
         # rather than growing a second limit that can disagree about one picture.
         raise InvalidImage(f"The image is larger than {max_bytes:,} bytes.")
 
-    validated = validate_image(data, max_pixels=max_pixels)
+    # Off the event loop, for `routers/analyses.py`'s reason: decoding a
+    # photograph and stripping its EXIF is CPU work, and #148 reaches this
+    # function from inside a request rather than only from the command line.
+    validated = await anyio.to_thread.run_sync(partial(validate_image, data, max_pixels=max_pixels))
 
     # §28's order: verified before ingested, so an image nobody has the right to
     # train on never reaches object storage even transiently.
@@ -299,6 +308,7 @@ async def ingest_training_image(
             "id": image_id,
             "physical_copy_id": physical_copy_id,
             "card_id": card_id,
+            "withdrawal_code_hash": withdrawal_code_hash,
             "side": side,
             "original_uri": str(key),
             "sha256": validated.sha256,

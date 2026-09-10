@@ -375,6 +375,7 @@ def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stage
 #: from any of them.
 DATASET_MODULES = (
     "tcg_api.datasets.annotation",
+    "tcg_api.datasets.consent",
     "tcg_api.datasets.deduplication",
     "tcg_api.datasets.fingerprints",
     "tcg_api.datasets.ingestion",

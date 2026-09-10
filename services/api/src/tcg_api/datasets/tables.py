@@ -170,6 +170,14 @@ _VERSION_PATTERN: Final = VERSION_PATTERN.pattern
 #: uses, because the column already names the algorithm.
 _SHA256_PATTERN: Final = "^[0-9a-f]{64}$"
 
+#: A withdrawal code is stored as a digest and never as itself (#148), so the
+#: column carries `sha256`'s grammar one table down. Composed from the pattern
+#: above rather than written out, so the width is stated once;
+#: `test_datasets_tables.py` holds this against the migration's copy by value.
+_WITHDRAWAL_CODE_IS_A_DIGEST: Final = (
+    f"withdrawal_code_hash IS NULL OR withdrawal_code_hash ~ '{_SHA256_PATTERN}'"
+)
+
 
 physical_copies = sa.Table(
     "physical_copies",
@@ -487,6 +495,18 @@ training_images = sa.Table(
         ),
     ),
     sa.Column(
+        "withdrawal_code_hash",
+        PRINTED,
+        nullable=True,
+        comment=(
+            "The sha256 of the code shown once to a user who consented to this "
+            "photograph being kept — issue #148, ADR 0008's approved class 4. NULL on "
+            "every other source: classes 1 and 2 are ours, and class 3 withdraws "
+            "through the grant reference in `source_reference`. It is the only way "
+            "back to this row, because spec §54 deletes the session that produced it."
+        ),
+    ),
+    sa.Column(
         "created_at",
         sa.TIMESTAMP(timezone=True),
         nullable=False,
@@ -503,6 +523,11 @@ training_images = sa.Table(
     # over, and refusing them here keeps `source` usable as §32's fallback key.
     sa.CheckConstraint("btrim(source) <> ''", name="source_is_not_blank"),
     sa.CheckConstraint("btrim(acquisition_method) <> ''", name="acquisition_method_is_not_blank"),
+    # The digest's grammar is `sha256`'s, one column up, and the two are
+    # deliberately spelled from the same pattern. Lowercase hex is disjoint from
+    # what `tcg_api.codes.render` produces — upper-case Crockford base32 — so a
+    # code cannot be written into this column even by mistake.
+    sa.CheckConstraint(_WITHDRAWAL_CODE_IS_A_DIGEST, name="withdrawal_code_is_stored_as_a_digest"),
     # §32's grouping query — every image of one physical copy. Partial, because
     # the column is NULL for every consented upload and those rows are grouped by
     # `source` instead.
@@ -516,6 +541,14 @@ training_images = sa.Table(
     # RESTRICT check never runs in anger, and no query yet asks which training
     # images depict a card.
     sa.Index("ix_training_images_source", "source"),
+    # Withdrawal's only query — every image one consent covers. Partial, because
+    # the column is NULL on every source but class 4, and not unique: one consent
+    # covers the front and the back of one card.
+    sa.Index(
+        "ix_training_images_withdrawal_code_hash",
+        "withdrawal_code_hash",
+        postgresql_where=sa.text("withdrawal_code_hash IS NOT NULL"),
+    ),
     comment=(
         "One training image and the rights that came with it — spec §29's nine fields "
         "on the same row as the digest, which is what lets "

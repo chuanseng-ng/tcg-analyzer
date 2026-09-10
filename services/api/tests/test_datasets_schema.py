@@ -408,6 +408,42 @@ def test_an_uppercase_digest_is_refused() -> None:
         insert_image(sha256="A" * 64)
 
 
+def test_a_withdrawal_code_cannot_be_stored_as_itself() -> None:
+    """#148's column takes the sha256 of a code and never the code.
+
+    `tcg_api.codes.render` produces upper-case Crockford base32 and this CHECK
+    admits lowercase hex, so the two alphabets are disjoint by construction: a
+    code written here by mistake is refused by the database rather than stored
+    where anyone holding the row could spend it.
+    """
+    with pytest.raises(IntegrityError, match="withdrawal_code_is_stored_as_a_digest"):
+        insert_image(withdrawal_code_hash="A3KDM-9F2QT-BXWR7-N0HJ5")
+
+
+def test_a_consent_covers_both_sides_of_one_card() -> None:
+    """The digest is deliberately not unique: one consent, two photographs."""
+    digest = f"{uuid.uuid4().hex}{uuid.uuid4().hex}"
+    insert_image(side="front", withdrawal_code_hash=digest)
+    insert_image(side="back", withdrawal_code_hash=digest)
+
+    rows = fetch(
+        sa.select(training_images.c.id).where(training_images.c.withdrawal_code_hash == digest)
+    )
+
+    assert len(rows) == 2
+
+
+def test_a_photograph_nobody_consented_to_carries_no_code() -> None:
+    """NULL on every source but ADR 0008's class 4, which is most of the corpus."""
+    image = insert_image()
+
+    stored = fetch(
+        sa.select(training_images.c.withdrawal_code_hash).where(training_images.c.id == image)
+    )
+
+    assert stored[0].withdrawal_code_hash is None
+
+
 def test_a_zero_dimension_is_refused() -> None:
     with pytest.raises(IntegrityError, match="dimensions_are_positive"):
         insert_image(width=0)

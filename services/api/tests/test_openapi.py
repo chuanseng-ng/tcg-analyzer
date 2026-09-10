@@ -166,8 +166,8 @@ def test_openapi_documents_the_throttled_response() -> None:
     exactly as the 404 and the 409 are: a 429 is a transport-level failure
     outside the spec §66 envelope (ADR 0005), so there is no `ErrorResponse` for
     a generated client to expect. All five were asserted since #269 — the list
-    grew with the milestones and this test did not, which #263 found — and #270
-    took it to eight, two of them under `/feedback`.
+    grew with the milestones and this test did not, which #263 found — #270
+    took it to eight, two of them under `/feedback`, and #148 to ten.
     """
     paths = create_app().openapi()["paths"]
 
@@ -181,9 +181,35 @@ def test_openapi_documents_the_throttled_response() -> None:
     # the limiter is half of what makes guessing one uneconomic (#270).
     assert "429" in paths["/feedback/{code}"]["get"]["responses"]
     assert "429" in paths["/feedback/{code}"]["post"]["responses"]
+    # #148's pair, on the same two readings: a write against an analysis, and a
+    # bearer capability in a path.
+    assert "429" in paths["/analyses/{analysis_id}/training-consent"]["post"]["responses"]
+    assert "429" in paths["/training-consent/{code}"]["delete"]["responses"]
+    # The consent text is the same words for everybody and names nobody.
+    assert "429" not in paths["/training-consent"]["get"]["responses"]
     assert "429" not in paths["/analyses/{analysis_id}"]["get"]["responses"]
     assert "429" not in paths["/cards/search"]["get"]["responses"]
     assert "429" not in paths["/cards/{card_id}/market"]["get"]["responses"]
+
+
+def test_openapi_documents_the_training_consent_routes() -> None:
+    """ADR 0008's approved class 4 — #148.
+
+    Three doors, and `apps/web` needs every shape generated: the text it renders
+    verbatim, the code it shows once, and the withdrawal it offers weeks later
+    with no session at all.
+    """
+    paths = create_app().openapi()["paths"]
+
+    assert "get" in paths["/training-consent"]
+    assert "post" in paths["/analyses/{analysis_id}/training-consent"]
+    assert "delete" in paths["/training-consent/{code}"]
+    # One bare 404 for unknown, mistyped and already-withdrawn: a well-formed
+    # guess must learn nothing a malformed one would not.
+    assert "404" in paths["/training-consent/{code}"]["delete"]["responses"]
+    # There is deliberately no read route for a code. One would let a holder of
+    # a guess find out whether it was real without spending it.
+    assert "get" not in paths["/training-consent/{code}"]
 
 
 def test_openapi_documents_the_feedback_routes() -> None:
