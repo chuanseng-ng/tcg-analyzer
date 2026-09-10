@@ -490,7 +490,7 @@ describe("the consent question", () => {
 
   it("does not block the analysis when keeping the photographs fails", async () => {
     grantTrainingConsentMock.mockRejectedValue(
-      new ApiError("provider_error", "down", { status: 503 }),
+      new ApiError("down", { status: 503, code: "provider_error" }),
     );
 
     render(<CardUpload />);

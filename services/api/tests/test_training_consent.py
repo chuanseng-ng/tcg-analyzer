@@ -410,19 +410,17 @@ def test_the_text_names_derivative_use_outright(client: TestClient) -> None:
 def test_a_second_consent_is_refused_and_mints_no_second_code(client: TestClient) -> None:
     """`uq_training_images_sha256` is the double-tap guard, so no column is."""
     analysis_id = uploaded(client, seed=5)
-    assert client.post(f"/analyses/{analysis_id}/training-consent").status_code == 201
+    # Outside the assert: `python -O` strips the statement, and a first consent
+    # that never happened would make the refusal below pass for the wrong
+    # reason. `test_datasets_ingestion.py` records the same trap.
+    first = client.post(f"/analyses/{analysis_id}/training-consent")
+    assert first.status_code == 201
 
     again = client.post(f"/analyses/{analysis_id}/training-consent")
 
     assert again.status_code == 409
-    assert (
-        querying("SELECT id FROM training_images WHERE source_reference = :id", id=analysis_id)
-        != []
-    )
-    assert (
-        len(querying("SELECT id FROM training_images WHERE source_reference = :id", id=analysis_id))
-        == 2
-    )
+    kept = querying("SELECT id FROM training_images WHERE source_reference = :id", id=analysis_id)
+    assert len(kept) == 2
 
 
 def test_an_analysis_with_no_photograph_is_refused(client: TestClient) -> None:
@@ -472,8 +470,13 @@ def test_a_code_is_spent_by_the_withdrawal(client: TestClient) -> None:
     analysis_id = uploaded(client, seed=7)
     code = client.post(f"/analyses/{analysis_id}/training-consent").json()["withdrawal_code"]
 
-    assert client.delete(f"/training-consent/{code}").status_code == 200
-    assert client.delete(f"/training-consent/{code}").status_code == 404
+    # Both calls outside their asserts: the first is what *spends* the code, and
+    # `python -O` strips an assert's expression with the statement.
+    spent = client.delete(f"/training-consent/{code}")
+    again = client.delete(f"/training-consent/{code}")
+
+    assert spent.status_code == 200
+    assert again.status_code == 404
 
 
 def test_a_published_version_holds_its_photograph_back(client: TestClient) -> None:
