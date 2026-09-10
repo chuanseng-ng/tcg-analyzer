@@ -297,3 +297,86 @@
 .verdictSide {
   font-weight: var(--weight-medium);
 }
+
+/* The consent question — #148. A bordered block rather than a line of small
+   print: it asks for something, and something that is asked for quietly has not
+   really been asked. Same surface as `.done` and `.failure`, in the neutral
+   border, because it is neither good news nor bad. */
+.consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.consentHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
+/* The label wraps the box, so the whole sentence is the target and it clears
+   `--tap-target` without a fixed height. */
+.consentChoice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: var(--measure);
+  min-block-size: var(--tap-target);
+  padding-block: var(--space-2);
+  cursor: pointer;
+}
+
+.consentChoice input {
+  flex: none;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  margin-block-start: 0.125rem;
+  accent-color: var(--color-accent);
+}
+
+/* The code, shown once. `warning` rather than `success`: it is the one thing on
+   this screen that is lost if the user walks past it. */
+.keptCode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+/* Not `.doneHeading`'s green: nothing here has succeeded yet from the user's
+   point of view, and a code they walk past is the one thing this screen cannot
+   give them again. */
+.keptHeading {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-warning);
+}
+
+.keptHeading:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* `/results`' `.code`, copied rather than shared: ADR 0001 gives these apps no
+   common stylesheet, and one screen's rule is not a design system. */
+.code {
+  align-self: flex-start;
+  max-inline-size: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  letter-spacing: 0.08em;
+  overflow-wrap: break-word;
+  user-select: all;
+}
