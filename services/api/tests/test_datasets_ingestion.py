@@ -406,6 +406,32 @@ def test_each_approved_source_is_ingested(
 
 @pytest.mark.integration
 @requires_postgres
+def test_a_withdrawal_digest_is_recorded_when_one_is_given(
+    storage: InMemoryObjectStorage,
+) -> None:
+    """#148's one keyword, and the only source that ever passes it.
+
+    Approved class 4 is the one class whose grantor has no other way back to
+    the row: spec §54 deletes the session, so the code is the whole of it.
+    """
+    digest = "a" * 64
+
+    ingested = ingest(storage, a_photograph(), withdrawal_code_hash=digest)
+
+    assert one_row(ingested.id).withdrawal_code_hash == digest
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_photograph_ingested_without_one_carries_none(storage: InMemoryObjectStorage) -> None:
+    """Classes 1 and 2 are ours and class 3 withdraws through its grant reference."""
+    ingested = ingest(storage, a_photograph())
+
+    assert one_row(ingested.id).withdrawal_code_hash is None
+
+
+@pytest.mark.integration
+@requires_postgres
 def test_the_stored_object_carries_no_exif(storage: InMemoryObjectStorage) -> None:
     """GPS included — spec §54's field, and the whole reason #33 strips before storing."""
     located = a_photograph(located=True)

@@ -51,6 +51,7 @@ __all__ = [
     "CachedPipelineResult",
     "ImageQuality",
     "ImageRecord",
+    "Photograph",
     "StoredArtifact",
     "apply_cached_pipeline_result",
     "read_cached_pipeline_result",
@@ -58,6 +59,7 @@ __all__ = [
     "read_quality",
     "read_v1_artifacts",
     "read_v1_image_keys",
+    "read_v1_photographs",
     "record_normalization",
     "record_quality",
     "upsert_image",
@@ -233,6 +235,39 @@ async def read_v1_image_keys(db: AsyncSession, analysis_id: UUID) -> dict[ImageS
     )
     result = await execute(db, statement)
     return {ImageSide(row.side): row.original_uri for row in result}
+
+
+@dataclass(frozen=True, slots=True)
+class Photograph:
+    """What one side's original is, and when it arrived.
+
+    The pair a consented retention needs (#148): the key to read the bytes back
+    from, and spec §29's `acquired_at`, which is *"when the photograph was taken
+    or the upload was made — the fact about the image, not about this row"*. The
+    upload is the closest to "when it was taken" this product can honestly claim.
+    """
+
+    original_uri: str
+    created_at: datetime
+
+
+async def read_v1_photographs(db: AsyncSession, analysis_id: UUID) -> dict[ImageSide, Photograph]:
+    """Each V1 side's original key and the moment it arrived, in one round trip.
+
+    :func:`read_v1_image_keys`' third sibling rather than a widening of it: the
+    quality gate reads that one and does not want a timestamp, and changing its
+    return type to carry one would ripple through #36's whole path for a caller
+    that runs at most once per analysis.
+    """
+    statement = sa.select(images.c.side, images.c.original_uri, images.c.created_at).where(
+        images.c.analysis_id == analysis_id,
+        images.c.side.in_([side.value for side in V1_SIDES]),
+    )
+    result = await execute(db, statement)
+    return {
+        ImageSide(row.side): Photograph(original_uri=row.original_uri, created_at=row.created_at)
+        for row in result
+    }
 
 
 @dataclass(frozen=True, slots=True)

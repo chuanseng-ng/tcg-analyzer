@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from tcg_api import rate_limit
 from tcg_api.config import get_settings
 from tcg_api.rate_limit import analysis_rate_limit, client_key
-from tcg_api.routers import analyses, cards, economics, feedback
+from tcg_api.routers import analyses, cards, consent, economics, feedback
 
 LIMIT = 3
 WINDOW = 60
@@ -345,9 +345,9 @@ def test_two_clients_behind_one_proxy_get_two_buckets(
 def test_the_analysis_writes_are_limited_and_the_poll_is_not() -> None:
     """Spec §55 names the analysis endpoints; #98 reads that as the writes.
 
-    All eight of them, on three routers: the list grew with the milestones and
+    All ten of them, on four routers: the list grew with the milestones and
     the assertion did not, which #263 found and #269 fixed — so this is
-    asserted as an **equality** now, and a ninth limited route has to be
+    asserted as an **equality** now, and an eleventh limited route has to be
     written down here rather than merely working. `GET /analyses/{id}` is the
     endpoint spec §65 requires a client to poll, so limiting it would throttle
     the product's own progress reporting.
@@ -355,11 +355,13 @@ def test_the_analysis_writes_are_limited_and_the_poll_is_not() -> None:
     `GET /feedback/{code}` is the first *read* this service limits (#270), and
     the exception is deliberate: its path parameter is a bearer capability, so
     entropy bounds what a guess is worth and the limiter bounds how many guesses
-    there are.
+    there are. `DELETE /training-consent/{code}` joins it on the same reasoning
+    (#148), while `GET /training-consent` stays unlimited: it is the same words
+    for everybody and carries nothing about anybody.
     """
     limited = {
         (route.path, method)
-        for router in (analyses.router, economics.router, feedback.router)
+        for router in (analyses.router, economics.router, feedback.router, consent.router)
         for route in router.routes
         for method in route.methods
         if any(
@@ -376,7 +378,10 @@ def test_the_analysis_writes_are_limited_and_the_poll_is_not() -> None:
         ("/analyses/{analysis_id}/feedback", "POST"),
         ("/feedback/{code}", "GET"),
         ("/feedback/{code}", "POST"),
+        ("/analyses/{analysis_id}/training-consent", "POST"),
+        ("/training-consent/{code}", "DELETE"),
     }
+    assert ("/training-consent", "GET") not in limited
     assert ("/analyses/{analysis_id}", "GET") not in limited
 
 

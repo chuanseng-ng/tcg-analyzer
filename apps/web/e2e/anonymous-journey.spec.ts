@@ -238,3 +238,69 @@ test("a user who kept their code reports the grade the card actually got", async
   );
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+/**
+ * ADR 0008's approved class 4, in a browser — issue #148. A third scenario
+ * rather than an edit of either above (M9's rule): this one never reaches
+ * `/results`, because consent is asked and acted on before the analysis even
+ * runs, and what it protects is the promise that the code is shown once and
+ * held nowhere.
+ *
+ * It stops at the code deliberately. Whether the photographs are still in the
+ * corpus after the sweep is a claim about two services, and
+ * `services/api/tests/test_training_consent.py` makes it where both are real;
+ * a browser can only see what a browser is told.
+ */
+test("a user who says yes gets a code, and can take the photographs back", async ({ page }) => {
+  await page.goto("/analyze");
+  await page.getByLabel(/Add the front/).setInputFiles(fixture("front.jpg"));
+  await page.getByLabel(/Add the back/).setInputFiles(fixture("back.jpg"));
+
+  // Answered before the button that sends anything — the page's own promise is
+  // that nothing leaves the device until then.
+  const consent = page.getByRole("checkbox", { name: /keep these photographs/i });
+  await expect(consent).not.toBeChecked();
+  await consent.check();
+  await page.getByRole("button", { name: "Use these photographs" }).click();
+
+  await expect(page.getByText("Write this code down.")).toBeVisible();
+  const code = (await page.locator("[data-withdrawal-code]").innerText()).trim();
+  expect(code).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){3}$/);
+
+  // The rows keep a sha256 and could not revoke a copy, so this app holding one
+  // anywhere that outlives the tab would be handing out an authority nothing
+  // can take back.
+  const stores = await page.evaluate(() => ({
+    session: JSON.stringify(window.sessionStorage),
+    local: JSON.stringify(window.localStorage),
+    url: window.location.href,
+  }));
+  expect(stores.session).not.toContain(code);
+  expect(stores.local).not.toContain(code);
+  expect(stores.url).not.toContain(code);
+
+  // Nothing goes forward until the code is acknowledged: one tap would unmount
+  // the only thing holding it.
+  await expect(page.getByRole("button", { name: "Choose which card this is" })).toHaveCount(0);
+  await page.getByRole("button", { name: "I have written it down" }).click();
+  await expect(page.getByRole("button", { name: "Choose which card this is" })).toBeVisible();
+
+  // --- Weeks later, in a browser with no session at all. ---------------------
+  await page.context().clearCookies();
+  await page.goto("/consent");
+  await page.getByLabel("Your code").fill(code);
+  await page.getByRole("button", { name: "Withdraw" }).click();
+
+  await expect(page.getByRole("heading", { name: /photographs are gone/i })).toBeVisible();
+
+  // --- The code is spent: the same page an unknown one gets. -----------------
+  await page.goto("/consent");
+  await page.getByLabel("Your code").fill(code);
+  await page.getByRole("button", { name: "Withdraw" }).click();
+  await expect(page.getByText("No photographs are kept under that code.")).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});

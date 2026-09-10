@@ -194,6 +194,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/analyses/{analysis_id}/training-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep this analysis's photographs for training
+         * @description ADR 0008's approved source class 4. Copies the photographs this analysis stored into the training corpus under spec §29's nine fields — filled at this moment, from the person consenting, with `redistribution_allowed` `false` — and returns the code that withdraws them.
+         *
+         *     **A copy, not an exemption.** The photographs the analysis used are still deleted with the session at seven days, and no retention sweep was taught to skip anything: `docs/retention.md` says a photograph is kept because a row says so, and this is that row.
+         *
+         *     **The code appears in this body and nowhere else, ever.** Only its sha256 is stored, and it is never logged. A lost code is a photograph nobody can take back, deliberately: the alternative is keeping something that identifies who sent it.
+         *
+         *     **Once per analysis.** A second request is a 409 — the same photographs cannot enter the corpus twice (`uq_training_images_sha256`), and the code was shown once and cannot be reproduced. That constraint is on the bytes rather than on the analysis, so the identical file consented to twice is also a 409.
+         */
+        post: operations["keep_photographs_analyses__analysis_id__training_consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/cards/search": {
         parameters: {
             query?: never;
@@ -457,6 +483,52 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/training-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a user is asked before a photograph is kept
+         * @description The words themselves, and the version they are recorded under. Render them verbatim beside an **unchecked** control: ADR 0008 admits a photograph only where consent is positively recorded, so a pre-ticked box, a default, or a summary that dropped a clause would each record a grant nobody made.
+         *
+         *     Slow-moving reference data — `Cache-Control: public, max-age=3600`. Not rate-limited, for `GET /grading-companies`' reason: it is the same answer for everybody and carries nothing about anybody.
+         */
+        get: operations["read_consent_text_training_consent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/training-consent/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw a consent, and delete what it kept
+         * @description **Reads no session cookie**, and needs none: weeks later it has expired, the tab is closed, and spec §53 forbids the account that would otherwise carry the identity. The code is the whole of the authorisation.
+         *
+         *     Deletes every photograph the code names, bytes and row together, **except any a published dataset version already names** — spec §31 makes a version an immutable record of what a model was trained on, so one inside a version stays and is counted in `kept`. The consent text says this before anybody agrees to it.
+         *
+         *     **Unknown, mistyped and already-withdrawn are one bare 404.** A page able to tell them apart would tell a guesser their code was real. There is no read route to check a code with first, for the same reason.
+         */
+        delete: operations["withdraw_consent_training_consent__code__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1356,6 +1428,23 @@ export interface components {
          * @enum {string}
          */
         ConditionVerdict: "clear" | "detected" | "undetermined";
+        /**
+         * ConsentTextResponse
+         * @description What a user is asked, and which version of the asking it is.
+         */
+        ConsentTextResponse: {
+            /**
+             * Paragraphs
+             * @description The whole of the request, in order, to be rendered verbatim. Do not summarise it, and do not keep a copy: ADR 0008's interpretive rule 1 is that silence is not a grant, so a paraphrase that dropped the sentence about derivative use would not have asked for it.
+             */
+            paragraphs: string[];
+            /**
+             * Version
+             * @description Recorded as spec §29's `license` on every photograph consented to under these words. A single word changing is a new version, because a row has to say which words its grantor actually read.
+             * @example user-upload-consent-v1.0.0
+             */
+            version: string;
+        };
         /**
          * CornerLabel
          * @description Spec §14's potential corner labels, in the specification's order.
@@ -2845,6 +2934,48 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * WithdrawalCodeResponse
+         * @description The code, in the only place it will ever appear.
+         */
+        WithdrawalCodeResponse: {
+            /**
+             * Consent Version
+             * @description The version of the text these photographs were kept under.
+             * @example user-upload-consent-v1.0.0
+             */
+            consent_version: string;
+            /**
+             * Photographs Kept
+             * @description How many photographs are now in the corpus under this code.
+             * @example 2
+             */
+            photographs_kept: number;
+            /**
+             * Withdrawal Code
+             * @description Shown once, in this body, and nowhere else ever. The rows store only its sha256 and cannot produce it again, and it is never logged. Write it down: it is the only way to withdraw, because spec §54 deletes the session that would otherwise identify these photographs.
+             * @example A3KDM-9F2QT-BXWR7-N0HJ5
+             */
+            withdrawal_code: string;
+        };
+        /**
+         * WithdrawalResponse
+         * @description What a withdrawal reached, and what it could not.
+         */
+        WithdrawalResponse: {
+            /**
+             * Deleted
+             * @description Photographs deleted, bytes and row together.
+             * @example 2
+             */
+            deleted: number;
+            /**
+             * Kept
+             * @description Photographs a published dataset version already names, which stay. Spec §31 makes a version an immutable record of what a model was trained on, and the consent text says so before anybody agrees to it.
+             * @example 0
+             */
+            kept: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -3381,6 +3512,77 @@ export interface operations {
                 };
             };
             /** @description The analysis store or the job queue could not be reached. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    keep_photographs_analyses__analysis_id__training_consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier `POST /analyses` answered with. */
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawalCodeResponse"];
+                };
+            };
+            /** @description No analysis is recorded under that identifier — for this caller. The bare 404 `GET /analyses/{id}` answers with. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The analysis has stored no photograph, or these photographs are already in the corpus. Outside the spec §66 taxonomy, which has no code meaning 'conflict'. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A store would not answer. `details.reason` names which: `analysis_store_unreachable`, `dataset_store_unreachable` or `image_store_unreachable`. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -4081,6 +4283,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+        };
+    };
+    read_consent_text_training_consent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentTextResponse"];
+                };
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    withdraw_consent_training_consent__code__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The code minted when the photographs were kept. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawalResponse"];
+                };
+            };
+            /** @description No photographs are kept under that code — unknown, mistyped, or already withdrawn, told apart nowhere. Deliberately outside the spec §66 taxonomy, as every analysis-route 404 is. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Too many requests from this client (spec §55). Carries `Retry-After`. Outside the spec §66 taxonomy — see ADR 0005. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request failed. `code` classifies it; see spec §66. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A store would not answer. `details.reason` names which: `dataset_store_unreachable` or `image_store_unreachable`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

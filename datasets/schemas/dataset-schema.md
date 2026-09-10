@@ -60,6 +60,13 @@ is honestly coarse beats one that is confidently wrong. If the consent mechanism
 turns out to carry something that identifies a copy, that is a refinement of this
 row rather than a correction of it.
 
+**The consent mechanism landed at #148 and carries nothing that identifies a
+copy**, which settles the last sentence above rather than reopening it. It asks
+on the upload screen, before spec §19's gate has run and before the card is
+confirmed, because that is the earliest honest moment to ask — so a class-4 row
+carries no `card_id` either, and `source_reference` is filled with the analysis
+identifier exactly as this section anticipated.
+
 ## `training_images` — one image and the rights that came with it
 
 Spec §29's nine fields are columns on this row, beside the digest, which is what
@@ -79,8 +86,36 @@ remember to call.
 | `acquired_at` | `acquired_at` | When the photograph was taken, not when the row was written. |
 
 Beside them: `physical_copy_id`, `card_id`, `side`, `original_uri`, `sha256`,
-`mime_type`, `width`, `height`, `normalized_uri`, `normalization_details` and
-`created_at`.
+`mime_type`, `width`, `height`, `normalized_uri`, `normalization_details`,
+`withdrawal_code_hash` and `created_at`.
+
+### The withdrawal digest, and why it is on this table
+
+`withdrawal_code_hash` is class 4's answer to a question the other three classes
+answer elsewhere, and it is NULL on all of them. Classes 1 and 2 are photographs
+this project took; class 3 withdraws through the grant reference already in
+`source_reference`, which an operator matches by hand. **A consented upload has
+neither.** Spec §54 deletes the session that produced it — deliberately, so a
+per-browser identifier is not kept forever — and spec §53 forbids the account
+that would replace it, so at the moment consent is given there is nothing left
+to reach the row through afterwards.
+
+So the row carries the reach itself: a bearer capability minted by
+`tcg_api.codes` (#270's, deliberately outside `tcg_api/feedback/` so this domain
+can use it), shown to the user once and stored **only as a sha256**. The column
+takes `sha256`'s own grammar, and that CHECK is what makes storing a code
+impossible rather than merely discouraged: `codes.render` produces upper-case
+Crockford base32 and the constraint admits lowercase hex, so the two alphabets
+are disjoint by construction.
+
+It is not unique — one consent covers the front and the back of one card — so
+the index over it is a plain partial one. Withdrawal reads the pair
+`(original_uri, normalized_uri)` for every row under a digest, deletes the
+objects, then the rows; `dataset_members.training_image_id` is `RESTRICT`, so an
+image a published version names stays and is reported as staying. Nothing
+records that a withdrawal happened: when the last row goes the code resolves to
+nothing, and a row kept to remember a person's decision is the identifier §53
+argues against wearing a second costume.
 
 ### The artifact, and why it is a column
 

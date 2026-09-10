@@ -301,10 +301,52 @@ issues `authentic` in place of one. Nothing here retrains anything: §68 puts a
 validation step in between, and that step is an operator running
 `tcg-review-grade-feedback` by hand.
 
-The eight limited endpoints — `POST /analyses`, `POST /analyses/{id}/images`,
+`GET /training-consent` serves the words a user is asked before a photograph is
+kept for training, and the version they are recorded under. **Render them
+verbatim beside an unchecked control.** ADR 0008 admits a photograph only where
+consent is positively recorded, so a pre-ticked box, a default, or a summary
+that dropped a clause would each record a grant nobody made — and its
+interpretive rule 1, *silence is not a grant*, binds a document this project
+wrote as firmly as anyone else's. Spec §29's `license` for this class **is the
+consent text by version**, which is why the text is served rather than kept in
+`apps/web`: a client copy is a second answer, free to drift from what a row says
+its grantor read. Slow-moving reference data, `public, max-age=3600`, and not
+rate-limited — it is the same answer for everybody and carries nothing about
+anybody.
+
+`POST /analyses/{id}/training-consent` acts on a yes. It copies the photographs
+this analysis stored into the training corpus under spec §29's nine fields,
+filled at that moment from the person consenting, with `redistribution_allowed`
+**`false`** — and answers 201 with the code that withdraws them. **A copy, not
+an exemption:** the photographs the analysis used are still deleted with the
+session at seven days, and no retention sweep was taught to skip anything, which
+is [Retention and expiry](retention.md)'s rule that a photograph is kept because
+a row says so. The code appears in that body and **nowhere else, ever** — only
+its sha256 is stored, and it is never logged — because spec §54 deletes the
+session that would otherwise identify these photographs, and spec §53 forbids
+the account that would replace it. **Once per analysis:** a second request is a
+409, since the same bytes cannot enter the corpus twice
+(`uq_training_images_sha256`). That constraint is on the bytes rather than on
+the analysis, so the identical file consented to twice is also a 409. Declining
+sends no request at all, which is what *declining costs nothing* means here:
+there is no row recording that somebody said no.
+
+`DELETE /training-consent/{code}` is the way back, and **reads no session
+cookie** for `/feedback/{code}`'s reason. It deletes every photograph the code
+names, bytes and row together, **except any a published dataset version already
+names** — spec §31 makes a version an immutable record of what a model was
+trained on, `dataset_members.training_image_id` is `RESTRICT`, and the consent
+text says so before anybody agrees to it; those are counted in `kept`.
+**Unknown, mistyped and already-withdrawn are one bare 404**, and there is
+deliberately **no read route for a code**: one would let somebody holding a
+guess find out whether it was real without spending it.
+
+The ten limited endpoints — `POST /analyses`, `POST /analyses/{id}/images`,
 `POST /analyses/{id}/confirm-card`, `POST /analyses/{id}/run`,
 `POST /analyses/{id}/economic-configuration`, `POST /analyses/{id}/feedback`,
-`GET /feedback/{code}` and `POST /feedback/{code}` — are rate-limited
+`GET /feedback/{code}`, `POST /feedback/{code}`,
+`POST /analyses/{id}/training-consent` and `DELETE /training-consent/{code}` —
+are rate-limited
 per client address (spec §55, which names analysis endpoints *and* image
 uploads), `TCG_API_RATE_LIMIT_REQUESTS` per
 `TCG_API_RATE_LIMIT_WINDOW_SECONDS`, counted in the same Redis the job queue
@@ -321,7 +363,8 @@ it can classify rather than as a network outage. Polling
 `GET /feedback/{code}` is the one **read** that is, and the exception is
 deliberate: its path parameter is a bearer capability, so a hundred bits of
 entropy is what makes a guess worthless and the limiter is what bounds how many
-guesses there are. With
+guesses there are. `DELETE /training-consent/{code}` is limited on the same
+reasoning, and `GET /training-consent` is not limited at all. With
 `TCG_API_REDIS_URL` unset, or Redis unreachable, the limiter lets requests
 through rather than refusing them. The OpenAPI schema is at `/openapi.json`
 and the interactive documentation at `/docs`. Settings are read from `TCG_API_`-prefixed environment variables or
@@ -341,11 +384,11 @@ a Postgres outage without correlating timestamps.
 | `no_catalog_version_registered` | `/catalog/version` with an empty `card_database_versions` |
 | `grading_rules_unreachable` | `/grading-companies` — the 503 carries no cache header |
 | `analysis_store_unreachable` | any analysis read or write |
-| `image_store_unreachable` | the object store, on upload and on the annotation bytes route |
+| `image_store_unreachable` | the object store, on upload, on the annotation bytes route, and where a consented photograph is copied into the corpus or deleted out of it |
 | `job_queue_unreachable` | `POST /analyses/{id}/run` with Redis down or unset — deliberately not the analysis store's reason |
 | `market_store_unreachable` | `/cards/{id}/market`, and `/analyses/{id}/results` reading the analysis's snapshot and its prices — deliberately not `market_data_unreachable`, since the market route also raises §66's `market_data_unavailable`, and the two must stay unmistakable in a log |
 | `economic_configuration_store_unreachable` | `POST /analyses/{id}/economic-configuration` |
-| `dataset_store_unreachable` | the `/internal/annotation` routes |
+| `dataset_store_unreachable` | the `/internal/annotation` routes, and the two training-consent writes (#148) |
 | `feedback_store_unreachable` | the three spec §68 feedback routes (#270) |
 | `stored_object_missing` | an annotation row naming bytes the store does not hold — a **500** `internal_error`, not a 503, because two stores disagreeing will not come right on a retry |
 
@@ -385,7 +428,13 @@ because both report a freshness figure computed at the moment of asking, and a
 cached body would report an age frozen when it was built. The annotation bytes
 are `private, no-store`, and so are the two `/feedback/{code}` routes — a bearer
 capability travels in that path, and a shared cache holding the body would
-answer for whoever asked next. Everything else sends no cache header at all.
+answer for whoever asked next. `POST /analyses/{id}/training-consent` and
+`DELETE /training-consent/{code}` are `no-store` for that reason too: one hands
+back a code and the other names what somebody consented to. `GET
+/training-consent` is the second `public, max-age=3600` body, and its version is
+what makes that safe — different words are a different version, so a cached body
+cannot misrepresent what a later row says its grantor agreed to. Everything else
+sends no cache header at all.
 
 `/internal/annotation` is **not part of spec §64**. §64's endpoints are the
 consumer product; this is the internal surface `apps/annotation` reads — a work

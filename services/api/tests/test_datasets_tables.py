@@ -65,6 +65,8 @@ REPRESENTATION_MIGRATION = VERSIONS / "20260829_name_the_representation_an_annot
 #: CHECKs to the declaration below, which is the drift `compare_metadata` cannot
 #: see.
 OUTCOMES_MIGRATION = VERSIONS / "20260901_record_a_grading_submissions_outcome.py"
+#: #148's withdrawal digest landed in a sixth, and is read by the same search.
+CONSENT_MIGRATION = VERSIONS / "20260910_record_a_consent_to_keep_a_photograph.py"
 
 #: Spec §29's list, verbatim apart from `source_url/reference`, which the
 #: specification spells with a slash and no column may.
@@ -99,6 +101,7 @@ COMPOSED_CHECKS = (
     "ck_grading_outcomes_designation_is_a_known_designation",
     "ck_grading_outcomes_grade_is_an_issued_grade",
     "ck_grading_outcomes_subgrades_are_issued_grades",
+    "ck_training_images_withdrawal_code_is_stored_as_a_digest",
 )
 
 
@@ -112,6 +115,7 @@ def migration_source() -> str:
             ANNOTATION_MIGRATION,
             REPRESENTATION_MIGRATION,
             OUTCOMES_MIGRATION,
+            CONSENT_MIGRATION,
         )
     )
 
@@ -137,6 +141,12 @@ def fingerprints_migration() -> ModuleType:
 def annotation_migration() -> ModuleType:
     """#158's revision, likewise."""
     return _imported("annotation_migration", ANNOTATION_MIGRATION)
+
+
+@pytest.fixture(scope="module")
+def consent_migration() -> ModuleType:
+    """#148's revision, likewise."""
+    return _imported("consent_migration", CONSENT_MIGRATION)
 
 
 def _imported(name: str, path: Path) -> ModuleType:
@@ -393,6 +403,23 @@ def test_the_migration_and_the_declaration_share_the_gate(migration: ModuleType)
     assert f"version ~ '{migration.VERSION_PATTERN}'" == one_check(
         dataset_versions, "version_is_an_explicit_identifier"
     )
+
+
+def test_the_migration_and_the_declaration_share_the_withdrawal_digest(
+    consent_migration: ModuleType,
+) -> None:
+    """#148's CHECK, by value, for the reason the gate is compared by value.
+
+    A digest column whose CHECK had been widened to admit any text would let a
+    withdrawal code be stored as itself, and the whole point of the column is
+    that it cannot be: `tcg_api.codes.render` produces upper-case Crockford
+    base32, and lowercase hex is disjoint from it.
+    """
+    assert (
+        one_check(training_images, "withdrawal_code_is_stored_as_a_digest")
+        == consent_migration.WITHDRAWAL_CODE_IS_A_DIGEST
+    )
+    assert consent_migration.SHA256_PATTERN == "^[0-9a-f]{64}$"
 
 
 def test_the_migration_creates_both_triggers_and_one_function() -> None:

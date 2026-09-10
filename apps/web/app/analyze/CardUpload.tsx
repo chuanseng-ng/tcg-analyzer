@@ -7,13 +7,18 @@ import { forgetAnalysis, rememberAnalysis } from "@/lib/analysis-session";
 import { isFailed, type AnalysisStatus } from "@/lib/analysis-state";
 import {
   ApiError,
+  getConsentText,
+  grantTrainingConsent,
   readAnalysis,
   runAnalysis,
   startAnalysis,
   uploadImage,
   type AnalysisResponse,
+  type ConsentTextResponse,
   type UploadSide,
+  type WithdrawalCodeResponse,
 } from "@/lib/api";
+import { classifyConsentFailure, type ConsentFailure } from "@/lib/consent-errors";
 import { concerning, faultsIn, isUnusable, nameOf } from "@/lib/quality-copy";
 import { classifyUploadFailure, type UploadFailure } from "@/lib/upload-errors";
 import {
@@ -119,6 +124,14 @@ export function CardUpload() {
   const [failure, setFailure] = useState<UploadFailure | null>(null);
   const [waitSeconds, setWaitSeconds] = useState(0);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  // The consent question (#148, ADR 0008). `wanted` starts false and is never
+  // defaulted: the gate admits a photograph only where consent was positively
+  // recorded, so a pre-ticked box would record a grant nobody made.
+  const [consentText, setConsentText] = useState<ConsentTextResponse | null>(null);
+  const [wanted, setWanted] = useState(false);
+  const [kept, setKept] = useState<WithdrawalCodeResponse | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [consentFailure, setConsentFailure] = useState<ConsentFailure | null>(null);
   const router = useRouter();
 
   // Every object URL this component has minted. Revoked on replacement, on
@@ -132,6 +145,19 @@ export function CardUpload() {
       for (const url of urls) URL.revokeObjectURL(url);
       urls.clear();
     };
+  }, []);
+
+  // The words are fetched rather than written into this app: spec §29's
+  // `license` for this class *is* the consent text by version, so a copy here
+  // would be a second answer free to drift from what a row says its grantor
+  // read. If they cannot be loaded the question is simply not asked — nobody
+  // can consent to text they were not shown.
+  useEffect(() => {
+    const controller = new AbortController();
+    getConsentText(controller.signal)
+      .then(setConsentText)
+      .catch(() => setConsentText(null));
+    return () => controller.abort();
   }, []);
 
   // The §55 rate limiter answers with `Retry-After` and nothing else useful, so
@@ -198,6 +224,10 @@ export function CardUpload() {
     forgetAnalysis();
     setFailure(null);
     setVerdict(null);
+    // Not `kept`: starting over is unreachable while a code is on screen, and
+    // once it has been acknowledged the code is gone from this app anyway.
+    setWanted(false);
+    setConsentFailure(null);
   }, [dropPreview]);
 
   const send = useCallback(async () => {
@@ -247,6 +277,22 @@ export function CardUpload() {
           [side]: { status: "stored", file, previewUrl, image },
         }));
       }
+
+      // Both sides are stored, so there is something to consent to. Guarded on
+      // the code rather than on reaching here: "Send the rest" re-runs this
+      // whole function after a partial failure, and a second call would be the
+      // 409 that says the photographs are already kept.
+      if (wanted && kept === null) {
+        try {
+          setKept(await grantTrainingConsent(id));
+          setConsentFailure(null);
+        } catch (error: unknown) {
+          // Never rethrown into the upload's own failure path. Consent is
+          // optional, and an analysis that stopped because it failed would have
+          // made saying yes expensive — which is the opposite of the promise.
+          setConsentFailure(classifyConsentFailure(error));
+        }
+      }
     } catch (error: unknown) {
       const classified = classifyUploadFailure(error);
       setFailure(classified);
@@ -259,7 +305,7 @@ export function CardUpload() {
     } finally {
       setBusy(false);
     }
-  }, [analysisId, slots]);
+  }, [analysisId, kept, slots, wanted]);
 
   const chooseCard = useCallback(async () => {
     if (analysisId === null) return;
@@ -318,6 +364,9 @@ export function CardUpload() {
   const ready = SIDES.every((side) => slots[side].status !== "empty");
   const stored = SIDES.every((side) => slots[side].status === "stored");
   const started = analysisId !== null;
+  // A code is shown once and this app is the only thing holding it, so nothing
+  // else on the screen may take the user past it until they say they have it.
+  const holding = kept !== null && !acknowledged;
 
   return (
     <div className={styles.upload}>
@@ -341,20 +390,33 @@ export function CardUpload() {
         ))}
       </div>
 
+      {!stored && consentText !== null && (
+        <ConsentQuestion text={consentText} checked={wanted} disabled={busy} onChange={setWanted} />
+      )}
+
       {failure !== null && <Failure failure={failure} waitSeconds={waitSeconds} />}
+
+      {consentFailure !== null && (
+        <p className={styles.note} role="alert">
+          {consentFailure.message} Your photographs were stored for the analysis, and nothing was
+          kept for training.
+        </p>
+      )}
 
       {verdict !== null && (
         <QualityVerdict verdict={verdict} onContinue={() => router.push("/cards")} />
       )}
 
-      {stored ? (
+      {holding && <WithdrawalCode kept={kept} onAcknowledge={() => setAcknowledged(true)} />}
+
+      {stored && !holding ? (
         <Stored
           busy={busy}
           judged={verdict !== null}
           onChooseCard={() => void chooseCard()}
           onStartOver={startOver}
         />
-      ) : (
+      ) : holding ? null : (
         <div className={styles.actions}>
           <button
             className={styles.send}
@@ -397,6 +459,111 @@ async function settled(analysisId: string): Promise<AnalysisResponse | null> {
     await new Promise((resolve) => setTimeout(resolve, VERDICT_POLL_INTERVAL_MS));
   }
   return null;
+}
+
+/**
+ * Spec §29's question, asked before anything is sent — #148, ADR 0008 class 4.
+ *
+ * **The paragraphs are the server's, rendered verbatim.** They are the licence:
+ * §29's `license` for this class is the consent text *by version*, and the row a
+ * yes writes records that version. A summary here, or a paraphrase that dropped
+ * the sentence about derivative use, would record a grant nobody made — ADR
+ * 0008's interpretive rule 1 is that silence is not a grant, and it binds a
+ * document this project wrote as firmly as anyone else's.
+ *
+ * **The box starts unchecked and is never defaulted.** The ingestion gate admits
+ * a photograph only where consent is positively recorded, so a null, an absent
+ * answer and a pre-ticked box are one answer and it is refusal.
+ *
+ * It sits above "Use these photographs" because that button is the moment bytes
+ * leave the device, and the lede's promise — nothing is sent until you choose to
+ * send it — is only true if the question was answered first.
+ */
+function ConsentQuestion({
+  text,
+  checked,
+  disabled,
+  onChange,
+}: {
+  readonly text: ConsentTextResponse;
+  readonly checked: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <section className={styles.consent} aria-labelledby="consent-heading">
+      <h2 className={styles.consentHeading} id="consent-heading">
+        May we keep these photographs?
+      </h2>
+      {text.paragraphs.map((paragraph) => (
+        <p className={styles.note} key={paragraph}>
+          {paragraph}
+        </p>
+      ))}
+      <label className={styles.consentChoice}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span>Yes — keep these photographs and use them to train this product&rsquo;s models.</span>
+      </label>
+    </section>
+  );
+}
+
+/**
+ * The withdrawal code, shown once, and the gate that stops it being lost.
+ *
+ * **This app is the only thing holding it.** The rows store a sha256, no route
+ * returns it again, and spec §54 has already deleted — or is about to delete —
+ * the session that would otherwise identify the photographs. So it lives in
+ * component state and nowhere else: not `sessionStorage`, not `localStorage`,
+ * not the URL, each of which would outlive the tab and none of which any row
+ * could revoke a copy from.
+ *
+ * **Nothing else on the screen is reachable until the user says they have it.**
+ * The forward action is one tap away and would unmount this component with it,
+ * so acknowledging is the gate rather than a courtesy — `FeedbackOffer` can be
+ * gentler because `/results` is a screen people stay on.
+ */
+function WithdrawalCode({
+  kept,
+  onAcknowledge,
+}: {
+  readonly kept: WithdrawalCodeResponse;
+  readonly onAcknowledge: () => void;
+}) {
+  const heading = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
+
+  return (
+    <div className={styles.keptCode} role="alert">
+      <p className={styles.keptHeading} ref={heading} tabIndex={-1}>
+        Write this code down.
+      </p>
+      <p className={styles.code} data-withdrawal-code>
+        {kept.withdrawal_code}
+      </p>
+      <p className={styles.note}>
+        It is the only way to change your mind, and it will not be shown again — not on this page,
+        not by us. We keep nothing that says who you are, so there is no other way to find your{" "}
+        {kept.photographs_kept === 1 ? "photograph" : "photographs"} again.
+      </p>
+      <p className={styles.note}>
+        To withdraw, enter it on the withdrawal page at <code>/consent</code>. Everything you gave
+        us is deleted, except anything already inside a published training set. It is deliberately
+        not a link: following one now would take this code off the screen.
+      </p>
+      <button className={styles.send} type="button" onClick={onAcknowledge}>
+        I have written it down
+      </button>
+    </div>
+  );
 }
 
 /** An upload that did not finish keeps its photograph, ready to be sent again. */

@@ -292,3 +292,48 @@ Supporting observations:
 - **Wikimedia Commons corroborates the artwork layer from outside this project.** A project whose purpose is free reuse *"does not accept"* photographs of copyrighted items, holding that *"a photograph of a copyrighted item is considered a derivative work in US jurisdiction"* and naming action figures and toys. It has no stake in this decision's outcome.
 - A gap §29 does not cover, found while filling it in: **none of its nine fields identifies the physical copy**, which §32 needs to group a leakage-safe split. A certification number serves for classes 1 and 2 and nothing serves for classes 3 and 4. That belongs to the dataset schema, and it is M6's to close.
 - Ten risks are recorded, R1–R10. Three are standing and are not to be chased; two — the consent mechanism and the written licence — are the only ones whose resolution would change what the corpus can contain.
+
+## Addendum — 2026-09-10 (#148)
+
+**Approved class 4 supplies images now, and risk R5 is closed.** The Decision
+approved this product's own user uploads *"in principle and supplying nothing"*
+until two things existed: a consent mechanism compatible with spec §53, and a
+documented exception to spec §54's retention sweep. Both landed at #148, and
+this addendum records what they turned out to be rather than restating the
+approval, which is unchanged.
+
+**Consent is asked per analysis, on the upload screen, before anything is
+sent.** Not per session: a consent stored against a browser would be the
+standing per-browser record §53 argues against, and the issue's own reading —
+per analysis is more honest about what is being agreed to — is what a user is
+shown. Declining makes no request at all, so there is no row saying somebody
+said no.
+
+**The consent text is the licence, and the version is how a row says which
+words it means.** §29's `license` for this class holds `user-upload-consent-vX.Y.Z`,
+the text is served by the API rather than kept in the browser, and a single word
+moving is a new version. Interpretive rule 1 is why it names derivative use
+outright instead of asking to "improve the product": a trained model is a
+derivative work of what it was trained on, and `derivative_use_allowed = true`
+rests on those words being on the screen.
+
+**The retention exception is not an exception to any sweep**, which is what
+`docs/retention.md` demanded of it: consenting *copies* the photograph into the
+corpus namespace, and the photograph the analysis used is still deleted with its
+session on day seven. Nothing was taught to skip anything.
+
+**Withdrawal is a bearer capability, and it reaches what clause 6 of the class-3
+grant template reaches.** §54 deletes the session, so a code minted at the moment
+of consent and shown once is the only thing that can address the rows afterwards;
+only its sha256 is stored. It deletes every photograph it names that no published
+dataset version has frozen, which is §31 enforced by `RESTRICT` rather than
+remembered — and the consent text says so before anybody agrees to it, for the
+reason the grant template gives: *we would rather you knew that before signing
+than discovered it afterwards.*
+
+**What this does not change.** The four approved sources are still four, and the
+rights table above still holds — `redistribution_allowed` is `false` here as it
+is everywhere, because the artwork is not the person who consented's to grant
+either. R1 still stands. And the class still carries **no grade, permanently**:
+the user is asking what grade the card might get, which is the product. Class 4
+can never be the only source, and the register's asymmetry is why.

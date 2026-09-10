@@ -165,6 +165,32 @@ export type MarketSnapshotReference = components["schemas"]["MarketSnapshotRefer
 export type UploadSide =
   operations["upload_image_analyses__analysis_id__images_post"]["parameters"]["query"]["side"];
 
+/**
+ * What a user is asked before a photograph is kept for training (#148, ADR 0008).
+ *
+ * Rendered verbatim beside an unchecked control. The `version` is what a row
+ * records as spec §29's `license`, so the words and the version travel together
+ * and a summary of them would be a grant nobody made.
+ */
+export type ConsentTextResponse = components["schemas"]["ConsentTextResponse"];
+
+/**
+ * The withdrawal code, in the only response that will ever carry it.
+ *
+ * The rows store its sha256 and cannot reproduce it, and §54 has deleted the
+ * session that would otherwise identify the photographs — so this response is
+ * the whole of the user's way back. Component state only.
+ */
+export type WithdrawalCodeResponse = components["schemas"]["WithdrawalCodeResponse"];
+
+/**
+ * What a withdrawal reached, and what a published dataset version held back.
+ *
+ * `kept` is not an error: spec §31 makes a version immutable, and the consent
+ * text says so before anybody agrees to it.
+ */
+export type WithdrawalResponse = components["schemas"]["WithdrawalResponse"];
+
 /** The spec §66 code an {@link ApiError} carries when the body named one. */
 export type ErrorCode = components["schemas"]["ErrorCode"];
 
@@ -344,6 +370,34 @@ function isReturnCodeResponse(payload: unknown): payload is ReturnCodeResponse {
   return typeof payload.return_code === "string" && typeof payload.expires_at === "string";
 }
 
+function isConsentTextResponse(payload: unknown): payload is ConsentTextResponse {
+  if (!isRecord(payload) || !Array.isArray(payload.paragraphs)) {
+    return false;
+  }
+  return (
+    typeof payload.version === "string" &&
+    payload.paragraphs.every((paragraph) => typeof paragraph === "string")
+  );
+}
+
+function isWithdrawalCodeResponse(payload: unknown): payload is WithdrawalCodeResponse {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return (
+    typeof payload.withdrawal_code === "string" &&
+    typeof payload.consent_version === "string" &&
+    typeof payload.photographs_kept === "number"
+  );
+}
+
+function isWithdrawalResponse(payload: unknown): payload is WithdrawalResponse {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  return typeof payload.deleted === "number" && typeof payload.kept === "number";
+}
+
 function isFeedbackSnapshotResponse(payload: unknown): payload is FeedbackSnapshotResponse {
   if (!isRecord(payload) || !isRecord(payload.predictions)) {
     return false;
@@ -490,8 +544,12 @@ async function readFailure(response: Response): Promise<ApiErrorOptions> {
 interface JsonRequest<T> {
   /** Absolute URL, already carrying its query string. */
   readonly url: string;
-  /** Defaults to GET; every catalog read is one. */
-  readonly method?: "GET" | "POST";
+  /**
+   * Defaults to GET; every catalog read is one. `DELETE` joined the union at
+   * #148, for the one route that undoes something a user asked for rather than
+   * recording something new.
+   */
+  readonly method?: "GET" | "POST" | "DELETE";
   /**
    * `"include"` for anything scoped to the anonymous session, so the browser
    * sends and stores the HTTP-only `tcg_session` cookie `POST /analyses` issues
@@ -823,6 +881,81 @@ export async function submitFeedback(
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     isPayload: isReportedGradeResponse,
     payloadName: "reported grade",
+  });
+}
+
+/**
+ * `GET /training-consent` — the words a user is asked, and their version (#148).
+ *
+ * **Render them verbatim, beside an unchecked control.** ADR 0008 admits a
+ * photograph only where consent is positively recorded, so a pre-ticked box or a
+ * summary that dropped a clause would record a grant nobody made. They are
+ * fetched rather than written into this app because spec §29's `license` for
+ * this class *is* the text by version: a copy here would be a second answer,
+ * free to drift from what a row says its grantor read.
+ *
+ * No credentials — it is the same words for everybody and names nobody.
+ */
+export async function getConsentText(signal?: AbortSignal): Promise<ConsentTextResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/training-consent`,
+    signal,
+    timeoutMs: CATALOG_TIMEOUT_MS,
+    isPayload: isConsentTextResponse,
+    payloadName: "consent text",
+  });
+}
+
+/**
+ * `POST /analyses/{id}/training-consent` — keep these photographs (#148).
+ *
+ * **The code is in this response and in no other, ever**, for
+ * {@link mintFeedback}'s reason and one more: spec §54 deletes the session that
+ * would otherwise identify the photographs, so there is nothing else to find
+ * them by. A caller shows it and keeps it in component state — never
+ * `sessionStorage`, `localStorage` or a URL.
+ *
+ * Session-scoped like every other analysis write, and once per analysis: a
+ * second call is a 409 meaning "they are already kept", not "try again".
+ * Calling it at all is the consent; not calling it costs the user nothing.
+ */
+export async function grantTrainingConsent(
+  analysisId: string,
+  signal?: AbortSignal,
+): Promise<WithdrawalCodeResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/analyses/${encodeURIComponent(analysisId)}/training-consent`,
+    method: "POST",
+    credentials: "include",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isWithdrawalCodeResponse,
+    payloadName: "withdrawal code",
+  });
+}
+
+/**
+ * `DELETE /training-consent/{code}` — take the photographs back (#148).
+ *
+ * **Sent without credentials**, for {@link readFeedback}'s reason: weeks later
+ * there is no session and spec §53 forbids the account that would carry one.
+ *
+ * Unknown, mistyped and already-withdrawn are one bare 404, and there is no read
+ * route to check a code with first — one would let a guesser learn their guess
+ * was real without spending it. So a screen renders its confirmation from this
+ * response rather than re-reading afterwards.
+ */
+export async function withdrawTrainingConsent(
+  code: string,
+  signal?: AbortSignal,
+): Promise<WithdrawalResponse> {
+  return requestJson({
+    url: `${apiBaseUrl()}/training-consent/${encodeURIComponent(code)}`,
+    method: "DELETE",
+    signal,
+    timeoutMs: ANALYSIS_TIMEOUT_MS,
+    isPayload: isWithdrawalResponse,
+    payloadName: "withdrawal",
   });
 }
 

@@ -14,6 +14,8 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   uploadImage: vi.fn(),
   runAnalysis: vi.fn(),
   readAnalysis: vi.fn(),
+  getConsentText: vi.fn(),
+  grantTrainingConsent: vi.fn(),
 }));
 
 // The hand-off to the catalog is the one navigation this screen performs, and
@@ -24,11 +26,31 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
-const { startAnalysis, uploadImage, runAnalysis, readAnalysis } = await import("@/lib/api");
+const {
+  startAnalysis,
+  uploadImage,
+  runAnalysis,
+  readAnalysis,
+  getConsentText,
+  grantTrainingConsent,
+} = await import("@/lib/api");
 const startAnalysisMock = vi.mocked(startAnalysis);
 const uploadImageMock = vi.mocked(uploadImage);
 const runAnalysisMock = vi.mocked(runAnalysis);
 const readAnalysisMock = vi.mocked(readAnalysis);
+const getConsentTextMock = vi.mocked(getConsentText);
+const grantTrainingConsentMock = vi.mocked(grantTrainingConsent);
+
+/** What `GET /training-consent` serves, shortened — the words are the server's. */
+const CONSENT_TEXT = {
+  version: "user-upload-consent-v1.0.0",
+  paragraphs: [
+    "This is optional. Saying no changes nothing about your analysis.",
+    "A model trained on a photograph is something derived from it.",
+  ],
+};
+
+const WITHDRAWAL_CODE = "A3KDM-9F2QT-BXWR7-N0HJ5";
 
 const ANALYSIS_ID = "33333333-3333-3333-3333-333333333333";
 
@@ -125,6 +147,14 @@ beforeEach(() => {
   uploadImageMock.mockImplementation(({ side }) =>
     Promise.resolve(image(side, side === "front" ? "uploading" : "uploaded")),
   );
+  getConsentTextMock.mockReset();
+  getConsentTextMock.mockResolvedValue(CONSENT_TEXT);
+  grantTrainingConsentMock.mockReset();
+  grantTrainingConsentMock.mockResolvedValue({
+    withdrawal_code: WITHDRAWAL_CODE,
+    consent_version: CONSENT_TEXT.version,
+    photographs_kept: 2,
+  });
 });
 
 describe("the two slots", () => {
@@ -363,6 +393,135 @@ describe("when one side fails", () => {
     fireEvent.click(sendButton());
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The image could not be decoded.");
+  });
+});
+
+describe("the consent question", () => {
+  function consentBox(): HTMLInputElement {
+    return screen.getByRole("checkbox", { name: /keep these photographs/i });
+  }
+
+  it("is asked before anything is sent, and starts unchecked", async () => {
+    render(<CardUpload />);
+
+    await screen.findByRole("heading", { name: "May we keep these photographs?" });
+
+    // ADR 0008's gate admits a photograph only where consent is positively
+    // recorded, so a pre-ticked box would record a grant nobody made.
+    expect(consentBox().checked).toBe(false);
+    // The words are the server's, verbatim: §29's `license` for this class is
+    // the consent text by version, so a copy in this app could drift from what
+    // a row says its grantor read.
+    for (const paragraph of CONSENT_TEXT.paragraphs) {
+      expect(screen.getByText(paragraph)).toBeTruthy();
+    }
+  });
+
+  it("is not asked at all when the words cannot be loaded", async () => {
+    getConsentTextMock.mockRejectedValue(new Error("offline"));
+
+    render(<CardUpload />);
+    choose("front", photograph());
+
+    await waitFor(() => expect(getConsentTextMock).toHaveBeenCalled());
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("costs nothing to decline", async () => {
+    render(<CardUpload />);
+    await screen.findByRole("checkbox", { name: /keep these photographs/i });
+    choose("front", photograph());
+    choose("back", photograph());
+
+    fireEvent.click(sendButton());
+    await screen.findByText("Both photographs are stored.");
+
+    // Not a request that records a "no" — there is no row saying somebody
+    // declined, because a row like that is a decision kept forever.
+    expect(grantTrainingConsentMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Write this code down.")).toBeNull();
+  });
+
+  it("keeps the photographs and shows the code once when accepted", async () => {
+    render(<CardUpload />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /keep these photographs/i }));
+    choose("front", photograph());
+    choose("back", photograph());
+
+    fireEvent.click(sendButton());
+
+    await screen.findByText("Write this code down.");
+    expect(grantTrainingConsentMock).toHaveBeenCalledWith(ANALYSIS_ID);
+    expect(screen.getByText(WITHDRAWAL_CODE)).toBeTruthy();
+  });
+
+  it("keeps the code out of storage and out of the URL", async () => {
+    render(<CardUpload />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /keep these photographs/i }));
+    choose("front", photograph());
+    choose("back", photograph());
+    fireEvent.click(sendButton());
+    await screen.findByText(WITHDRAWAL_CODE);
+
+    // The rows keep a sha256 and could not revoke a copy, so this app holding
+    // one anywhere that outlives the tab would be handing out an authority
+    // nothing can take back.
+    expect(JSON.stringify(window.sessionStorage)).not.toContain(WITHDRAWAL_CODE);
+    expect(JSON.stringify(window.localStorage)).not.toContain(WITHDRAWAL_CODE);
+    expect(window.location.href).not.toContain(WITHDRAWAL_CODE);
+  });
+
+  it("holds the way forward until the code is acknowledged", async () => {
+    render(<CardUpload />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /keep these photographs/i }));
+    choose("front", photograph());
+    choose("back", photograph());
+    fireEvent.click(sendButton());
+    await screen.findByText("Write this code down.");
+
+    // One tap forward would unmount the only thing holding the code.
+    expect(screen.queryByRole("button", { name: "Choose which card this is" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "I have written it down" }));
+
+    expect(await screen.findByRole("button", { name: "Choose which card this is" })).toBeTruthy();
+    expect(screen.queryByText(WITHDRAWAL_CODE)).toBeNull();
+  });
+
+  it("does not block the analysis when keeping the photographs fails", async () => {
+    grantTrainingConsentMock.mockRejectedValue(
+      new ApiError("down", { status: 503, code: "provider_error" }),
+    );
+
+    render(<CardUpload />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /keep these photographs/i }));
+    choose("front", photograph());
+    choose("back", photograph());
+    fireEvent.click(sendButton());
+
+    await screen.findByText("Both photographs are stored.");
+    expect(screen.getByRole("alert").textContent).toContain("nothing was kept for training");
+    expect(screen.getByRole("button", { name: "Choose which card this is" })).toBeTruthy();
+  });
+
+  it("asks once even when the upload is retried", async () => {
+    uploadImageMock.mockImplementationOnce(({ side }) => Promise.resolve(image(side, "uploading")));
+    uploadImageMock.mockImplementationOnce(() => Promise.reject(new Error("network")));
+
+    render(<CardUpload />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /keep these photographs/i }));
+    choose("front", photograph());
+    choose("back", photograph());
+    fireEvent.click(sendButton());
+
+    // The back failed, so "Send the rest" re-runs the whole handler. A second
+    // request would be the 409 that says the photographs are already kept.
+    await screen.findByRole("button", { name: "Send the rest" });
+    expect(grantTrainingConsentMock).not.toHaveBeenCalled();
+
+    fireEvent.click(sendButton());
+    await screen.findByText("Write this code down.");
+    expect(grantTrainingConsentMock).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -14,8 +14,14 @@ with their `dataset_members`, and §30's `image_annotations` and
 ADR 0009's whole argument: an image nobody has the right to train on is not
 representable in this schema.
 
-**Nothing here is on the public §64 API.** The consumer product never reads a
-training image. Spec §30's annotation tool does, at `/internal/annotation` in
+`consent.py` is the exception to the paragraph below, and it is ADR 0008's
+approved class 4: a photograph a user asked us to keep, copied into the corpus
+at the moment they said so (#148). Nothing about it reaches the public API
+except the asking — the corpus it writes into is still read by nobody the
+product serves.
+
+**Nothing else here is on the public §64 API.** The consumer product never reads
+a training image. Spec §30's annotation tool does, at `/internal/annotation` in
 this same application — in this schema because ADR 0001 makes the OpenAPI
 document the only way `apps/annotation` can learn a shape, and isolated by
 deployment topology rather than by a second FastAPI application: the

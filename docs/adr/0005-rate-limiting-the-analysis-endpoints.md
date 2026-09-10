@@ -183,3 +183,30 @@ ninth limited route now has to be written down rather than merely working.
 Nothing else changes. The window, the limit, the shared bucket, the fail-open
 rule, the hashing, the 429's shape and `client_key` are all as the addendum
 above left them.
+
+## Addendum — 2026-09-10 (#148)
+
+**The limited endpoints are ten, and the second bearer capability is a delete.**
+
+ADR 0008's approved training-image class 4 added three routes.
+`POST /analyses/{id}/training-consent` is a write against an analysis and is
+limited for the Decision's original reason. `DELETE /training-consent/{code}`
+is limited for the addendum above's: its path parameter is a **bearer
+capability**, so the request asserts an authority rather than naming an
+identifier the caller already holds, and entropy alone bounds what one guess is
+worth while the limiter bounds how many guesses there are.
+
+**`GET /training-consent` is not limited**, and the distinction is the one the
+Decision draws. It serves the consent text and its version — the same words for
+everybody, carrying nothing about anybody and reachable before any session
+exists. Limiting it would throttle the question rather than the answer, and a
+user who cannot read what they are agreeing to cannot consent to it.
+
+All three share the one bucket, which is still the policy for the reason the
+Consequences give. `test_rate_limit.py`'s equality now names ten, and it also
+asserts that `GET /training-consent` is *not* among them — the negative half
+matters here, because the obvious mistake is to limit the whole router.
+
+Nothing else changes. The window, the limit, the shared bucket, the fail-open
+rule, the hashing, the 429's shape and `client_key` are all as the two addenda
+above left them.
