@@ -24,7 +24,8 @@ the table below rather than left to be discovered.
 | The per-company grade predictions (#227) | 7 days | `analyses.grade_predictions` — a column on the row above, listed for the same reason |
 | The anonymous session | 7 days | `analysis_sessions` |
 | The economic configuration, including what the user said they paid | 7 days | `economic_configurations` |
-| The §68 feedback row and its hashed return code (#270) | **180 days**, on its own clock | `grade_feedback` — the one exemption, justified below |
+| The §68 feedback row and its hashed return code (#270) | **180 days**, on its own clock | `grade_feedback` — an exemption, justified below |
+| A photograph the user consented to keep, and its provenance row (#148) | **Until withdrawn** | `training_images` — the second exemption, justified below. The photograph the *analysis* used is still deleted on day seven; this is a **copy**, under a different key, made at the moment consent was given |
 
 Seven days is `TCG_API_SESSION_TTL_SECONDS`, and it is the only knob. It is
 applied once, in Python, when the session is opened —
@@ -46,7 +47,7 @@ reads the identifiers before the cascade and deletes the rows after it, which is
 the order the foreign key's `RESTRICT` requires. The `economic_configurations`
 immutability trigger guards `UPDATE` and not `DELETE` for exactly this reason.
 
-**One row has a horizon of its own, and it is the only one.** Spec §68 asks a
+**One row has a horizon of its own.** Spec §68 asks a
 user what grade their card actually received, and the answer arrives weeks after
 the session that predicted it is gone — so `grade_feedback` (#270) expires on
 `TCG_API_FEEDBACK_TTL_SECONDS`, a hundred and eighty days, counted from when the
@@ -73,6 +74,42 @@ test holds that — §68's own diagram puts validation between a user's answer a
 any future training, and that validation is an operator reading the row by hand
 (`tcg-review-grade-feedback`), never a pipeline.
 
+**The second exemption is a photograph, and it is the one this document has been
+deferring since it was written.** ADR 0008 approves this product's own uploads as
+a training-image source *where the user consented*, and issue #148 is the consent.
+A user who says yes on the upload screen gets exactly what the paragraph below
+demands: retention because **a row says so**.
+
+What makes it defensible is that nothing here is an exception to the sweep at
+all. Consenting **copies** the photograph — new bytes under `training/`, a new
+`training_images` row carrying spec §29's nine fields, filled at that moment from
+the grantor, with `redistribution_allowed` **`false`**. The photograph the
+analysis used is a different object under `uploads/`, and it is still deleted on
+day seven with everything else its session held; the session row, the analysis
+row and the `images` row all go on time and unchanged. No sweep was taught to
+skip anything, `SWEPT_NAMESPACES` is still `uploads` and `normalized`, and the
+two sweeps below are byte-for-byte what they were.
+
+The row it leaves behind holds no `session_id`, no `analysis_id` foreign key and
+no address. It names the analysis as **text**, which is what groups the front and
+back of one card, and that identifier resolves to nothing a week later by
+construction. There is no account to reach it through and nothing that says who
+took the photograph — which is exactly why a **withdrawal code** is minted at the
+moment of consent and shown once. It is `tcg_api/codes.py`'s bearer capability
+again, stored as a sha256 in `training_images.withdrawal_code_hash` and stored
+nowhere else, because the sweep deliberately deletes the session row and there
+would otherwise be no way back at all.
+
+**Withdrawal reaches everything not yet inside a published dataset version**, and
+says so before anyone consents. `dataset_members.training_image_id` is
+`RESTRICT`, so that boundary is enforced rather than remembered: spec §31 makes a
+version an immutable record of what a model was trained on, and a version that
+could un-include an image would make a past result unreproducible. Annotations,
+centering measurements and fingerprints are `CASCADE` and go with the image. When
+the last row under a code is gone the code resolves to nothing, and no record
+that somebody withdrew is kept — a row kept to remember a decision is the
+per-browser identifier §53 argues against, in a second costume.
+
 ### Why expiry is the default rather than the exception
 
 §54 asks for analysis data to expire "unless retained for an explicitly
@@ -95,6 +132,10 @@ vocabulary and are written by nothing.
 answer.** It is a separate, explicitly justified purpose governed by M6's
 provenance rules (§29): documented source, licence and commercial-use rights,
 per image. It must never happen because a retention sweep skipped something.
+
+That is now a mechanism rather than a promise (#148), and the last sentence is
+what shaped it: consent **copies** a photograph into the corpus and changes no
+sweep. The justification is above; what the sweeps do is unchanged below.
 
 ## What the sweep does
 
@@ -174,7 +215,8 @@ layout exists precisely so this can be a prefix scan (ADR 0002), and
 `day_prefix` is the only thing that builds one. The corpus namespaces —
 `training/` and `training-normalized/` — are outside the walk on purpose: no
 `images` row names one, and retaining a training image is the separately
-justified purpose below.
+justified purpose above. That is what a consented photograph is copied into
+(#148), so it is reached by neither sweep and goes when its owner withdraws.
 
 The seven-day window is what makes a week of worker downtime recoverable; a day
 older than that is never reached again. That is a stated bound rather than an
