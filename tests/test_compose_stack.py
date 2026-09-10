@@ -266,6 +266,25 @@ def test_every_image_this_repository_builds_runs_unprivileged(service: str) -> N
     assert "USER tcg" in dockerfile.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("service", sorted(BUILT_SERVICES))
+def test_every_base_image_is_pinned_by_digest(service: str) -> None:
+    """A tag moves; a digest does not, so a rebuild resolves to the same bytes.
+
+    #284's image scan answers "is anything in this image fixable and not
+    fixed?" — a question that means nothing if the thing scanned in CI is not
+    the thing built later. It is asserted here rather than left to review
+    because the failure is silent: a new stage on a bare tag builds, passes,
+    and quietly reintroduces the drift.
+    """
+    dockerfile = REPO_ROOT / compose()["services"][service]["build"]["dockerfile"]
+    text = dockerfile.read_text(encoding="utf-8")
+    stages = set(re.findall(r"^FROM \S+ AS (\S+)", text, re.MULTILINE))
+
+    for base in re.findall(r"^FROM (\S+)", text, re.MULTILINE):
+        if base not in stages:  # a registry image, not an earlier stage
+            assert "@sha256:" in base, f"{dockerfile.name}: {base}"
+
+
 @pytest.mark.parametrize("service", ["web", "annotation"])
 def test_the_default_build_target_is_the_development_stage(service: str) -> None:
     """The two Next images carry a production stage as well as a development one.

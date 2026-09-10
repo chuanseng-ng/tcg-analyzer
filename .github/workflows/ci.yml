@@ -9,6 +9,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The dependency audit and the image scan are the two checks whose answer
+  # changes without anything in this repository changing: a CVE is published
+  # against a version that was clean when it merged. A gate that only runs on
+  # a pull request never asks again. `codeql.yml` is on 03:00 Monday; this is
+  # three hours later, beside Dependabot's own Monday run.
+  schedule:
+    - cron: "0 6 * * 1"
 
 # A force-push supersedes the run it interrupts. `main` is exempt: those runs
 # are the record of what was actually merged.
@@ -270,9 +277,9 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       # Build only. Publishing is a deployment concern and deliberately out of
-      # scope; this answers "would this image build for anyone else?". The
-      # production images are additionally loaded into the daemon, because the
-      # step below runs one.
+      # scope; this answers "would this image build for anyone else?". Every
+      # image is loaded into the daemon because the steps below run against
+      # one: the scan for all six, the smoke test for the production two.
       - name: Build image
         uses: docker/build-push-action@v7
         with:
@@ -280,10 +287,29 @@ jobs:
           file: infrastructure/docker/${{ matrix.image }}.Dockerfile
           target: ${{ matrix.target }}
           push: false
-          load: ${{ matrix.target == 'production' }}
+          load: true
           tags: ${{ env.TAG }}
           cache-from: type=gha,scope=${{ env.SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.SCOPE }}
+
+      # Run directly rather than through `aquasecurity/trivy-action`, for the
+      # reason the `secrets` job gives: no marketplace dependency, and the
+      # version is visible here.
+      #
+      # `--ignore-unfixed` because a Debian base carries HIGH CVEs with no fix
+      # published, and a gate that is permanently red is a gate people learn to
+      # switch off. The answerable question is whether anything here is fixable
+      # today and not fixed. `--scanners vuln` because gitleaks already reads
+      # the history for secrets and this would only repeat it.
+      - name: Scan the image
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/repo" \
+            aquasec/trivy:0.74.0 image \
+            --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --ignorefile /repo/.trivyignore.yaml \
+            "$TAG"
 
       # The acceptance criterion of #268 is an image that serves the built app,
       # which no build can show. The image's own HEALTHCHECK is already the
@@ -857,13 +883,15 @@ jobs:
   dependencies:
     name: Dependencies — vulnerabilities and licences
     runs-on: ubuntu-latest
-    # Compares a PR's dependency changes against its base, so there is nothing
-    # to compare on a push to main.
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
 
+      # Compares a PR's dependency changes against its base, so there is
+      # nothing to compare on a push or on the weekly run. The gate below has
+      # no base and runs on all three — which is the point: a dependency that
+      # was clean when it merged is never re-examined by this step alone.
       - uses: actions/dependency-review-action@v5
+        if: github.event_name == 'pull_request'
         with:
           fail-on-severity: high
           # Copyleft licences are the concern for a product that may ship
@@ -886,3 +914,22 @@ jobs:
             pkg:npm/%40img/sharp-libvips-linux-x64,
             pkg:npm/%40img/sharp-libvips-linuxmusl-arm64,
             pkg:npm/%40img/sharp-libvips-linuxmusl-x64
+
+      # One scanner for the whole dependency tree: Trivy reads `uv.lock` and
+      # `pnpm-lock.yaml` alike, so this is one pass over both workspaces rather
+      # than pip-audit here and `pnpm audit` twice over in `web` and
+      # `annotation` against the same lockfile.
+      #
+      # Unfixed findings are deliberately NOT ignored here, unlike the image
+      # scan: a dependency vulnerability with no fix yet is exactly what
+      # belongs on the allow-list with a reason and an expiry, rather than
+      # dropped silently. The worker decodes untrusted photographs with OpenCV
+      # and Pillow, and a CVE in either is the one finding this project cannot
+      # read off its own code.
+      - name: Audit the lockfiles
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            aquasec/trivy:0.74.0 fs \
+            --scanners vuln --severity HIGH,CRITICAL \
+            --exit-code 1 --ignorefile /repo/.trivyignore.yaml \
+            /repo

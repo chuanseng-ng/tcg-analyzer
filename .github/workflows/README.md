@@ -5,7 +5,7 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 
 | Workflow | Runs on | Checks |
 | --- | --- | --- |
-| `ci.yml` | PR, push to `main` | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; the same journey driven through a browser at 375 px against the Compose stack; API image build; secret scan; dependency review |
+| `ci.yml` | PR, push to `main`, weekly | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; the same journey driven through a browser at 375 px against the Compose stack; API image build; secret scan; dependency review; a vulnerability audit of both lockfiles; a vulnerability scan of each image built |
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
@@ -54,6 +54,38 @@ compiling against a contract the server no longer honours. Fix it with:
 ```bash
 pnpm --filter @tcg/web gen:api-types
 ```
+
+**The audit and the scan are one tool, and one allow-list.** Trivy reads
+`uv.lock` and `pnpm-lock.yaml` as well as container images, so the `dependencies`
+job audits the whole dependency tree in a single pass and the `docker` job scans
+each of the six images it builds. Both fail on `HIGH` or `CRITICAL`. They differ
+in one respect: the image scan passes `--ignore-unfixed`, because a Debian base
+carries high-severity CVEs with no fix published and a permanently red gate is
+one people learn to switch off; the lockfile audit does not, because a
+dependency vulnerability with no fix yet is something to decide about rather
+than drop.
+
+**The weekly run is the point of the schedule.** `actions/dependency-review-action`
+compares a pull request against its base and cannot run without one, so a
+dependency that was clean the day it merged is never re-examined by it. The
+lockfile audit has no base, runs on every event, and on Mondays asks again.
+
+**Accepting a finding** — add it to [`.trivyignore.yaml`](../../.trivyignore.yaml)
+at the repository root, which serves both runs. An entry needs a `statement`
+saying why it does not apply here and an `expired_at` date; after that date
+Trivy fails on it again and someone has to look. Never a bare id, and prefer
+fixing the dependency. Reproduce either gate exactly as CI runs it:
+
+```bash
+docker run --rm -v "$PWD:/repo" aquasec/trivy:0.74.0 fs \
+  --scanners vuln --severity HIGH,CRITICAL \
+  --exit-code 1 --ignorefile /repo/.trivyignore.yaml /repo
+```
+
+**Base images are pinned by digest**, so a rebuild resolves to the same bytes
+and Dependabot's `docker` ecosystem bumps the digest as a reviewable PR. uv is a
+`FROM … AS uv` stage rather than an inline `COPY --from=ghcr.io/astral-sh/uv:…`
+for that reason alone: Dependabot parses `FROM` and not `COPY --from`.
 
 **Reproducing a failure locally** — every job runs commands documented in the
 root `README.md`. Nothing in CI is a step you cannot run yourself.

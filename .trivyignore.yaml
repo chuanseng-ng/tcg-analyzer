@@ -1,0 +1,22 @@
+# Findings assessed and accepted, read by both Trivy runs in `ci.yml`: the
+# lockfile audit in the `dependencies` job and the image scan in the `docker`
+# job.
+#
+# Never a bare id. Every entry carries:
+#
+#   statement   why this does not apply to this project — the code path that
+#               would have to exist, and does not; or the fix that is on its
+#               way and what holds it up.
+#   expired_at  the date the acceptance lapses. After it, Trivy fails on the
+#               finding again and someone has to look. An allow-list with no
+#               expiry is how a known vulnerability becomes permanent.
+#
+# Prefer fixing the dependency. Prefer an expiry weeks away over months.
+#
+#   vulnerabilities:
+#     - id: CVE-0000-00000
+#       statement: >-
+#         Reached only through <function>, which nothing in this repository
+#         calls. Upstream fix expected in <version>.
+#       expired_at: 2026-10-01
+vulnerabilities: []
