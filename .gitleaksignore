@@ -1,0 +1,9 @@
+# Findings gitleaks reports that are not credentials, one fingerprint per line.
+# The `secrets` job scans all history, so a false positive in a pushed commit
+# cannot be edited away — it is acknowledged here instead, by the exact commit,
+# file, rule and line, so nothing else is silenced with it.
+
+# A deliberately fake MinIO root password in the overlay test's dummy
+# environment (#273): distinct values so an assertion cannot pass by
+# coincidence, and never used anywhere a service runs.
+2b6c8fc8d3cdedcdcf0b2971f64dd790571ff7b6:tests/test_compose_production.py:generic-api-key:86
