@@ -1,0 +1,35 @@
+# The edge of the production overlay — issue #273, ADR 0012.
+#
+# One hostname. The web application is served at `/`, the API under `/api`
+# with the prefix stripped: the web application's `/cards` is the API's
+# `/cards` too, so the two cannot share one path space unprefixed. Same origin
+# also keeps the session cookie first-party.
+#
+# TLS is automatic. A real domain gets a public certificate on first start;
+# `localhost` (what CI runs) gets one from Caddy's internal authority.
+
+{$TCG_DOMAIN} {
+	handle_path /api/* {
+		# An allow-list, not a deny-list: a route added to the API is not
+		# public here until it is added on purpose, and
+		# tests/test_compose_production.py fails until it is. `/internal/*`
+		# (ADR 0009 — and SECURITY.md promises it is unreachable), `/docs` and
+		# `/openapi.json` are never on it.
+		@public path /analyses /analyses/* /cards /cards/* /catalog /catalog/* /grading-companies /feedback/* /training-consent /training-consent/* /health /readiness
+		handle @public {
+			reverse_proxy api:8000 {
+				# Overwrite, never append (#269). The API reads the rightmost
+				# hop with TCG_API_TRUSTED_PROXY_COUNT=1, so that hop has to be
+				# the address this proxy saw, not one the caller wrote.
+				header_up X-Forwarded-For {remote_host}
+			}
+		}
+		handle {
+			respond 404
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

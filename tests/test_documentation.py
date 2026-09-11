@@ -43,6 +43,7 @@ DOCUMENTED_COMMAND_SOURCES: tuple[str, ...] = (
     "docs/database.md",
     "docs/development.md",
     "docs/observability.md",
+    "infrastructure/deployment/README.md",
 )
 # `docs/architecture.md` has no commands but plenty of links, so the link check
 # covers more than the command check does. The `datasets/` files are here
@@ -67,6 +68,7 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "docs/architecture.md",
     "docs/adr/README.md",
     "docs/adr/0011-the-v1-grade-predictor-basis.md",
+    "docs/adr/0012-the-beta-runs-from-a-compose-overlay.md",
     "docs/market-provider-research.md",
     "docs/training-image-provenance-research.md",
     "docs/image-quality-gate-research.md",
