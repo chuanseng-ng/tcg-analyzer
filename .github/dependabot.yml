@@ -99,3 +99,16 @@ updates:
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+
+  # The production overlay's one image of its own (#273). Caddy is the only
+  # internet-facing process, and it is pinned by digest beside its tag, so a
+  # pin nobody bumps is a proxy that quietly stops receiving fixes. The local
+  # file is not listed: its images are tag-pinned development conveniences.
+  - package-ecosystem: docker-compose
+    directory: /infrastructure/deployment
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build
+      include: scope

@@ -61,8 +61,8 @@ def services() -> dict[str, Any]:
 
 def test_the_compose_file_exists() -> None:
     assert COMPOSE_FILE.is_file(), (
-        "infrastructure/local/docker-compose.yml is the single local stack; "
-        "there is deliberately no second Compose file"
+        "infrastructure/local/docker-compose.yml is the single local stack; the "
+        "production overlay in infrastructure/deployment/ layers on it, never replaces it"
     )
 
 

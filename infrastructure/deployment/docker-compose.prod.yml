@@ -1,0 +1,334 @@
+# The production overlay — issue #273, docs/adr/0012-the-beta-runs-from-a-compose-overlay.md.
+#
+#   docker compose --env-file infrastructure/deployment/.env \
+#     -f infrastructure/local/docker-compose.yml \
+#     -f infrastructure/deployment/docker-compose.prod.yml up -d --wait
+#
+# An overlay on the local stack rather than a second stack, so the two cannot
+# drift: the services, images, healthchecks and startup order are the local
+# file's, and what this file changes is exactly where #263's §56 checklist
+# lands — networks, published ports, the worker's filesystem and limits, the
+# storage and broker credentials, and the edge. Nothing here chooses a host,
+# DNS, backups or monitoring; that is a later ADR (spec §75).
+#
+# Two rules that bite:
+#
+# - Every relative path in this file resolves against infrastructure/local/,
+#   the directory of the FIRST `-f` file — Compose's rule for multiple files.
+#   Hence `../deployment/Caddyfile`.
+# - `--env-file` is not optional. Without it Compose reads
+#   infrastructure/local/.env, a developer's. Every secret below is `:?`, so a
+#   missing one stops the stack instead of falling back to the local file's
+#   deliberately obvious defaults.
+
+name: tcg-analyzer
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+
+# The API image, for the two jobs that are not in the local file. `api` and
+# `migrate` inherit the build from there and only change the tag, so a
+# production build never replaces the `:dev` image the local stack runs.
+x-api-image: &api-image
+  build:
+    context: ../..
+    dockerfile: infrastructure/docker/api.Dockerfile
+  image: tcg-analyzer/api:prod
+
+x-database-url: &database-url
+  TCG_API_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tcg}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-tcg}
+
+# What the API and the worker both hold. The broker is TLS-only and verified
+# against the CA `certs` generated — kombu and redis-py both read `ssl_*` from
+# the URL, so no code knows it is here. The storage keys are the scoped
+# account `minio-init` creates, never MinIO's root.
+x-application: &application
+  TCG_API_REDIS_URL: rediss://:${REDIS_PASSWORD:?}@redis:6379/0?ssl_cert_reqs=required&ssl_ca_certs=/certs/ca.crt
+  TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_APP_ACCESS_KEY:?}
+  TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_APP_SECRET_KEY:?}
+
+services:
+  # ---------------------------------------------------------------------------
+  # The datastores: on `backend` only, nothing published.
+  # ---------------------------------------------------------------------------
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    ports: !reset []
+    networks: [backend]
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    # Both the S3 API and the console. An operator reaches the console, if at
+    # all, with `docker compose exec minio mc ...`.
+    ports: !reset []
+    networks: [backend]
+
+  # The application's MinIO account: one bucket, four actions. `ListBucket` is
+  # not only the retention sweep's `list()` — without it S3 answers a GET for a
+  # missing key with 403 rather than 404, and `/readiness` would report storage
+  # down. Every command is idempotent, so a second `up` re-runs it harmlessly.
+  minio-init:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    <<: *hardening
+    cap_drop: [ALL]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?}
+      BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set tcg http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        cat > /tmp/policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::$$BUCKET"]},
+            {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+             "Resource": ["arn:aws:s3:::$$BUCKET/*"]}
+          ]
+        }
+        EOF
+        mc admin user add tcg "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY"
+        mc admin policy create tcg tcg-application /tmp/policy.json
+        mc admin policy attach tcg tcg-application --user "$$MINIO_APP_ACCESS_KEY"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+
+  # The broker's certificate: a private CA and one server certificate, written
+  # to a volume on the first `up` and left alone after. The CA's key never
+  # leaves this container's /tmp, and /tmp is a tmpfs — an exited container
+  # keeps its writable layer, so on disk the key would outlive the job for
+  # anyone with `docker cp`. With it gone, nothing can mint a second
+  # certificate the clients would trust. No network at all; root only because
+  # a fresh volume is root's, and CHOWN only to hand the key to the redis user (uid 999) —
+  # `chmod` comes first, since without CAP_FOWNER root cannot change the mode
+  # of a file it no longer owns. `ca.crt` is written last, so its presence
+  # means a complete set and a half-finished run starts over.
+  certs:
+    <<: [*api-image, *hardening]
+    user: "0"
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    tmpfs:
+      - /tmp
+    volumes:
+      - redis-certs:/certs
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        cd /certs
+        if [ -s ca.crt ] && [ -s redis.crt ] && [ -s redis.key ]; then exit 0; fi
+        openssl req -x509 -new -nodes -newkey rsa:2048 -days 3650 -subj /CN=tcg-redis-ca \
+          -keyout /tmp/ca.key -out /tmp/ca.crt
+        openssl req -new -nodes -newkey rsa:2048 -subj /CN=redis \
+          -keyout redis.key -out /tmp/redis.csr
+        printf '%s\n' \
+          'subjectAltName=DNS:redis,DNS:localhost,IP:127.0.0.1' \
+          'basicConstraints=critical,CA:FALSE' \
+          'keyUsage=critical,digitalSignature,keyEncipherment' \
+          'extendedKeyUsage=serverAuth' \
+          'subjectKeyIdentifier=hash' \
+          'authorityKeyIdentifier=keyid,issuer' > /tmp/extensions
+        openssl x509 -req -in /tmp/redis.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key \
+          -CAcreateserial -days 3650 -extfile /tmp/extensions -out redis.crt
+        chmod 600 redis.key
+        chmod 644 redis.crt
+        chown 999:1000 redis.key
+        cp /tmp/ca.crt ca.crt
+    restart: "no"
+
+  redis:
+    command:
+      - redis-server
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /certs/redis.crt
+      - --tls-key-file
+      - /certs/redis.key
+      - --tls-ca-cert-file
+      - /certs/ca.crt
+      # The clients authenticate with the password; TLS here is the channel,
+      # not a second credential.
+      - --tls-auth-clients
+      - "no"
+      - --requirepass
+      - ${REDIS_PASSWORD:?}
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--tls", "--cacert", "/certs/ca.crt", "ping"]
+    volumes:
+      - redis-certs:/certs:ro
+    ports: !reset []
+    networks: [backend]
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # The application.
+  # ---------------------------------------------------------------------------
+  migrate:
+    image: tcg-analyzer/api:prod
+    environment:
+      <<: *database-url
+    networks: [backend]
+
+  api:
+    image: tcg-analyzer/api:prod
+    # The image's own CMD: uvicorn without the local file's `--reload`.
+    command: !reset null
+    environment:
+      <<: [*database-url, *application]
+      # Same origin as the web application (the proxy serves both), so CORS
+      # is moot; named anyway so no default origin is ever allowed.
+      TCG_API_CORS_ORIGINS: '["https://${TCG_DOMAIN:?}"]'
+      TCG_API_SESSION_COOKIE_SECURE: "true"
+      # One proxy, and it overwrites X-Forwarded-For (#269, ADR 0005's
+      # addendum). Never raised to make something work.
+      TCG_API_TRUSTED_PROXY_COUNT: "1"
+    volumes:
+      - redis-certs:/certs:ro
+    ports: !reset []
+    # `backend` for its datastores, `edge` for the proxy. Both are internal,
+    # so the API has no route out.
+    networks: [backend, edge]
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  # Spec §56, all four lines: minimal privileges (the local file's
+  # `cap_drop: ALL`, `no-new-privileges` and uid 1001, kept), no unnecessary
+  # network (`backend` only — PostgreSQL, Redis and MinIO are all it needs, and
+  # there is no route out), restricted filesystem (read-only, with beat's
+  # schedule on the tmpfs), and it never executes an upload — nothing it writes
+  # could be executed anyway.
+  #
+  # One worker, never scaled: beat is embedded, so a second replica is a
+  # second scheduler. A deployment that needs two gives beat a process first.
+  worker:
+    image: tcg-analyzer/worker:prod
+    read_only: true
+    tmpfs:
+      - /tmp
+    # ponytail: unmeasured. No real photograph has been timed yet
+    # (docs/observability.md); size both from its first dated measurement.
+    # Threads count against pids_limit, and OpenBLAS and OpenCV each start a
+    # pool per CPU in every prefork child, so the ceiling is host-dependent.
+    mem_limit: 2g
+    pids_limit: 512
+    environment:
+      <<: [*database-url, *application]
+    volumes:
+      - redis-certs:/certs:ro
+    networks: [backend]
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  # Built for one domain: Next inlines NEXT_PUBLIC_* at build time, so the
+  # API's URL is a build argument and a run-time value would reach nothing
+  # (#268). Changing TCG_DOMAIN is a rebuild.
+  web:
+    build:
+      target: production
+      args:
+        NEXT_PUBLIC_API_BASE_URL: https://${TCG_DOMAIN:?}/api
+    image: tcg-analyzer/web:prod
+    environment: !reset {}
+    ports: !reset []
+    networks: [edge]
+
+  # Off unless asked for (`--profile annotation`). The tool is a browser
+  # client of `/internal`, which ADR 0009 keeps off the public origin and this
+  # proxy never routes, so on this host no browser can reach it: it stays a
+  # tool of the local stack. It re-enters when photographs retained under #148
+  # need labelling here — with its own ingress, which is a new decision.
+  annotation:
+    profiles: [annotation]
+    build:
+      target: production
+    image: tcg-analyzer/annotation:prod
+    environment: !reset {}
+    ports: !reset []
+    networks: [backend]
+
+  # An operator command with a service of its own, because it is the one that
+  # needs the internet (api.tcgdex.net, ADR 0004) and the API deliberately has
+  # no route out. Run it, never `up` it; its arguments are the command's:
+  #
+  #   docker compose ... run --rm catalog-import --version pokemon-catalog-tcgdex-v0.1.0
+  #
+  # The fetched snapshot is a cache under /app and goes with the container.
+  catalog-import:
+    <<: [*api-image, *hardening]
+    profiles: [catalog-import]
+    entrypoint: ["tcg-import-catalog"]
+    environment:
+      <<: *database-url
+    networks: [backend, public]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # The edge — the only published service. TLS is Caddy's, from the domain's
+  # own certificate authority on first start; routing is the Caddyfile's.
+  # ---------------------------------------------------------------------------
+  proxy:
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    <<: *hardening
+    # The image's binary carries `cap_net_bind_service=+ep`; exec fails unless
+    # that capability survives in the bounding set.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      TCG_DOMAIN: ${TCG_DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ../deployment/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    # `public` for the published ports and the certificate authority, `edge`
+    # to reach `web` and `api`. The only service on both.
+    networks: [edge, public]
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  # The datastores, the worker and the API. No route out.
+  backend:
+    internal: true
+  # The proxy, the web application and the API. No route out either: the web
+  # application fetches nothing server-side (every call is the browser's).
+  edge:
+    internal: true
+  # The proxy's way in and out, and the catalog import's way out.
+  public: {}
+
+volumes:
+  redis-certs:
+  caddy-data:
+  caddy-config:

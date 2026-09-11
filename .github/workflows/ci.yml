@@ -798,6 +798,267 @@ jobs:
         if: always()
         run: $COMPOSE down -v
 
+  compose-production:
+    name: Compose — the production overlay starts, isolated
+    runs-on: ubuntu-latest
+    # #273's acceptance criterion: one host with Docker, a domain and a filled
+    # `.env` runs the beta from the two Compose files, with the worker isolated
+    # per spec §56 and `/internal` unreachable from outside. Every line of
+    # #263's checklist the overlay closes is asserted here against running
+    # containers; the rendered shape is `tests/test_compose_production.py`'s.
+    # Its own stack, like `e2e`, because `compose` exhausts the limiter and
+    # runs the local file's deliberately open shape.
+    env:
+      COMPOSE: >-
+        docker compose --env-file infrastructure/deployment/.env
+        -f infrastructure/local/docker-compose.yml
+        -f infrastructure/deployment/docker-compose.prod.yml
+      BASE: https://localhost
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # From 26, containers on internal networks only get no external DNS
+      # (CVE-2024-29018) — the egress step below relies on it.
+      - name: Docker version
+        run: docker version --format '{{.Server.Version}}'
+
+      # Random per run, and hex because two are spliced into URLs. `localhost`
+      # is what makes Caddy issue from its internal authority: the self-signed
+      # certificate, so every request below is `curl -k`.
+      - name: Write the host's environment
+        run: |
+          secret() { openssl rand -hex 24; }
+          cat > infrastructure/deployment/.env <<EOF
+          TCG_DOMAIN=localhost
+          POSTGRES_PASSWORD=$(secret)
+          MINIO_ROOT_USER=root$(openssl rand -hex 4)
+          MINIO_ROOT_PASSWORD=$(secret)
+          MINIO_APP_ACCESS_KEY=app$(openssl rand -hex 4)
+          MINIO_APP_SECRET_KEY=$(secret)
+          REDIS_PASSWORD=$(secret)
+          EOF
+
+      - name: The overlay renders, with and without its opt-in services
+        run: |
+          $COMPOSE config --quiet
+          $COMPOSE --profile annotation --profile catalog-import config --quiet
+
+      # Twice: the second `up` re-runs `certs`, `minio-init` and `migrate`
+      # against the state the first left, which is what an operator's next
+      # deploy does. Each must still exit 0.
+      - name: Start the stack, twice
+        run: |
+          $COMPOSE up -d --wait
+          $COMPOSE up -d --wait
+          $COMPOSE ps -a
+          for job in certs minio-init migrate; do
+            code=$($COMPOSE ps -aq "$job" | xargs docker inspect -f '{{.State.ExitCode}}')
+            echo "$job exited $code"
+            test "$code" = 0
+          done
+
+      # Readiness proves the wiring the overlay changed: the database with the
+      # host's password, storage with the scoped account, Redis over TLS.
+      - name: The public surface answers over TLS
+        run: |
+          curl -fsSk --retry 10 --retry-all-errors "$BASE/api/health"
+          readiness=$(curl -fsSk "$BASE/api/readiness")
+          echo "$readiness"
+          for check in database storage redis; do
+            test "$(echo "$readiness" | jq -r ".checks.$check")" = ok
+          done
+          test "$(curl -sSk -o /dev/null -w '%{http_code}' "$BASE/")" = 200
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://localhost/)" = 308
+
+      # Checklist item 1, and SECURITY.md's promise. The route exists — the API
+      # answers it from inside — and the proxy still refuses it, however the
+      # path is spelled. `--path-as-is` stops curl normalising the probes away.
+      - name: Nothing under /internal, and no schema, is reachable
+        run: |
+          inside=$($COMPOSE exec -T api python -c "
+          import urllib.error, urllib.request
+          try:
+              print(urllib.request.urlopen('http://localhost:8000/internal/annotation/images').status)
+          except urllib.error.HTTPError as error:
+              print(error.code)" | tr -d '\r')
+          echo "inside the stack: $inside"
+          test "$inside" != 404
+
+          for path in /api/internal/annotation/images /api/INTERNAL/annotation/images \
+              /api//internal/annotation/images /api/analyses/../internal/annotation/images \
+              /api/docs /api/openapi.json; do
+            code=$(curl -sSk --path-as-is -o /dev/null -w '%{http_code}' "$BASE$path")
+            echo "$path -> $code"
+            test "$code" = 404
+          done
+
+      # Checklist item 3: the proxy is the only thing listening on the host.
+      - name: Only the proxy publishes a port
+        run: |
+          for port in 5432 6379 8000 9000 9001 3000 3001; do
+            if timeout 2 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+              echo "::error::port $port answers on the host"
+              exit 1
+            fi
+          done
+          docker inspect -f '{{.Name}} {{json .HostConfig.PortBindings}}' $($COMPOSE ps -q) | tee bindings.txt
+          test "$(grep -vE '(\{\}|null)$' bindings.txt | grep -vc proxy)" = 0
+
+      # Checklist item 2. Asserted on what the interpreter printed rather than
+      # on an exit status, which `compose exec` does not reliably propagate
+      # (see the `compose` job). The API shares the worker's isolation: both of
+      # its networks are internal.
+      - name: The worker and the API have no route out
+        run: |
+          for service in worker api; do
+            verdicts=$($COMPOSE exec -T "$service" python -c "
+          import socket
+          for target in (('1.1.1.1', 443), ('example.com', 443)):
+              try:
+                  socket.create_connection(target, timeout=3).close()
+              except OSError:
+                  print('blocked')
+              else:
+                  print('REACHED', target)" | tr -d '\r')
+            echo "$service: $verdicts"
+            test "$(echo "$verdicts" | grep -cx blocked)" = 2
+          done
+
+      # Checklist items 4-6: a read-only root with a writable /tmp, bounded,
+      # every capability dropped, uid 1001.
+      - name: The worker is read-only, bounded and unprivileged
+        run: |
+          probe=$($COMPOSE exec -T worker python -c "
+          import errno, pathlib
+          try:
+              pathlib.Path('/app/probe').write_text('x')
+          except OSError as error:
+              print('read-only' if error.errno == errno.EROFS else f'other {error.errno}')
+          else:
+              print('WRITABLE')
+          pathlib.Path('/tmp/probe').write_text('x')
+          print('tmp writable')" | tr -d '\r')
+          echo "$probe"
+          echo "$probe" | grep -qx read-only
+          echo "$probe" | grep -qx 'tmp writable'
+          test "$($COMPOSE exec -T worker id -u | tr -d '\r')" = 1001
+          docker inspect -f 'memory={{.HostConfig.Memory}} pids={{.HostConfig.PidsLimit}} readonly={{.HostConfig.ReadonlyRootfs}} capdrop={{.HostConfig.CapDrop}}' \
+            "$($COMPOSE ps -q worker)" | tee worker.txt
+          grep -q 'readonly=true' worker.txt
+          grep -q 'capdrop=\[ALL\]' worker.txt
+          ! grep -qE 'memory=0 |pids=(0|<nil>) ' worker.txt
+
+      # Checklist item 7: the key the application holds can do nothing beyond
+      # its bucket. A second bucket is made with root first, because with only
+      # one bucket in the store "sees only its own" proves nothing: MinIO
+      # answers ListBuckets with what the caller may see, not with a refusal.
+      - name: The storage account is scoped to the bucket
+        run: |
+          $COMPOSE exec -T minio sh -c \
+            'mc alias set root http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing root/tcg-other'
+          verdicts=$($COMPOSE exec -T api python -c "
+          import os
+          import boto3
+          from botocore.exceptions import ClientError
+          env = os.environ
+          client = boto3.client(
+              's3',
+              endpoint_url=env['TCG_API_STORAGE_ENDPOINT_URL'],
+              aws_access_key_id=env['TCG_API_STORAGE_ACCESS_KEY_ID'],
+              aws_secret_access_key=env['TCG_API_STORAGE_SECRET_ACCESS_KEY'],
+              region_name='us-east-1',
+          )
+          print('visible', ' '.join(sorted(b['Name'] for b in client.list_buckets()['Buckets'])))
+          for name, call in (
+              ('list_objects', lambda: client.list_objects_v2(Bucket='tcg-other')),
+              ('create_bucket', lambda: client.create_bucket(Bucket='tcg-escape')),
+          ):
+              try:
+                  call()
+              except ClientError as error:
+                  code = error.response['Error']['Code']
+                  print('denied' if code == 'AccessDenied' else f'other {code}')
+              else:
+                  print('ALLOWED', name)" | tr -d '\r')
+          echo "$verdicts"
+          echo "$verdicts" | grep -qx 'visible tcg-local'
+          test "$(echo "$verdicts" | grep -cx denied)" = 2
+
+      # Checklist item 8: the broker speaks TLS and nothing else.
+      - name: The broker refuses plaintext
+        run: |
+          plain=$(timeout 10 $COMPOSE exec -T redis redis-cli ping 2>&1 | tr -d '\r' || true)
+          echo "plaintext: $plain"
+          test "$plain" != PONG
+          test "$($COMPOSE exec -T redis redis-cli --tls --cacert /certs/ca.crt ping | tr -d '\r')" = PONG
+
+      # The read-only worker, the scoped account and the TLS broker together,
+      # under a real run: the photograph the `compose` job's gate passes,
+      # through the proxy.
+      - name: A photograph reaches the confirmation gate through the proxy
+        run: |
+          $COMPOSE exec -T api python -c "
+          import sys, random
+          from io import BytesIO
+          from PIL import Image, ImageDraw
+          random.seed(0)
+          picture = Image.new('RGB', (1200, 1600))
+          draw = ImageDraw.Draw(picture)
+          for y in range(0, 1600, 16):
+              for x in range(0, 1200, 16):
+                  tone = 215 if ((x // 16 + y // 16) % 2) else 20
+                  tone = max(0, min(255, tone + random.randint(-18, 18)))
+                  draw.rectangle([x, y, x + 15, y + 15], fill=(tone, tone, tone))
+          buffer = BytesIO()
+          picture.save(buffer, 'JPEG', quality=95)
+          sys.stdout.buffer.write(buffer.getvalue())" > usable.jpg
+          test -s usable.jpg
+
+          id=$(curl -sSk -c jar -X POST "$BASE/api/analyses" | jq -r .id)
+          for side in front back; do
+            curl -sSk -o /dev/null -b jar -X POST "$BASE/api/analyses/$id/images?side=$side" \
+              -H 'Content-Type: image/jpeg' --data-binary @usable.jpg
+          done
+          curl -sSk -o /dev/null -b jar -X POST "$BASE/api/analyses/$id/run"
+
+          for _ in $(seq 1 60); do
+            analysis=$(curl -sSk -b jar "$BASE/api/analyses/$id")
+            case "$(echo "$analysis" | jq -r .status)" in
+              uploaded|identifying) sleep 1 ;;
+              *) break ;;
+            esac
+          done
+          echo "$analysis"
+          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
+
+      # Checklist item 9. Every request claims a different client; the proxy
+      # overwrites the claim, so they share one bucket and the limit still
+      # holds. Last, because it spends the limit.
+      - name: A spoofed X-Forwarded-For does not escape the limiter
+        run: |
+          for i in $(seq 1 31); do
+            curl -sSk -o /dev/null -X POST -H "X-Forwarded-For: 203.0.113.$i" "$BASE/api/analyses"
+          done
+          throttled=$(curl -sSk -D - -o /dev/null -X POST -H 'X-Forwarded-For: 198.51.100.7' "$BASE/api/analyses")
+          echo "$throttled"
+          echo "$throttled" | grep -q "429"
+          echo "$throttled" | grep -qi "^retry-after:"
+
+      # A dump, never an assertion: the worker's limits are placeholders until
+      # a real photograph is timed (docs/observability.md), and this is where
+      # the first reading of its memory comes from.
+      - name: Logs and resource use
+        if: always()
+        run: |
+          docker stats --no-stream
+          $COMPOSE logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: $COMPOSE down -v
+
   e2e:
     name: E2E — the anonymous journey in a browser
     runs-on: ubuntu-latest
