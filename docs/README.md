@@ -9,6 +9,8 @@ Project documentation.
 | [`api.md`](api.md) | The HTTP endpoints, what each one refuses, and why it refuses it that way |
 | [`database.md`](database.md) | Migrations, the schema registry, the seeds, the catalog import, the test markers |
 | [`development.md`](development.md) | Host-based workflows — the web application, the annotation tool, object storage, background jobs |
+| [`v1-trial-setup.md`](v1-trial-setup.md) | Running V1 for a trial: what it can and cannot show, the local look and the hosted setup, what testers do, and what the operator watches |
+| [`model-training-and-testing.md`](model-training-and-testing.md) | How the models are trained and tested: what exists today, the corpus loop from photograph to graded outcome, the evaluation harnesses, and what is not built yet |
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
 | [`observability.md`](observability.md) | Spec §67's eight signals: the event each is read from, the budget it is held to, and the first measurement off a CI run |
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |
