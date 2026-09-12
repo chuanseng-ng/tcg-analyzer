@@ -553,9 +553,13 @@ jobs:
           echo "$refused"
           test "$(echo "$refused" | jq -r .code)" = image_quality_failure
 
-      # The other side of the gate: a photograph it has no complaint about
-      # reaches the confirmation gate, where spec §20 says it must stop.
-      - name: A usable photograph reaches the confirmation gate
+      # #319, end to end through the real worker: a photograph with nothing
+      # wrong with its *frame* — sharp, lit, large — and no card anywhere in
+      # it is refused rather than waved through. This used to reach the
+      # confirmation gate at `acceptable` and run the whole pipeline to an
+      # `insufficient_information` that blamed the analysis for the
+      # photograph's problem. The step below is the other side of the gate.
+      - name: A photograph with no card in it is refused, and says which
         run: |
           $COMPOSE exec -T api python -c "
           import sys, random
@@ -592,19 +596,23 @@ jobs:
             esac
           done
           echo "$analysis"
-          test "$(echo "$analysis" | jq -r .status)" = awaiting_confirmation
-          # `acceptable`, never `good`: a checkerboard has no card in it, so
-          # six conditions were not checked and saying so is the whole point.
-          # The step below is the one that reaches `good`.
-          test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = acceptable
+          test "$(echo "$analysis" | jq -r .status)" = failed
+          test "$(echo "$analysis" | jq -r .failure.reason)" = unusable_photograph
+          test "$(echo "$analysis" | jq -r '.images[0].quality_status')" = unusable
+          # The refusal names itself, which is the one thing on the screen the
+          # person holding the phone can act on.
+          test "$(echo "$analysis" | jq -r '.images[0].refusal')" = no_card_found
+          # And the six it could not check are still reported — #181's
+          # criterion, which the refusal replaces the verdict for, not the
+          # findings.
           test "$(echo "$analysis" | jq -r \
             '.images[0].findings | map(select(.verdict == "undetermined")) | length')" = 6
 
-      # #37's acceptance criterion against the real stack: a photograph with a
-      # card in it, where the boundary is found and all eleven of spec §19's
-      # conditions are therefore answered. This is the only status this project
-      # can now reach that is not `acceptable`, and it is reachable only because
-      # the worker image carries the detector as well as the gate.
+      # #37's acceptance criterion against the real stack, and since #319 the
+      # only way an analysis reaches the confirmation gate at all: a photograph
+      # with a card in it, where the boundary is found and all eleven of spec
+      # §19's conditions are therefore answered. Reachable only because the
+      # worker image carries the detector as well as the gate.
       - name: A photograph of a card reaches the gate with every condition answered
         run: |
           $COMPOSE exec -T api python -c "
@@ -995,22 +1003,26 @@ jobs:
           test "$($COMPOSE exec -T redis redis-cli --tls --cacert /certs/ca.crt ping | tr -d '\r')" = PONG
 
       # The read-only worker, the scoped account and the TLS broker together,
-      # under a real run: the photograph the `compose` job's gate passes,
-      # through the proxy.
+      # under a real run: the photograph the `compose` job's gate answers in
+      # full — a card on a surface, since #319 the only kind that reaches the
+      # confirmation gate at all — through the proxy.
       - name: A photograph reaches the confirmation gate through the proxy
         run: |
           $COMPOSE exec -T api python -c "
           import sys, random
           from io import BytesIO
           from PIL import Image, ImageDraw
-          random.seed(0)
-          picture = Image.new('RGB', (1200, 1600))
+          random.seed(1)
+          picture = Image.new('RGB', (1200, 1600), (40, 40, 40))
           draw = ImageDraw.Draw(picture)
           for y in range(0, 1600, 16):
               for x in range(0, 1200, 16):
-                  tone = 215 if ((x // 16 + y // 16) % 2) else 20
-                  tone = max(0, min(255, tone + random.randint(-18, 18)))
-                  draw.rectangle([x, y, x + 15, y + 15], fill=(tone, tone, tone))
+                  tone = 40 + random.randint(-8, 8)
+                  draw.point((x, y), fill=(tone, tone, tone))
+          for y in range(360, 1240, 20):
+              for x in range(285, 915, 20):
+                  tone = 230 if ((x // 20 + y // 20) % 2) else 140
+                  draw.rectangle([x, y, x + 19, y + 19], fill=(tone, tone, tone))
           buffer = BytesIO()
           picture.save(buffer, 'JPEG', quality=95)
           sys.stdout.buffer.write(buffer.getvalue())" > usable.jpg

@@ -25,9 +25,18 @@ measurement of pixels like the five above it, but of the card's pixels —
 reflection is a property of the card's surface, and measured over the whole
 frame it is diluted by whatever the card is lying on. Without a boundary all six
 are reported **undetermined with a reason** rather than guessed, and a
-photograph with six conditions unchecked cannot be `good` however sharp it is:
-the best available verdict is `acceptable`, which here means "nothing wrong
-found, and something not looked at".
+photograph with six conditions unchecked cannot be `good` however sharp it is.
+
+**What such a photograph *is* depends on why the card is missing**, and the two
+answers are not the same (#319). A detector that ran and found nothing has not
+merely left six questions open — it could not assess the photograph at all, so
+the report carries a `refusal` of `no_card_found` and the verdict is
+`unusable`: spec §19's "analysis should stop", and the one failure the person
+holding the phone can act on. A gate asked to judge a frame with no detector
+run against it — which the corpus normalization pass does, and the API pipeline
+never does — stops at `acceptable`, "nothing wrong found, and something not
+looked at". In practice that means **every analysis through this pipeline is
+judged on all eleven conditions or refused**, because detection always runs.
 
 Every verdict is persisted on `images` — the status, a `[0, 1]` score and all
 eleven findings — and served by `GET /analyses/{id}`, which is what lets
@@ -92,8 +101,9 @@ Four things about it are deliberate:
   applied is recorded.
 - **No card located means no artifact.** `normalized_uri` stays NULL rather than
   holding a resized whole frame, which would be a standardized artifact of the
-  table the card was lying on. The gate degrades the same way, capping such a
-  photograph at `acceptable`. The original is always kept unmodified.
+  table the card was lying on. The gate refuses such a photograph outright
+  (#319), so the analysis stops before anything would have measured it. The
+  original is always kept unmodified.
 
 ## Bounding a run
 
