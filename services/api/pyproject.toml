@@ -96,6 +96,13 @@ dependencies = [
 # pulls in.
 [project.optional-dependencies]
 worker = [
+    # Not an ml package: the HEIF/HEIC decoder `tcg-ingest-training-batch`
+    # registers with Pillow, so a phone's own file can be ingested without the
+    # operator converting it first. Declared here rather than in the base
+    # dependencies on the same principle the ml packages follow — the
+    # internet-facing API image has no caller for it, and libheif is a decoder
+    # it should not be carrying. Without it, a HEIC row refuses by name.
+    "pillow-heif>=1.0",
     "tcg-ml-card-detection",
     "tcg-ml-centering",
     "tcg-ml-condition",
@@ -153,6 +160,12 @@ tcg-seed-grading-rules = "tcg_api.grading.seed:main"
 # stored. There is deliberately no HTTP route: nothing in the dataset domain is
 # a consumer surface.
 tcg-ingest-training-images = "tcg_api.datasets.ingestion:main"
+# The same ingestion, once per row of a CSV, for a submission batch (#311). One
+# card is still one transaction — this loops that, it does not widen it. It
+# converts whatever Pillow can decode into the JPEG or PNG the corpus stores,
+# which is why it wants the `worker` extra: `pillow-heif` is where an iPhone
+# HEIC becomes readable, and the API image has no caller for it.
+tcg-ingest-training-batch = "tcg_api.datasets.batch_ingestion:main"
 # Records what one grading company issued for one physical card — epic #9's
 # "actual grade", which the corpus otherwise has no source for. Writes the
 # certification back onto the `physical_copies` row where that row carries none,

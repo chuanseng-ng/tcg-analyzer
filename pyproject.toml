@@ -131,6 +131,13 @@ module = ["celery.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# `pillow-heif` ships `py.typed` but does not name `register_heif_opener` in its
+# `__all__`, and strict mode reads an absent `__all__` entry as "not exported".
+# Narrowed to the one package: the module that calls it is still fully checked.
+module = ["pillow_heif"]
+implicit_reexport = true
+
+[[tool.mypy.overrides]]
 # A consequence of the above: `@shared_task` is untyped, so mypy considers the
 # function it decorates untyped too. Scoped to the single module that declares a
 # task rather than relaxed service-wide.
