@@ -84,9 +84,24 @@ merely by the command.
 | Source | Can it ever carry a grade? |
 | --- | --- |
 | `first_party` / `photographed_before_submission`: raw cards this project owns, photographed and then submitted | **Yes.** This is the primary source, and the only one that produces training labels for the grade models. |
-| `first_party` / `photographed_owned_slab`: slabs already owned | Yes, but the card is photographed through the slab, which is not the domain the product sees |
+| `first_party` / `photographed_owned_slab`: slabs already owned | Yes, but the card is photographed through the slab, which is not the domain the product sees. **Train split only** — see below |
 | `contributed` / `contributed_under_written_grant` | Only if the contributor supplies the grade and the grant covers it |
 | `product_upload` / `uploaded_by_user_with_consent`: trial photographs a user agreed to keep | **No.** It helps the condition analyzers and the gate, never the grade models |
+
+**A slab-sourced copy never enters the test split.** ADR 0008 approves the class
+and scores it **0 on domain match**: photographed through the case, it is not
+what §11 receives. One in the test split would turn §27's within-±1 Wilson bound
+into a measurement of something the product does not do.
+
+**Nothing enforces that.** `acquisition_method` carries no CHECK, it is not one
+of §32's grouping keys, and `ml/evaluation` parses it onto `CorpusMember`
+without ever reading it back — so the splitter is as likely to put a slab card
+in `test` as anywhere else. Keeping them out is a purchasing discipline, and
+`tcg-publish-dataset-version` is where it is checked: the publish log prints the
+provenance mix **per split**.
+
+Both published versions are clean — every image in `pokemon-condition-v0.1.0`
+and `v0.2.0` is `photographed_before_submission`, on all three splits.
 
 One invocation is one physical card:
 
@@ -157,6 +172,8 @@ This freezes the corpus as it stands, in one transaction:
   near duplicates never land on opposite sides of a train/test boundary.
 - **A published version can never be edited.** Retraining on more data means a
   new version.
+- **The log names each split's provenance mix.** A slab-sourced image in `test`
+  is visible there and nowhere else.
 - **The manifest in `datasets/manifests/`** holds identifiers and hashes, never
   images. It is what a training run reads, instead of the database
   ([ADR 0009](adr/0009-the-dataset-store-as-a-database-domain.md)).
