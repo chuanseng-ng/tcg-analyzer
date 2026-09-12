@@ -21,13 +21,14 @@ demonstrate, so it belongs in the job that has no PostgreSQL at all.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 import sqlalchemy as sa
@@ -43,6 +44,7 @@ from tcg_api.routers.cards import card_repository
 from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
 from tcg_domain.errors import CatalogUnavailable
+from tcg_domain.image_quality import QualityCondition
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -295,6 +297,77 @@ def test_a_failed_analysis_reports_its_code_and_reason(client: TestClient) -> No
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
     assert response.json()["failure"] == {"code": "analysis_failed", "reason": "model_failed"}
+
+
+def _image_with_details(analysis_id: uuid.UUID, details: dict[str, object]) -> None:
+    """One refused front photograph, with whatever document the gate wrote."""
+    executing(
+        "INSERT INTO images (id, analysis_id, side, original_uri, mime_type, sha256, "
+        "quality_score, quality_status, quality_details) VALUES "
+        "(:image_id, :id, 'front', 'uploads/front', 'image/jpeg', :digest, 0.89, "
+        "'unusable', CAST(:details AS jsonb))",
+        image_id=uuid.uuid4(),
+        id=analysis_id,
+        digest="b" * 64,
+        details=json.dumps(details),
+    )
+
+
+A_REFUSED_DOCUMENT: Final[dict[str, object]] = {
+    "version": "image-quality-heuristic-v0.4.0",
+    "refusal": "no_card_found",
+    "thresholds": {},
+    "findings": [
+        {
+            "condition": str(condition),
+            "verdict": "undetermined",
+            "reason": "no card-like quadrilateral was found in the photograph",
+        }
+        for condition in QualityCondition
+    ],
+}
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_refused_photograph_says_why_it_was_refused(client: TestClient) -> None:
+    """#319. Without this the screen has "could not support an analysis" and an
+    empty list of faults — a refusal with nothing the user can act on."""
+    created = client.post("/analyses").json()
+    _image_with_details(uuid.UUID(created["id"]), A_REFUSED_DOCUMENT)
+
+    front = client.get(f"/analyses/{created['id']}").json()["images"][0]
+
+    assert front["quality_status"] == "unusable"
+    assert front["refusal"] == "no_card_found"
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_photograph_the_gate_judged_carries_no_refusal(client: TestClient) -> None:
+    """Null rather than absent: a client reads one field, never two shapes."""
+    created = client.post("/analyses").json()
+    judged = {k: v for k, v in A_REFUSED_DOCUMENT.items() if k != "refusal"}
+    _image_with_details(uuid.UUID(created["id"]), judged)
+
+    assert client.get(f"/analyses/{created['id']}").json()["images"][0]["refusal"] is None
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_refusal_this_service_does_not_name_is_dropped_rather_than_served(
+    client: TestClient,
+) -> None:
+    """`_findings`' contract, extended: the document is ours and still read
+    defensively, because a screen whose whole job is to explain a problem must
+    not 500 on a word a later gate wrote."""
+    created = client.post("/analyses").json()
+    _image_with_details(uuid.UUID(created["id"]), {**A_REFUSED_DOCUMENT, "refusal": "sun_spots"})
+
+    response = client.get(f"/analyses/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["images"][0]["refusal"] is None
 
 
 @pytest.mark.integration

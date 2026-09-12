@@ -137,6 +137,16 @@ the photographs, `analysis_failed` otherwise — the stored reason as
 `details.reason`, and for the first the refused sides as `details.sides`; the
 difference is whether trying again could ever help.
 
+**Why a photograph was refused is on the photograph, not on the failure.**
+`images[].findings` carries all eleven of spec §19's conditions, and
+`images[].refusal` carries the one thing that is not a condition:
+`no_card_found`, when a detector ran and could not locate a card at all. That
+photograph is `unusable` however clean the conditions it could still check came
+back, because six of the eleven were never reachable — and it is the one
+refusal a client can turn into "photograph it again". Null for every photograph
+the gate was able to judge. Neither a finding's measurement nor its reason is
+served; the words a person reads are the client's, from this vocabulary.
+
 `POST /analyses/{id}/economic-configuration` records the economics of the
 decision (spec §45, §46, §43): the six cost line items, the optional acquisition
 cost, the companies to compare and the optimization mode. **Every cost field is
