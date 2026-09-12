@@ -303,9 +303,17 @@ def test_anything_else_pillow_can_decode_becomes_a_lossless_png() -> None:
         assert converted.size == SIZE
 
 
-def test_a_file_no_decoder_here_recognises_is_refused() -> None:
-    with pytest.raises(ManifestError):
+def test_a_file_no_decoder_here_recognises_names_the_extra_that_might_read_it() -> None:
+    """Where a HEIC lands when `pillow-heif` is not installed.
+
+    The API image carries no HEIF decoder on purpose, so this message is the
+    whole of what an operator gets — it has to say what to install rather than
+    let Pillow's own error out.
+    """
+    with pytest.raises(ManifestError) as refusal:
         prepare_image(b"not a picture at all", max_pixels=GENEROUS_PIXELS)
+
+    assert "worker" in str(refusal.value)
 
 
 def test_the_pixel_ceiling_is_applied_before_the_bitmap_is_decoded() -> None:

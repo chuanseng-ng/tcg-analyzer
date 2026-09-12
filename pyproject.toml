@@ -131,10 +131,20 @@ module = ["celery.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# `pillow-heif` ships `py.typed` but does not name `register_heif_opener` in its
-# `__all__`, and strict mode reads an absent `__all__` entry as "not exported".
-# Narrowed to the one package: the module that calls it is still fully checked.
+# `pillow-heif` is an **optional** dependency: it rides in `tcg-api`'s `worker`
+# extra so the internet-facing API image carries no HEIF decoder, which means
+# the environment mypy runs in may not have it at all. Two settings, one for
+# each of those environments, and narrowed to the one package — the module that
+# calls it is fully checked either way.
+#
+# `ignore_missing_imports`: the lint job installs without the extra, and an
+# optional dependency being absent is not a type error. Celery's entry above is
+# the same relaxation for a different reason.
+# `implicit_reexport`: where it *is* installed it ships `py.typed` but does not
+# name `register_heif_opener` in its `__all__`, and strict mode reads an absent
+# `__all__` entry as "not exported".
 module = ["pillow_heif"]
+ignore_missing_imports = true
 implicit_reexport = true
 
 [[tool.mypy.overrides]]
