@@ -75,7 +75,7 @@ from typing import Final
 import anyio.to_thread
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from tcg_shared.storage import StorageError, StorageKey, generate_key
 from tcg_shared.storage.port import ObjectStorage
 
@@ -93,6 +93,7 @@ __all__ = [
     "IngestedImage",
     "ProvenanceRefused",
     "TrainingImageProvenance",
+    "ingest_card",
     "ingest_training_image",
     "main",
     "run",
@@ -346,9 +347,10 @@ async def _discard(storage: ObjectStorage, key: StorageKey) -> None:
 # ---------------------------------------------------------------------------
 # One invocation is one physical card, because spec §32 requires the front and
 # back of one copy to group together and never split across a train/test
-# boundary. A directory is a shell loop over this command; a manifest format is
-# not this issue's, and would be a schema, a parser and an error class for a
-# grouping the flags already express.
+# boundary. #154 deferred a manifest format — "a schema, a parser and an error
+# class for a grouping the flags already express" — and #311's submission batch
+# is what took it up: `tcg-ingest-training-batch` loops this card's transaction,
+# it does not widen it. The flags below stay the single-card vocabulary.
 
 
 def _aware(value: str) -> datetime:
@@ -456,28 +458,120 @@ def _validated(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -
 
 
 async def _resolve_copy(
-    connection: AsyncConnection, arguments: argparse.Namespace
+    connection: AsyncConnection,
+    *,
+    source: str,
+    physical_copy_id: uuid.UUID | None,
+    certification_company: str | None,
+    certification_number: str | None,
 ) -> uuid.UUID | None:
     """Which `physical_copies` row these photographs belong to, creating one if needed.
 
     `None` only for approved class 4, whose copies nothing can identify.
+
+    Keywords rather than the parsed `Namespace` it used to take: #311's batch
+    reaches the same rows from a manifest row, and a helper that can only be
+    called by something argparse built is a helper with one caller by accident
+    rather than by design.
     """
-    if arguments.source == "product_upload":
+    if source == "product_upload":
         return None
-    if arguments.physical_copy_id is not None:
-        existing: uuid.UUID = arguments.physical_copy_id
-        return existing
+    if physical_copy_id is not None:
+        return physical_copy_id
 
     copy_id = uuid.uuid4()
     await connection.execute(
         sa.insert(physical_copies),
         {
             "id": copy_id,
-            "certification_company": arguments.certification_company,
-            "certification_number": arguments.certification_number,
+            "certification_company": certification_company,
+            "certification_number": certification_number,
         },
     )
     return copy_id
+
+
+async def ingest_card(
+    engine: AsyncEngine,
+    storage: ObjectStorage,
+    *,
+    provenance: TrainingImageProvenance,
+    front: bytes | None,
+    back: bytes | None,
+    physical_copy_id: uuid.UUID | None = None,
+    card_id: uuid.UUID | None = None,
+    certification_company: str | None = None,
+    certification_number: str | None = None,
+    max_bytes: int,
+    max_pixels: int,
+) -> tuple[uuid.UUID | None, tuple[IngestedImage, ...]]:
+    """Ingest one card's photographs in one transaction, and say what landed.
+
+    **Bytes, not paths.** The single-card command reads a file; #311's batch
+    hands over what it decoded and re-encoded, because a phone's HEIC is not one
+    of the two types the corpus stores. Neither caller decides what is
+    acceptable — `validate_image` still does, downstream of both.
+
+    Args:
+        engine: Opened and disposed by the caller, so a batch pays for one
+            engine rather than one per card.
+        storage: Where the bytes go. Keys are generated server-side.
+        provenance: Spec §29's nine fields, verified before anything is stored.
+        front: The front photograph's bytes, or `None` where there is none.
+        back: As `front`. At least one of the two is expected; a card with
+            neither writes a copy row and no images, which the callers refuse
+            earlier and with a better message.
+        physical_copy_id: An existing copy to add these photographs to, rather
+            than the new one this would otherwise create.
+        card_id: The catalog card, where somebody has identified it.
+        certification_company: With `certification_number`, records a slab
+            already owned onto the copy row this creates.
+        certification_number: As above.
+        max_bytes: The largest file accepted, before anything is decoded.
+        max_pixels: The largest bitmap accepted, read from the header.
+
+    Raises:
+        InvalidImage: If a photograph is empty, oversized, not a JPEG or PNG, or
+            cannot be decoded.
+        ProvenanceRefused: If ADR 0008 does not admit it.
+        IntegrityError: If a photograph is already in the corpus, or the row
+            names a card or copy that is not.
+    """
+    ingested: list[IngestedImage] = []
+    try:
+        async with engine.begin() as connection:
+            copy_id = await _resolve_copy(
+                connection,
+                source=provenance.source,
+                physical_copy_id=physical_copy_id,
+                certification_company=certification_company,
+                certification_number=certification_number,
+            )
+            for side, data in (("front", front), ("back", back)):
+                if data is None:
+                    continue
+                ingested.append(
+                    await ingest_training_image(
+                        connection,
+                        storage,
+                        data=data,
+                        side=side,
+                        provenance=provenance,
+                        physical_copy_id=copy_id,
+                        card_id=card_id,
+                        max_bytes=max_bytes,
+                        max_pixels=max_pixels,
+                    )
+                )
+    except BaseException:
+        # The rows are gone with the transaction, so the objects those rows
+        # named have to go too. Only reachable when a put succeeded and a later
+        # statement — or the commit itself — did not.
+        for image in ingested:
+            await _discard(storage, image.key)
+        raise
+
+    return copy_id, tuple(ingested)
 
 
 async def run(arguments: argparse.Namespace) -> tuple[uuid.UUID | None, tuple[IngestedImage, ...]]:
@@ -501,37 +595,22 @@ async def run(arguments: argparse.Namespace) -> tuple[uuid.UUID | None, tuple[In
     settings = get_settings()
     storage = create_object_storage(settings)
     engine = create_engine(settings)
-    ingested: list[IngestedImage] = []
     try:
-        async with engine.begin() as connection:
-            copy_id = await _resolve_copy(connection, arguments)
-            for side, path in (("front", arguments.front), ("back", arguments.back)):
-                if path is None:
-                    continue
-                ingested.append(
-                    await ingest_training_image(
-                        connection,
-                        storage,
-                        data=path.read_bytes(),
-                        side=side,
-                        provenance=provenance,
-                        physical_copy_id=copy_id,
-                        card_id=arguments.card_id,
-                        max_bytes=settings.upload_max_bytes,
-                        max_pixels=settings.upload_max_pixels,
-                    )
-                )
-    except BaseException:
-        # The rows are gone with the transaction, so the objects those rows
-        # named have to go too. Only reachable when a put succeeded and a later
-        # statement — or the commit itself — did not.
-        for image in ingested:
-            await _discard(storage, image.key)
-        raise
+        return await ingest_card(
+            engine,
+            storage,
+            provenance=provenance,
+            front=arguments.front.read_bytes() if arguments.front else None,
+            back=arguments.back.read_bytes() if arguments.back else None,
+            physical_copy_id=arguments.physical_copy_id,
+            card_id=arguments.card_id,
+            certification_company=arguments.certification_company,
+            certification_number=arguments.certification_number,
+            max_bytes=settings.upload_max_bytes,
+            max_pixels=settings.upload_max_pixels,
+        )
     finally:
         await engine.dispose()
-
-    return copy_id, tuple(ingested)
 
 
 def main() -> int:
