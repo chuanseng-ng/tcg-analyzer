@@ -72,7 +72,7 @@ from starlette.concurrency import run_in_threadpool
 from tcg_domain.analysis import V1_SIDES, AnalysisStatus, ImageSide, QualityStatus
 from tcg_domain.catalog import CardId
 from tcg_domain.errors import CatalogUnavailable
-from tcg_domain.image_quality import ConditionVerdict, QualityCondition
+from tcg_domain.image_quality import ConditionVerdict, GateRefusal, QualityCondition
 from tcg_domain.repository import CardRepository
 from tcg_shared.storage import ObjectStorage, StorageError, StorageKey, generate_key
 
@@ -241,6 +241,15 @@ class ImageQualityResponse(BaseModel):
             "All eleven of spec §19's conditions, or empty while the gate has "
             "not run. Never a subset: a condition nobody assessed is reported "
             "`undetermined` rather than omitted."
+        ),
+    )
+    refusal: GateRefusal | None = Field(
+        description=(
+            "Why the gate refused this photograph for something none of the "
+            "eleven conditions names — `no_card_found` when a detector ran and "
+            "could not locate a card, which makes the photograph `unusable` "
+            "however clean the conditions it could check came back. Null for "
+            "every photograph the gate was able to judge."
         ),
     )
 
@@ -547,7 +556,22 @@ def _image_response(image: ImageQuality) -> ImageQualityResponse:
         else QualityStatus(image.quality_status),
         quality_score=image.quality_score,
         findings=_findings(image.details),
+        refusal=_refusal(image.details),
     )
+
+
+def _refusal(details: dict[str, object] | None) -> GateRefusal | None:
+    """Why the gate refused this photograph outright, read back out of JSONB.
+
+    Defensive on `_findings`' terms and for its reason: the document is this
+    application's own, but it came out of the database and a word a later gate
+    wrote must not become a 500 on the screen that exists to explain a refusal.
+    The absence of the key and a refusal nobody here can name are the same
+    answer — nothing this response can say about it.
+    """
+    if not isinstance(details, dict):
+        return None
+    return _member(GateRefusal, details.get("refusal"))
 
 
 def _findings(details: dict[str, object] | None) -> list[QualityFindingResponse]:

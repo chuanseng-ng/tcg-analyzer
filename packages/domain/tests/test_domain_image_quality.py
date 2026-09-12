@@ -14,6 +14,7 @@ from tcg_domain.image_quality import (
     DECIDABLE_WITHOUT_GEOMETRY,
     NEEDS_CARD_GEOMETRY,
     ConditionVerdict,
+    GateRefusal,
     QualityCondition,
     QualityFinding,
     QualityReport,
@@ -52,7 +53,9 @@ def detected(condition: QualityCondition, severity: QualityStatus) -> QualityFin
     return QualityFinding(condition=condition, verdict=ConditionVerdict.DETECTED, severity=severity)
 
 
-def a_report(*overrides: QualityFinding, score: float = 1.0) -> QualityReport:
+def a_report(
+    *overrides: QualityFinding, score: float = 1.0, refusal: GateRefusal | None = None
+) -> QualityReport:
     """A report where everything is clear, minus whatever the caller replaces."""
     replaced = {finding.condition for finding in overrides}
     findings = [clear(c) for c in QualityCondition if c not in replaced]
@@ -60,6 +63,7 @@ def a_report(*overrides: QualityFinding, score: float = 1.0) -> QualityReport:
         findings=(*findings, *overrides),
         score=score,
         version="image-quality-heuristic-v0.1.0",
+        refusal=refusal,
     )
 
 
@@ -207,6 +211,34 @@ def test_the_worst_finding_is_the_verdict() -> None:
     assert report.status is QualityStatus.UNUSABLE
 
 
+def test_a_refused_photograph_is_unusable_however_clean_its_findings() -> None:
+    """#319: the gate could not assess it at all, which is not `acceptable`.
+
+    `acceptable` means "nothing wrong found, something not checked". A
+    photograph the card was never located in is a different answer: six of
+    eleven conditions were never reachable, and the one thing the user can act
+    on is that no card was found.
+    """
+    report = a_report(refusal=GateRefusal.NO_CARD_FOUND)
+
+    assert report.status is QualityStatus.UNUSABLE
+
+
+def test_an_unrefused_report_still_folds_its_findings() -> None:
+    """The refusal is the only thing that skips the fold — see #319."""
+    assert a_report().status is QualityStatus.GOOD
+    assert a_report(undetermined(QualityCondition.MULTIPLE_CARDS)).status is (
+        QualityStatus.ACCEPTABLE
+    )
+
+
+def test_a_refusal_must_name_a_reason_the_vocabulary_knows() -> None:
+    """A closed list, for `QualityCondition`'s reason: a refusal nobody wrote
+    copy for is a photograph refused for a reason nobody can read."""
+    with pytest.raises(ValueError):
+        a_report(refusal="the dog ate it")  # type: ignore[arg-type]
+
+
 def test_a_status_cannot_disagree_with_the_findings() -> None:
     """It is derived, not stored: there is no field to set inconsistently."""
     assert not hasattr(QualityReport, "__dataclass_fields__") or (
@@ -245,6 +277,13 @@ def test_the_record_is_plain_json_types() -> None:
     import json
 
     json.dumps(a_report(detected(QualityCondition.BLUR, QualityStatus.POOR)).as_record())
+
+
+def test_the_record_carries_a_refusal_and_omits_it_when_there_is_none() -> None:
+    """#319. A key that is always present with a null would make "not refused"
+    and "written by a gate that had no such idea" look the same."""
+    assert "refusal" not in a_report().as_record()
+    assert a_report(refusal=GateRefusal.NO_CARD_FOUND).as_record()["refusal"] == "no_card_found"
 
 
 def test_a_clear_finding_records_no_severity() -> None:

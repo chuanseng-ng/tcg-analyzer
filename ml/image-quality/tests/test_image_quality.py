@@ -25,6 +25,7 @@ from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence, Insuffic
 from tcg_domain.image_quality import (
     NEEDS_CARD_GEOMETRY,
     ConditionVerdict,
+    GateRefusal,
     QualityCondition,
 )
 from tcg_ml_image_quality import (
@@ -402,8 +403,52 @@ def test_a_detector_that_could_not_find_the_card_supplies_its_own_reason() -> No
     report = assess(png(a_photograph()), geometry=InsufficientInformation(excuse))
 
     assert report.of(QualityCondition.MULTIPLE_CARDS).reason == excuse
-    assert report.status is QualityStatus.ACCEPTABLE
     assert report.detector is None
+
+
+def test_a_photograph_with_no_findable_card_is_refused() -> None:
+    """#319. The photograph is sharp, lit and framed; there is no card in it.
+
+    `acceptable` said "nothing wrong found, something not checked" and let the
+    whole pipeline run on a rectangle nobody had located, to end in
+    `insufficient_information` — the one failure the user could have fixed,
+    reported as the one they could not.
+    """
+    data = png(a_photograph())
+    report = assess(data, geometry=INSUFFICIENT_INFORMATION)
+
+    assert report.refusal is GateRefusal.NO_CARD_FOUND
+    assert report.status is QualityStatus.UNUSABLE
+    # The issue's non-goal, pinned: scoring an unchecked condition is exactly
+    # what `_score` must not do, so a refusal moves the status and nothing else.
+    assert report.score == assess(data).score
+
+
+def test_a_refused_photograph_still_reports_the_six_it_could_not_check() -> None:
+    """The refusal replaces the verdict, never the findings — #181's criterion.
+
+    Every condition is still "detected or explicitly reported as undetermined",
+    and the detector's own sentence is still what says why.
+    """
+    excuse = "no card-like quadrilateral was found in the photograph"
+    report = assess(png(a_photograph()), geometry=InsufficientInformation(excuse))
+
+    for condition in NEEDS_CARD_GEOMETRY:
+        finding = report.of(condition)
+        assert finding.verdict is ConditionVerdict.UNDETERMINED, condition
+        assert finding.reason == excuse, condition
+
+
+def test_a_photograph_no_detector_ran_against_is_not_refused() -> None:
+    """The third state, and why `geometry` is not `CardGeometry | None`.
+
+    Nothing was attempted, so nothing failed: the gate has been asked to judge
+    the frame alone, which is what `datasets/normalization.py` does.
+    """
+    report = assess(png(a_photograph()))
+
+    assert report.refusal is None
+    assert report.status is QualityStatus.ACCEPTABLE
 
 
 def test_a_reasonless_failure_still_says_something() -> None:

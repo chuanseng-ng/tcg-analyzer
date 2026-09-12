@@ -34,7 +34,17 @@ all six conditions, and nothing anywhere guesses a quadrilateral.
 not locate the card, and its reason is what gets stored; a
 :class:`~tcg_domain.card_geometry.CardGeometry` means the six are answered.
 Folding the first two together would lose the only explanation a stored row
-would ever carry.
+would ever carry — and, since #319, the verdict as well: a detector that ran
+and found nothing refuses the photograph, where one that never ran leaves the
+gate judging the frame alone.
+
+**Reporting the six undetermined is not the same as passing the photograph.**
+#319 measured what the status fold made of a failed detection — `acceptable`,
+on five of seven real photographs, at scores as high as 0.889 because the score
+is the minimum over the conditions actually *decided* and there were fewer of
+them. The findings were right; the verdict was not. A card that was never
+located is §19's "analysis should stop" case, and
+:class:`~tcg_domain.image_quality.GateRefusal` is how the report says so.
 
 **This is a heuristic, and M7 replaces it with a model.** What must not change
 when it does is this signature and :class:`QualityReport` — the thresholds and
@@ -54,6 +64,7 @@ from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.confidence import InsufficientInformation, Uncertain
 from tcg_domain.image_quality import (
     ConditionVerdict,
+    GateRefusal,
     QualityCondition,
     QualityFinding,
     QualityReport,
@@ -148,6 +159,12 @@ def assess(
         version=IMAGE_QUALITY_VERSION,
         thresholds={**thresholds.as_record(), **(located.thresholds if located else {})},
         detector=None if located is None else located.detector,
+        # A detector that ran and found nothing, rather than one that never
+        # ran: the six above are undetermined either way, but only this one is
+        # a photograph the user can do something about.
+        refusal=(
+            GateRefusal.NO_CARD_FOUND if isinstance(geometry, InsufficientInformation) else None
+        ),
     )
 
 
@@ -497,6 +514,11 @@ def _score(
     from a module constant precisely so that this stays true when the geometric
     five join in: undetermined conditions contribute nothing, because a gate
     that scored an unchecked condition would be inventing a measurement.
+
+    A refusal is not a measurement either, so it does not appear here (#319).
+    `score < 0.5` still means exactly "a condition was *detected*" — but it no
+    longer implies the photograph was accepted, and a refused one may score
+    high precisely because there was so little left to measure.
     """
     return min(
         _margin(measurements[condition], _limits(condition, thresholds)) for condition in decided

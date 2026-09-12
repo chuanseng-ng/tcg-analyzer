@@ -19,4 +19,30 @@
 #         Reached only through <function>, which nothing in this repository
 #         calls. Upstream fix expected in <version>.
 #       expired_at: 2026-10-01
-vulnerabilities: []
+vulnerabilities:
+  # Both are the same finding twice: `libpcre2-8-0` 10.42-1 in the Debian
+  # bookworm base of every image this repository builds. Debian has published
+  # the fix (10.42-1+deb12u1) and the official images have not been rebuilt with
+  # it — the digests `infrastructure/docker/*.Dockerfile` pin are, as of
+  # 2026-09-12, still the current `python:3.12-slim-bookworm` and
+  # `node:26-bookworm-slim`, so there is no newer base to pin to. Repinning is
+  # the fix, and it becomes possible when upstream rebuilds; an `apt-get
+  # upgrade` layer is not, because it would trade the reproducibility the digest
+  # pin exists for.
+  - id: CVE-2026-86145
+    statement: >-
+      libpcre2 is a transitive system library of the Debian base, not a
+      dependency of anything this project runs: CPython's `re` is `_sre` and
+      Node's RegExp is V8's Irregexp, so neither runtime links it, and nothing
+      in this repository compiles an attacker-supplied regular expression
+      through it. Reaching this needs a crafted pattern given to a pcre2 caller,
+      and the only callers in the image are base-system tools that see no
+      request data. Fixed in Debian as 10.42-1+deb12u1; waiting on an upstream
+      image rebuild to pin.
+    expired_at: 2026-10-03
+  - id: CVE-2026-89161
+    statement: >-
+      The same `libpcre2-8-0` 10.42-1 in the same Debian base, reached the same
+      way and by nothing here — see CVE-2026-86145 above. Fixed in Debian as
+      10.42-1+deb12u1; waiting on an upstream image rebuild to pin.
+    expired_at: 2026-10-03

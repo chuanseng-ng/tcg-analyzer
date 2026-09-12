@@ -1837,6 +1837,21 @@ export interface components {
             recommended_action: string | null;
         };
         /**
+         * GateRefusal
+         * @description Why the gate refused a photograph outright, rather than for a condition.
+         *
+         *     A closed list for :class:`QualityCondition`'s reason, and read the same way
+         *     by everything downstream: a refusal nobody wrote copy for is a photograph
+         *     refused for a reason nobody can read.
+         *
+         *     This is not a twelfth condition. §19's eleven are things found *in* a
+         *     photograph; a refusal is the gate saying it could not look. A report
+         *     carrying one is `unusable` however clean its findings are, because the
+         *     findings it does carry are the ones that never needed the card.
+         * @enum {string}
+         */
+        GateRefusal: "no_card_found";
+        /**
          * GradeProbabilityResponse
          * @description One term of a grade distribution — spec §2.1's `P(g)`.
          */
@@ -1998,6 +2013,8 @@ export interface components {
             quality_score: number | null;
             /** @description Spec §19's verdict, or null while the gate has not run. `unusable` means the analysis stopped; `poor` means it went on and the user must be told. */
             quality_status: components["schemas"]["QualityStatus"] | null;
+            /** @description Why the gate refused this photograph for something none of the eleven conditions names — `no_card_found` when a detector ran and could not locate a card, which makes the photograph `unusable` however clean the conditions it could check came back. Null for every photograph the gate was able to judge. */
+            refusal: components["schemas"]["GateRefusal"] | null;
             /** @description Which view of the card this is. */
             side: components["schemas"]["ImageSide"];
         };
