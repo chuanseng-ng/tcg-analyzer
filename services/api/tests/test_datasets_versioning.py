@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -429,6 +430,75 @@ def test_counts_proportions_and_provenance_are_derived_from_the_members() -> Non
         "first_party/photographed_owned_slab": 3,
         "contributed/contributed_under_written_grant": 1,
     }
+
+
+def test_provenance_by_split_names_the_classes_that_reached_each_split() -> None:
+    """The pooled figure cannot answer the question a §27 claim depends on.
+
+    ADR 0008 approves `photographed_owned_slab` and scores it **0 on domain
+    match**, so a slab-sourced copy in the *test* split makes the within-±1
+    Wilson bound mean something other than what it says. Nothing refuses one:
+    `acquisition_method` is not one of §32's grouping keys and `ml/*` parses it
+    without ever reading it. The publish log is where it becomes visible.
+    """
+    raw = ManifestMember(
+        training_image_id=uuid.UUID("00000000-0000-0000-0000-0000000000ff"),
+        sha256="f" * 64,
+        split=DatasetSplit.TEST,
+        side="back",
+        source="first_party",
+        acquisition_method="photographed_before_submission",
+        original_uri="training/ff.png",
+    )
+    manifest = _manifest(
+        _member("00000000-0000-0000-0000-00000000000a"),
+        _member("00000000-0000-0000-0000-00000000000b", DatasetSplit.TEST),
+        raw,
+    )
+
+    assert manifest.provenance_by_split == {
+        DatasetSplit.TRAIN: {"first_party/photographed_owned_slab": 1},
+        DatasetSplit.VALIDATION: {},
+        DatasetSplit.TEST: {
+            "first_party/photographed_owned_slab": 1,
+            "first_party/photographed_before_submission": 1,
+        },
+    }
+
+
+def test_provenance_by_split_is_derived_and_never_rendered() -> None:
+    """A published version's bytes do not move because the operator gained a log line.
+
+    `--regenerate` reproducing `pokemon-condition-v0.2.0.json` byte for byte is
+    the acceptance criterion, so the per-split view stays out of the payload —
+    a reader that wants it recomputes it from `split` and `acquisition_method`,
+    which every member already carries.
+    """
+    manifest = _manifest(_member("00000000-0000-0000-0000-00000000000a"))
+
+    payload = json.loads(render_manifest(manifest))
+
+    assert "provenance_by_split" not in payload
+    assert payload["provenance"] == {"first_party/photographed_owned_slab": 1}
+
+
+def test_an_empty_manifest_reports_every_split_rather_than_no_splits() -> None:
+    assert _manifest().provenance_by_split == {split: {} for split in DatasetSplit}
+
+
+def test_the_publish_log_names_each_split_s_provenance_not_the_pooled_mix(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The operator's one chance to see a slab-sourced copy in the test split."""
+    slab = _member("00000000-0000-0000-0000-00000000000a", DatasetSplit.TEST)
+    manifest = _manifest(slab)
+
+    with caplog.at_level(logging.INFO, logger=versioning.__name__):
+        versioning._report(manifest, Path("manifest.json"), verb="published")
+
+    line = next(m for m in caplog.messages if m.startswith("provenance:"))
+    assert "test first_party/photographed_owned_slab 1" in line
+    assert "train empty" in line
 
 
 def test_proportions_are_exact_fractions_and_never_rounded() -> None:

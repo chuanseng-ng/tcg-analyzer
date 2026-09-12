@@ -271,6 +271,36 @@ class Manifest:
             )
         )
 
+    @property
+    def provenance_by_split(self) -> dict[DatasetSplit, dict[str, int]]:
+        """:attr:`provenance`, per split — which classes reached the test split.
+
+        The pooled figure cannot answer the question a §27 claim depends on.
+        ADR 0008 approves `photographed_owned_slab` and scores it **0 on domain
+        match**: the card is photographed through the case, which is not the
+        domain the product sees. A slab-sourced copy in the *test* split
+        therefore makes the within-±1 Wilson bound mean something other than
+        what it says.
+
+        **Nothing refuses one.** `acquisition_method` carries no CHECK, it is
+        not among §32's grouping keys, and `ml/evaluation` parses it onto
+        `CorpusMember` without ever reading it back. Keeping slab-sourced
+        copies out of the test split is a purchasing discipline, so this is
+        where the discipline becomes checkable.
+
+        Derived and deliberately **not rendered**: the manifest's `provenance`
+        key is part of a published version's bytes and `--regenerate`
+        reproducing them is the acceptance criterion. A reader that wants this
+        recomputes it from `split` and `acquisition_method`, which every member
+        already carries.
+        """
+        tally: dict[DatasetSplit, collections.Counter[str]] = {
+            split: collections.Counter() for split in DatasetSplit
+        }
+        for member in self.members:
+            tally[member.split][f"{member.source}/{member.acquisition_method}"] += 1
+        return {split: dict(counter) for split, counter in tally.items()}
+
 
 async def create_version(
     connection: AsyncConnection,
@@ -749,9 +779,19 @@ def _report(manifest: Manifest, path: Path, *, verb: str) -> None:
         "splits: %s",
         ", ".join(f"{split} {counts[split]} ({proportions[split]})" for split in DatasetSplit),
     )
+    # Per split, not pooled: the pooled mix cannot show a slab-sourced copy
+    # sitting in the test split, and nothing else in the pipeline ever will.
+    by_split = manifest.provenance_by_split
     logger.info(
         "provenance: %s",
-        ", ".join(f"{source} {count}" for source, count in sorted(manifest.provenance.items())),
+        "; ".join(
+            f"{split} "
+            + (
+                ", ".join(f"{name} {count}" for name, count in sorted(by_split[split].items()))
+                or "empty"
+            )
+            for split in DatasetSplit
+        ),
     )
     logger.info("manifest written to %s", path)
 
