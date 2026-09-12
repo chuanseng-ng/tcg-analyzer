@@ -143,6 +143,44 @@ which is how a card's post-grading photographs join its pre-grading ones.
 slab already owned. `--card-id` is optional: a directory of photographs can be
 ingested before anyone has identified what is in them.
 
+#### What each field accepts
+
+| Flag | Required | Accepted |
+| --- | --- | --- |
+| `--front`, `--back` | **at least one** | A path to an existing file. **JPEG or PNG only**, sniffed from the bytes — a `.jpg` that is not one is refused. At most 15 MiB and 50,000,000 pixels (`TCG_API_UPLOAD_MAX_BYTES`, `TCG_API_UPLOAD_MAX_PIXELS`). Which flag you use *is* the `side`; it is never passed separately |
+| `--source` | yes | `first_party`, `contributed`, `product_upload` — **only in the pairs below** |
+| `--acquisition-method` | yes | `photographed_before_submission`, `photographed_owned_slab`, `contributed_under_written_grant`, `uploaded_by_user_with_consent` — **only in the pairs below** |
+| `--license` | in effect | Any non-blank string. `None`, `""` and whitespace are one answer, and it is refusal |
+| `--commercial-use-allowed` | in effect | Present is true, `--no-…` is false, omitted is unstated. **Only true passes** |
+| `--derivative-use-allowed` | in effect | As above |
+| `--acquired-at` | yes | ISO 8601 **naming an offset**, e.g. `2026-08-01T10:00:00+08:00`. A naive timestamp is refused |
+| `--source-reference` | no | Free text: a certification number, a grant identifier, or a consent reference |
+| `--permission-notes` | no | Free text — the grant's own limits (ADR 0008's risk R1) |
+| `--physical-copy-id` | no | The UUID of an existing `physical_copies` row. **Not with `--certification-*`**, and never with `--source product_upload` |
+| `--certification-company` | no | `psa`, `tag` or `bgs`, and only together with `--certification-number` |
+| `--certification-number` | no | Non-blank. `(company, number)` is unique across every copy |
+| `--card-id` | no | The UUID of an existing `cards` row |
+
+**`--source` and `--acquisition-method` are not independent.** ADR 0008 admits
+four classes, not twelve combinations, and the command refuses anything else:
+
+| `source` | `acquisition_method` | |
+| --- | --- | --- |
+| `first_party` | `photographed_before_submission` | a raw card we own, photographed and then submitted |
+| `first_party` | `photographed_owned_slab` | a graded slab we own, photographed through the case |
+| `contributed` | `contributed_under_written_grant` | under a grant naming commercial use, derivative use and retention |
+| `product_upload` | `uploaded_by_user_with_consent` | this product's own user upload, where the user consented |
+
+There is **no `--redistribution-allowed`**. ADR 0008 makes it false on all four
+sources, including the photographs this project took itself, because the artwork
+in them is not ours. The column records that answer; it is not a switch to
+waive, and a source that granted redistribution would be a new ADR.
+
+**`tcg-ingest-training-batch` takes the same flags**, minus `--certification-*`
+and `--front`/`--back`, plus `--manifest` and `--timezone`. It accepts any
+format Pillow can decode and converts it, which is the one place the two
+commands differ on input.
+
 ### Ingesting a batch
 
 `tcg-ingest-training-batch` is the same ingestion once per row of a CSV — one

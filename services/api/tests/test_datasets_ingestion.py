@@ -665,6 +665,28 @@ def test_redistribution_takes_no_flag() -> None:
         _parser().parse_args(["--redistribution-allowed"])
 
 
+def test_the_help_names_the_pairs_rather_than_two_independent_lists() -> None:
+    """`--source` and `--acquisition-method` are not free of each other.
+
+    Listed separately, `--source contributed --acquisition-method
+    photographed_owned_slab` reads as a valid combination from `--help` and is
+    refused at runtime. Argparse has no way to express the dependency, so the
+    help text has to.
+    """
+    help_text = _parser().format_help()
+
+    for source, method in APPROVED_SOURCES:
+        assert f"{source}/{method}" in " ".join(help_text.split())
+
+
+def test_the_help_says_which_file_types_and_limits_apply() -> None:
+    """JPEG and PNG, sniffed from the bytes — a `.jpg` that is not one is refused."""
+    help_text = " ".join(_parser().format_help().split())
+
+    assert "JPEG" in help_text
+    assert "PNG" in help_text
+
+
 def test_nothing_to_ingest_is_refused() -> None:
     with pytest.raises(SystemExit):
         parse(*FIRST_PARTY_ARGV)

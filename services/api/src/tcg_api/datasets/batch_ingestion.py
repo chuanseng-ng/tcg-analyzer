@@ -55,9 +55,9 @@ from tcg_api.analysis.image_validation import InvalidImage
 from tcg_api.config import Settings, get_settings
 from tcg_api.database import create_engine
 from tcg_api.datasets.ingestion import (
-    APPROVED_SOURCES,
     ProvenanceRefused,
     TrainingImageProvenance,
+    approved_pairs,
     ingest_card,
     verify_provenance,
 )
@@ -429,12 +429,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source",
         required=True,
-        help="§29's source: " + ", ".join(sorted({source for source, _ in APPROVED_SOURCES})),
+        help=(
+            "§29's source. It pairs with --acquisition-method, and only ADR 0008's four "
+            f"combinations are admitted: {approved_pairs()}"
+        ),
     )
     parser.add_argument(
         "--acquisition-method",
         required=True,
-        help="§29's acquisition_method: " + ", ".join(method for _, method in APPROVED_SOURCES),
+        help="§29's acquisition_method — the right-hand half of the pair --source names",
     )
     # Deliberately not `required`, for the single-card command's reason: argparse
     # saying "the following arguments are required" would be the wrong refusal.

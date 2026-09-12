@@ -59,6 +59,7 @@ from tcg_api.datasets.batch_ingestion import (
     resolve_acquired_at,
 )
 from tcg_api.datasets.batch_ingestion import run as batch_run
+from tcg_api.datasets.ingestion import APPROVED_SOURCES
 from tcg_api.datasets.tables import training_images
 
 DATABASE_URL = os.environ.get("TCG_API_DATABASE_URL")
@@ -568,3 +569,11 @@ def test_one_bad_row_does_not_stop_the_batch(tmp_path: Path) -> None:
     written = list(csv.DictReader((tmp_path / "cards.ingested.csv").read_text().splitlines()))
     assert [entry["status"] for entry in written] == ["refused", "landed"]
     assert written[0]["physical_copy_id"] == ""
+
+
+def test_the_help_names_the_pairs_rather_than_two_independent_lists() -> None:
+    """The single-card command's rule, and the batch inherits the flags verbatim."""
+    help_text = " ".join(_parser().format_help().split())
+
+    for source, method in APPROVED_SOURCES:
+        assert f"{source}/{method}" in help_text
