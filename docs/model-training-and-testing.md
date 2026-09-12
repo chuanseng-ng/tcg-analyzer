@@ -16,7 +16,7 @@ a constant in the source:
 
 | Stage | What runs | Version |
 | --- | --- | --- |
-| Quality gate | Heuristic checks of spec §19's eleven conditions | `image-quality-heuristic-v0.3.0` |
+| Quality gate | Heuristic checks of spec §19's eleven conditions | `image-quality-heuristic-v0.4.0` |
 | Card detection, normalization | OpenCV | `card-detection-opencv-v0.5.0`, `normalization-opencv-v0.2.0` |
 | Condition | Four OpenCV analyzers, composed into one neutral reading | `centering-`, `corners-`, `edges-` and `surface-opencv-v0.1.0` |
 | Grades | One declared baseline per company, confidence capped at 0.35 | `grading-psa-`, `grading-tag-` and `grading-bgs-heuristic-v0.1.0` |
