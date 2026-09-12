@@ -72,7 +72,11 @@ services:
   # missing key with 403 rather than 404, and `/readiness` would report storage
   # down. Every command is idempotent, so a second `up` re-runs it harmlessly.
   minio-init:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # **`quay.io/`, never the bare `minio/minio`.** MinIO's Docker Hub
+    # repository is gone — a pull answers "repository does not exist", which
+    # reads like a credentials problem and is not one. quay.io is MinIO's own
+    # registry and carries this release; the tag is otherwise unchanged.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     <<: *hardening
     cap_drop: [ALL]
     environment:

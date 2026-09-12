@@ -94,7 +94,11 @@ services:
     # a deployment will (spec §8 asks for "S3-compatible", not for AWS). Nothing
     # in the application knows which of the two it is talking to — that is the
     # point of the port in packages/shared.
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # **`quay.io/`, never the bare `minio/minio`.** MinIO's Docker Hub
+    # repository is gone — a pull answers "repository does not exist", which
+    # reads like a credentials problem and is not one. quay.io is MinIO's own
+    # registry and carries this release; the tag is otherwise unchanged.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
     <<: *hardening
     # The bucket is created before the server starts, so a fresh volume comes up
     # usable and nobody has to be told to click through the console first.
