@@ -414,10 +414,14 @@ def test_a_photograph_with_no_findable_card_is_refused() -> None:
     `insufficient_information` — the one failure the user could have fixed,
     reported as the one they could not.
     """
-    report = assess(png(a_photograph()), geometry=INSUFFICIENT_INFORMATION)
+    data = png(a_photograph())
+    report = assess(data, geometry=INSUFFICIENT_INFORMATION)
 
     assert report.refusal is GateRefusal.NO_CARD_FOUND
     assert report.status is QualityStatus.UNUSABLE
+    # The issue's non-goal, pinned: scoring an unchecked condition is exactly
+    # what `_score` must not do, so a refusal moves the status and nothing else.
+    assert report.score == assess(data).score
 
 
 def test_a_refused_photograph_still_reports_the_six_it_could_not_check() -> None:
