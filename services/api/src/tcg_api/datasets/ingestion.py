@@ -93,6 +93,7 @@ __all__ = [
     "IngestedImage",
     "ProvenanceRefused",
     "TrainingImageProvenance",
+    "approved_pairs",
     "ingest_card",
     "ingest_training_image",
     "main",
@@ -143,6 +144,19 @@ APPROVED_SOURCES: Final[dict[tuple[str, str], str]] = {
 #: all four approved sources and the column records that rather than gating on
 #: it.
 GATED_FIELDS: Final = ("commercial_use_allowed", "derivative_use_allowed", "license")
+
+
+def approved_pairs() -> str:
+    """ADR 0008's four classes as `source/acquisition_method`, for a message.
+
+    **The two flags are not independent, and argparse cannot say so.** Listed as
+    a set of sources and a set of methods, `--source contributed
+    --acquisition-method photographed_owned_slab` reads as a valid combination
+    and is refused at runtime. So the help prints pairs, and both commands and
+    :func:`verify_provenance` print *this* string rather than three spellings of
+    one list that could drift apart.
+    """
+    return ", ".join(f"{source}/{method}" for source, method in APPROVED_SOURCES)
 
 
 class ProvenanceRefused(ValueError):
@@ -212,7 +226,7 @@ def verify_provenance(provenance: TrainingImageProvenance) -> None:
     """
     pair = (provenance.source, provenance.acquisition_method)
     if pair not in APPROVED_SOURCES:
-        approved = ", ".join(f"{source}/{method}" for source, method in APPROVED_SOURCES)
+        approved = approved_pairs()
         raise ProvenanceRefused(
             f"{provenance.source}/{provenance.acquisition_method} is not one of ADR 0008's "
             f"four approved training-image sources ({approved}). A rejected source re-enters "
@@ -373,17 +387,26 @@ def _aware(value: str) -> datetime:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, add_help=True)
-    parser.add_argument("--front", type=Path, help="the photograph of the card's front")
-    parser.add_argument("--back", type=Path, help="the photograph of the card's back")
+    parser.add_argument(
+        "--front",
+        type=Path,
+        help="the photograph of the card's front — a JPEG or PNG, sniffed from the bytes",
+    )
+    parser.add_argument(
+        "--back", type=Path, help="the photograph of the card's back — a JPEG or PNG"
+    )
     parser.add_argument(
         "--source",
         required=True,
-        help="§29's source: " + ", ".join(sorted({source for source, _ in APPROVED_SOURCES})),
+        help=(
+            "§29's source. It pairs with --acquisition-method, and only ADR 0008's four "
+            f"combinations are admitted: {approved_pairs()}"
+        ),
     )
     parser.add_argument(
         "--acquisition-method",
         required=True,
-        help="§29's acquisition_method: " + ", ".join(method for _, method in APPROVED_SOURCES),
+        help="§29's acquisition_method — the right-hand half of the pair --source names",
     )
     # Deliberately not `required`, and deliberately defaulting to None. Argparse
     # saying "the following arguments are required" would be the wrong refusal:
