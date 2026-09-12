@@ -21,6 +21,7 @@
 import type { components } from "./api-types";
 
 type QualityCondition = components["schemas"]["QualityCondition"];
+type GateRefusal = components["schemas"]["GateRefusal"];
 type ImageQuality = components["schemas"]["ImageQualityResponse"];
 type UploadSide = components["schemas"]["ImageSide"];
 
@@ -45,6 +46,19 @@ const CONDITION_COPY: Readonly<Record<QualityCondition, string>> = {
   insufficient_card_size: "The card is too small in the frame.",
 };
 
+/**
+ * One sentence per refusal — what the gate could not do, rather than what it
+ * found. A `Record` over the generated union for `CONDITION_COPY`'s reason.
+ *
+ * This is the sentence the whole of #319 is about. A photograph with no
+ * findable card used to pass the gate and end in "we could not conclude"; it
+ * now stops here, and this is the only line on the screen the person holding
+ * the phone can act on.
+ */
+const REFUSAL_COPY: Readonly<Record<GateRefusal, string>> = {
+  no_card_found: "No card could be found in the picture.",
+};
+
 /** How each side is named in a sentence about it. */
 const SIDE_COPY: Readonly<Record<UploadSide, string>> = {
   front: "front",
@@ -63,16 +77,24 @@ export function nameOf(side: UploadSide): string {
 }
 
 /**
- * What was actually wrong with one photograph, in the order the gate reported.
+ * What was actually wrong with one photograph, the refusal first.
  *
  * Only `detected` findings. A condition the gate could not check is not a
  * complaint — the screen has nothing to offer about it, and listing "could not
  * check for sleeves" beside a real fault would bury the real fault.
+ *
+ * A refusal *is* a complaint, and it leads: it is the reason the other eleven
+ * answers are as thin as they are, and the only one of them a person can do
+ * something about.
  */
 export function faultsIn(image: ImageQuality): readonly string[] {
-  return image.findings
-    .filter((finding) => finding.verdict === "detected")
-    .map((finding) => CONDITION_COPY[finding.condition]);
+  const refused = image.refusal === null ? [] : [REFUSAL_COPY[image.refusal]];
+  return [
+    ...refused,
+    ...image.findings
+      .filter((finding) => finding.verdict === "detected")
+      .map((finding) => CONDITION_COPY[finding.condition]),
+  ];
 }
 
 /** Whether this photograph is one the gate refused outright. */

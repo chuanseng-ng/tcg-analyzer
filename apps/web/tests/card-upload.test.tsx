@@ -90,6 +90,7 @@ function judged(
     side,
     quality_status,
     quality_score: quality_status === "unusable" ? 0.05 : 0.4,
+    refusal: null,
     findings: conditions.map((condition) => ({
       condition,
       verdict: "detected" as const,

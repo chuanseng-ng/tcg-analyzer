@@ -36,6 +36,7 @@ function image(overrides: Partial<ImageQuality> = {}): ImageQuality {
     quality_status: "acceptable",
     quality_score: 0.9,
     findings: [],
+    refusal: null,
     ...overrides,
   };
 }
@@ -64,6 +65,25 @@ describe("quality copy", () => {
     });
 
     expect(faultsIn(unchecked)).toEqual([]);
+  });
+
+  it("names the missing card when the gate refused the photograph outright", () => {
+    // #319. The gate never located a card, so nothing was `detected` and the
+    // screen had a refusal with an empty list of faults under it.
+    const refused = image({ quality_status: "unusable", refusal: "no_card_found" });
+
+    expect(faultsIn(refused)).toEqual(["No card could be found in the picture."]);
+  });
+
+  it("puts the refusal before the faults the gate did manage to find", () => {
+    const refused = image({
+      quality_status: "unusable",
+      refusal: "no_card_found",
+      findings: [detected("blur", "poor")],
+    });
+
+    expect(faultsIn(refused)[0]).toBe("No card could be found in the picture.");
+    expect(faultsIn(refused)).toHaveLength(2);
   });
 
   it("names each side in words a person would use", () => {

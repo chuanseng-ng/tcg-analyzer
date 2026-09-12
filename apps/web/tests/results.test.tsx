@@ -35,7 +35,14 @@ function photograph(
   side: ImageQuality["side"],
   overrides: Partial<ImageQuality> = {},
 ): ImageQuality {
-  return { side, quality_status: "good", quality_score: 0.9, findings: [], ...overrides };
+  return {
+    side,
+    quality_status: "good",
+    quality_score: 0.9,
+    findings: [],
+    refusal: null,
+    ...overrides,
+  };
 }
 
 /** A front photograph the gate refused, for the reason it gives. */
@@ -933,6 +940,28 @@ describe("a failed analysis", () => {
       "/analyze",
     );
     expect(readResultsMock).not.toHaveBeenCalled();
+  });
+
+  it("says no card was found when that is what the gate refused it for", async () => {
+    // #319. This photograph has nothing else wrong with it — the gate simply
+    // never located a card, so every fault list it could offer is empty and
+    // the screen used to name the side and stop there.
+    const noCard = photograph("front", {
+      quality_status: "unusable",
+      quality_score: 0.89,
+      refusal: "no_card_found",
+    });
+    readAnalysisMock.mockResolvedValue(
+      failed("unusable_photograph", { images: [noCard, photograph("back")] }),
+    );
+
+    render(<Results />);
+
+    await screen.findByRole("heading", { name: "This analysis could not be completed." });
+    expect(
+      screen.getByText(/The front photograph could not support an analysis/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("No card could be found in the picture.")).toBeInTheDocument();
   });
 
   it("lets the stored reason decide, not the photographs", async () => {
