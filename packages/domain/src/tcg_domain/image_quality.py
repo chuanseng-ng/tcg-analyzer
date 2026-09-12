@@ -32,10 +32,16 @@ stored as JSON and served over HTTP.
 **What `acceptable` means.** §19 lists four statuses and defines none of them.
 :meth:`QualityReport.status` fixes the reading: `good` is all eleven conditions
 clear; `acceptable` is nothing wrong found *but something not checked*; `poor`
-and `unusable` are the worst severity actually detected. So a photograph the
-detector could not locate a card in tops out at `acceptable`, however sharp and
-well lit it is — the gate has not looked at everything, and saying so is the
-point.
+and `unusable` are the worst severity actually detected.
+
+**And a fifth thing may be said, which is not a finding at all.** A gate that
+ran a detector and got nothing back has not merely left something unchecked —
+it could not assess the photograph. #319 measured what the fold made of that:
+`acceptable`, at a *higher* score than photographs the card was found in,
+because the score is the minimum over the conditions actually decided and there
+were fewer of them. :class:`GateRefusal` is the report saying so, and it
+outranks the fold. A photograph no detector ran against is still `acceptable`
+— nothing was attempted, so nothing failed.
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ __all__ = [
     "DECIDABLE_WITHOUT_GEOMETRY",
     "NEEDS_CARD_GEOMETRY",
     "ConditionVerdict",
+    "GateRefusal",
     "QualityCondition",
     "QualityFinding",
     "QualityReport",
@@ -97,6 +104,25 @@ class ConditionVerdict(StrEnum):
     DETECTED = "detected"
     #: Not decidable from what the gate had. Carries a reason.
     UNDETERMINED = "undetermined"
+
+
+class GateRefusal(StrEnum):
+    """Why the gate refused a photograph outright, rather than for a condition.
+
+    A closed list for :class:`QualityCondition`'s reason, and read the same way
+    by everything downstream: a refusal nobody wrote copy for is a photograph
+    refused for a reason nobody can read.
+
+    This is not a twelfth condition. §19's eleven are things found *in* a
+    photograph; a refusal is the gate saying it could not look. A report
+    carrying one is `unusable` however clean its findings are, because the
+    findings it does carry are the ones that never needed the card.
+    """
+
+    #: The detector ran and could not locate a card. Its own sentence is on
+    #: each of the six conditions it would have answered; this is the fact the
+    #: status is derived from.
+    NO_CARD_FOUND = "no_card_found"
 
 
 #: The conditions the frame alone answers: whatever the photograph is of, these
@@ -259,10 +285,15 @@ class QualityReport:
             depend on is a second version the record has to name, or a verdict
             cannot be reproduced from what is stored beside it. Absent when the
             geometric five were reported undetermined.
+        refusal: Why the gate refused the photograph outright, when it did.
+            Absent for every photograph the gate was able to judge, which is why
+            it is not a status the findings could carry — see
+            :class:`GateRefusal`.
 
     Raises:
         InvalidQualityReport: If a condition is missing or repeated, the score is
             out of range, or the version is blank.
+        ValueError: If `refusal` names nothing in :class:`GateRefusal`.
     """
 
     findings: tuple[QualityFinding, ...]
@@ -270,6 +301,7 @@ class QualityReport:
     version: str
     thresholds: Mapping[str, float] = _NO_THRESHOLDS
     detector: str | None = None
+    refusal: GateRefusal | None = None
 
     def __post_init__(self) -> None:
         set_field = object.__setattr__
@@ -279,6 +311,8 @@ class QualityReport:
         set_field(self, "thresholds", MappingProxyType(dict(self.thresholds)))
         if self.detector is not None:
             set_field(self, "detector", _validated_version(self.detector, label="detector"))
+        if self.refusal is not None:
+            set_field(self, "refusal", GateRefusal(self.refusal))
 
         seen = [finding.condition for finding in self.findings]
         if sorted(seen) != sorted(QualityCondition):
@@ -295,8 +329,13 @@ class QualityReport:
 
         Derived so that the status and the findings cannot disagree — a report
         saying `good` while carrying a detected blur is not representable.
+
+        A :attr:`refusal` is folded in rather than branched around, so the one
+        rule stays "the worst thing said about this photograph wins" — and a
+        refusal is the worst thing there is.
         """
-        return worst_status(finding.contribution for finding in self.findings)
+        refused = () if self.refusal is None else (QualityStatus.UNUSABLE,)
+        return worst_status((*(f.contribution for f in self.findings), *refused))
 
     def of(self, condition: QualityCondition) -> QualityFinding:
         """The finding for `condition`. Always present, by construction."""
@@ -311,6 +350,7 @@ class QualityReport:
         return {
             "version": self.version,
             **({} if self.detector is None else {"detector": self.detector}),
+            **({} if self.refusal is None else {"refusal": str(self.refusal)}),
             "thresholds": dict(self.thresholds),
             "findings": [
                 {
