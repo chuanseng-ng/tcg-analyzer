@@ -143,6 +143,42 @@ which is how a card's post-grading photographs join its pre-grading ones.
 slab already owned. `--card-id` is optional: a directory of photographs can be
 ingested before anyone has identified what is in them.
 
+### Ingesting a batch
+
+`tcg-ingest-training-batch` is the same ingestion once per row of a CSV — one
+card, one transaction, looped. #311's first graded submission is about 112 cards
+per company, which is not a shape a card at a time fits.
+
+```bash
+uv run tcg-ingest-training-batch --manifest cards.csv --timezone +08:00 --source first_party --acquisition-method photographed_before_submission --license "owned outright" --commercial-use-allowed --derivative-use-allowed
+```
+
+The manifest's header is `front,back,label,card_id,acquired_at`; only the first
+two are required, either may be blank, and paths resolve against the **manifest's
+own directory** rather than the working directory. The provenance flags are the
+single-card command's and describe the whole batch, so a blank `--license` is
+refused once, before a photograph is opened.
+
+- **Whatever Pillow can decode becomes one of the two types the corpus stores.**
+  A JPEG or PNG passes through byte-identical — re-encoding one would change the
+  digest that is its identity. Anything else becomes a lossless PNG. **HEIC needs
+  the `worker` extra** (`uv sync --all-packages --extra worker`); the API image
+  carries no HEIF decoder, and without one a HEIC row refuses by name.
+- **`acquired_at` is EXIF `DateTimeOriginal` plus `--timezone`**, read from the
+  original before conversion, because a PNG carries no EXIF and
+  `validate_image` strips what the original had. A row may state its own
+  instead. Neither is a refusal, never `now()`. The front's instant is the
+  card's: `acquired_at` belongs to the provenance record, which is one card's.
+- **A bad row is logged by number and skipped**, and the exit code is 1 if any
+  were. A photograph already in the corpus reports `already_present` rather than
+  failing, which is what makes a resumed run safe.
+- **`cards.ingested.csv` lands beside the manifest** with the `physical_copy_id`
+  per row — the mapping `tcg-record-grading-outcome` needs when the slabs come
+  back. `--output` moves it.
+- **No `--certification-*`.** A batch of slabs would be one certification number
+  for every card in it, which is a row nobody can look up; ingest those one at a
+  time.
+
 **The two rights flags are deliberately not required, and omitting one is a
 refusal.** `--commercial-use-allowed` and `--derivative-use-allowed` default to
 *unstated*, and

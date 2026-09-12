@@ -109,7 +109,39 @@ One invocation is one physical card:
 uv run tcg-ingest-training-images --front front.jpg --back back.jpg --source first_party --acquisition-method photographed_before_submission --license "owned outright" --commercial-use-allowed --derivative-use-allowed --acquired-at 2026-08-01T10:00:00+08:00
 ```
 
-**Keep the physical-copy identifier it prints.** The grade that comes back
+**A submission batch is a manifest, not a hundred invocations.** #311's first
+batch is about 112 cards per company, so one command reads a CSV that pairs
+whatever your photographs happen to be called:
+
+```csv
+front,back,label
+IMG_4471.HEIC,IMG_4472.HEIC,charizard-base-4
+DSC_0099.jpg,DSC_0101.jpg,pikachu-jungle-60
+```
+
+```bash
+uv run tcg-ingest-training-batch --manifest cards.csv --timezone +08:00 --source first_party --acquisition-method photographed_before_submission --license "owned outright" --commercial-use-allowed --derivative-use-allowed
+```
+
+- **It loops one card's transaction; it never widens it.** A row that fails is
+  logged by number and skipped, and the rows before it stand.
+- **Re-running is safe.** A photograph already in the corpus is a refusal
+  (`uq_training_images_sha256`), so a resumed run skips what landed.
+- **Whatever Pillow can decode becomes a JPEG or a PNG.** A HEIC straight off a
+  phone converts to lossless PNG; a file that is already JPEG or PNG is stored
+  byte for byte, never re-encoded.
+- **`acquired_at` comes from EXIF `DateTimeOriginal` plus `--timezone`**, since
+  EXIF records no offset. A row may state its own instead. A photograph with
+  neither is refused rather than stamped with the time it was ingested.
+- **It writes `cards.ingested.csv` beside the manifest**, one line per row with
+  the `physical_copy_id` the grade will be recorded against weeks later. That
+  file is the mapping step 4 needs — keep it with the photographs, outside the
+  repository.
+- **HEIC needs the `worker` extra**: `uv sync --all-packages --extra worker`, or
+  the worker image. The API image has no caller for a HEIF decoder and does not
+  carry one.
+
+**Keep the physical-copy identifier it prints** (the batch writes them all to its output CSV). The grade that comes back
 weeks later is recorded against it. Keep the mapping from card to identifier
 outside the repository, beside the photographs.
 [Training images](database.md#training-images) has the rest: adding a later
