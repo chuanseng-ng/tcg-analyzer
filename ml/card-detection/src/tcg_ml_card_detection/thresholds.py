@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.9.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.10.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
@@ -154,6 +154,14 @@ class DetectionThresholds:
     #: reason and never turn a refusal into an answer. A copy rather than an
     #: import, because neither ML package imports the other.
     case_max_perspective_ratio: float = 1.45
+    #: A returned quadrilateral below :attr:`case_max_aspect` whose own group
+    #: holds a member nearer a card's proportions, at no more than this
+    #: fraction of its area, is a case whose card grouped with it (#330). A
+    #: card over a slab is physically 0.504. On angled TAG slabs the card
+    #: measured 0.464-0.712 of the returned shell; bare cards in the same
+    #: domain (tilted, skew under 1.45) measured 0.966 and 0.980, and no
+    #: corpus card reaches the domain at all.
+    case_max_area_ratio: float = 0.75
 
     #: A corner within this fraction of the frame's short edge of the frame
     #: boundary counts as touching it — the same normalisation, and the same
@@ -188,6 +196,10 @@ class DetectionThresholds:
         if self.case_max_perspective_ratio <= 1.0:
             raise ValueError(
                 f"case_max_perspective_ratio must exceed 1, got {self.case_max_perspective_ratio!r}"
+            )
+        if not 0.0 < self.case_max_area_ratio < 1.0:
+            raise ValueError(
+                f"case_max_area_ratio must lie in (0, 1), got {self.case_max_area_ratio!r}"
             )
         if self.containment_slack_px < 0.0:
             raise ValueError(

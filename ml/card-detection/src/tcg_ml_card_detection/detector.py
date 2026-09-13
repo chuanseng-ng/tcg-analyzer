@@ -87,7 +87,13 @@ centres (#327). Refused rather than
 analysed through: spec §4 excludes slab analysis. **Never through a strong
 keystone** (#325): a tilted bare card's text region can read nearer a card than
 the foreshortened card does, so past the gate's perspective unusable line the
-question is not asked and the perspective refusal answers instead.
+question is not asked and the perspective refusal answers instead. **Nor only
+across groups** (#330): on angled slabs the card often lands in the shell's own
+group, so the same two halves are asked of the returned quadrilateral and its
+group's members, with the member required to be well inside by area — and
+aspects read from the corners, which for a fallback candidate are not the
+admission rectangle's (#324). One angled slab, a group of one, is out of reach
+and left to the perspective warning.
 
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
@@ -259,6 +265,10 @@ def detect(
         member for member in card_group if member.boundary_margin > thresholds.frame_margin_fraction
     ]
     card = max(clear_of_the_boundary or card_group, key=lambda member: member.area)
+    # The same case, with its card grouped alongside it rather than contained
+    # as a group of its own (#330).
+    if _holds_a_card(card, card_group, thresholds=thresholds):
+        return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
 
     return CardGeometry(
         corners=_rescaled(card.quad, scale=scale, width=original_width, height=original_height),
@@ -617,6 +627,40 @@ def _is_a_case(
     return outer.aspect < thresholds.case_max_aspect and abs(contained.aspect - CARD_ASPECT) < abs(
         outer.aspect - CARD_ASPECT
     )
+
+
+def _holds_a_card(
+    card: _Candidate, group: list[_Candidate], *, thresholds: DetectionThresholds
+) -> bool:
+    """Whether the returned quadrilateral is a case holding a card in its own group.
+
+    #320's two halves again, read inside one group: not card-shaped itself, and
+    holding a member nearer a card's proportions. The member must also be
+    well inside by area (:attr:`DetectionThresholds.case_max_area_ratio`),
+    because in-group members are mostly the same card found by another pass,
+    and bare cards measured 0.966 and up. Not #320's forbidden span signal,
+    which compared members with each other rather than with the returned one.
+
+    Aspects are read from the corners, not the admission rectangle: for a
+    fallback candidate the two disagree (#324), and on real angled slabs the
+    rectangle read 0.656 and 0.701 where the keystone read 0.509 and 0.495.
+    """
+    aspect = _quad_aspect(card.quad)
+    if aspect >= thresholds.case_max_aspect or (
+        _opposite_side_ratio(card.quad) > thresholds.case_max_perspective_ratio
+    ):
+        return False
+    return any(
+        member.area <= thresholds.case_max_area_ratio * card.area
+        and abs(_quad_aspect(member.quad) - CARD_ASPECT) < abs(aspect - CARD_ASPECT)
+        for member in group
+        if member is not card
+    )
+
+
+def _quad_aspect(quad: _Quad) -> float:
+    sides = _side_lengths(quad)
+    return min(sides) / max(sides)
 
 
 def _opposite_side_ratio(quad: _Quad) -> float:
