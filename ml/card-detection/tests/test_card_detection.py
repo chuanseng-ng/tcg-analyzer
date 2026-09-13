@@ -540,6 +540,31 @@ def test_a_container_keystoned_past_the_unusable_line_is_not_read_as_a_case() ->
     assert found.opposite_side_ratio > DEFAULT_DETECTION_THRESHOLDS.case_max_perspective_ratio
 
 
+def test_a_card_grouped_with_its_case_is_still_refused() -> None:
+    """#330: an angled TAG slab's card sat in its shell's own group.
+
+    With no second group there is no containment pair, so #320's rule never
+    ran and the shell was returned as the card at `poor`. Drawn concentric, so
+    the card is a member of the shell's group by construction: a sub-0.65
+    returned quadrilateral holding a nearer-card member at half its area (a
+    card over a slab is physically 0.504; bare cards measured 0.966 and up).
+    """
+    from tcg_ml_card_detection import DetectionThresholds
+
+    picture = background()
+    left, top, width, height = CARD
+    picture[top - 227 : top - 227 + 1334, left - 98 : left - 98 + 826] = printed(826, 1334, 120)
+    place(picture, (left, top, width, height), 215)
+    data = png(picture)
+
+    found = detect(data)
+    assert isinstance(found, CardNotLocated), found
+    assert found.refusal is GateRefusal.CARD_IN_A_CASE
+    assert isinstance(
+        detect(data, thresholds=DetectionThresholds(case_max_area_ratio=0.01)), CardGeometry
+    )
+
+
 def test_a_container_of_a_cards_own_proportions_is_not_a_case() -> None:
     """The other half of the rule, and the reason it cannot refuse a bare card.
 
