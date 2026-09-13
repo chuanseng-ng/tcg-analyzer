@@ -54,11 +54,13 @@ from types import MappingProxyType
 from typing import Final
 
 from tcg_domain.analysis import QualityStatus
+from tcg_domain.confidence import InsufficientInformation
 from tcg_domain.errors import InvalidQualityReport
 
 __all__ = [
     "DECIDABLE_WITHOUT_GEOMETRY",
     "NEEDS_CARD_GEOMETRY",
+    "CardNotLocated",
     "ConditionVerdict",
     "GateRefusal",
     "QualityCondition",
@@ -123,6 +125,30 @@ class GateRefusal(StrEnum):
     #: each of the six conditions it would have answered; this is the fact the
     #: status is derived from.
     NO_CARD_FOUND = "no_card_found"
+    #: The detector located a rigid case around the card — a grader's slab —
+    #: rather than the card itself (#320). V1 analyses raw cards (spec §4
+    #: excludes slab analysis), and what it would otherwise have returned is
+    #: the case, label and all, warped into a card's frame.
+    CARD_IN_A_CASE = "card_in_a_case"
+
+
+@dataclass(frozen=True, slots=True)
+class CardNotLocated(InsufficientInformation):
+    """A detector's admission that it has no card, in the gate's vocabulary.
+
+    Still an :class:`~tcg_domain.confidence.InsufficientInformation`, so every
+    reader that treats a failed detection as falsy is unchanged; what it adds is
+    *which* refusal the failure is. The detector is the only stage that can tell
+    "nothing card-like" from "a case around a card", and the gate is the only
+    one that may refuse — this type is how the first tells the second without
+    either package importing the other.
+
+    Args:
+        reason: The detector's own sentence, stored on each undetermined finding.
+        refusal: What the gate refuses the photograph for.
+    """
+
+    refusal: GateRefusal = GateRefusal.NO_CARD_FOUND
 
 
 #: The conditions the frame alone answers: whatever the photograph is of, these
