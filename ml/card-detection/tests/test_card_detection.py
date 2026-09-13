@@ -325,6 +325,35 @@ def test_the_corners_run_clockwise_from_the_top_left_whatever_the_orientation(
     assert nearest == 0
 
 
+def test_a_keystoned_card_with_a_lost_corner_keeps_its_perspective() -> None:
+    """#324: the fallback fit follows the keystone rather than squaring it.
+
+    A card tilted away from the camera, its near edge longer than its far one,
+    with one corner cut off wider than `approxPolyDP`'s tolerance — as a
+    finger or a rounded, worn corner does — so the four-point fit fails and
+    the fallback decides. A minimum-area rectangle reads that card's opposite
+    sides as equal, which is the perspective the gate exists to judge, and puts
+    its corners where the card is not.
+    """
+    drawn = ((345.0, 380.0), (855.0, 380.0), (915.0, 1240.0), (285.0, 1240.0))
+    chamfer = 150.0
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = drawn
+    outline = np.array(
+        [(x0, y0), (x1 - chamfer, y1), (x1 + chamfer * 0.07, y1 + chamfer), (x2, y2), (x3, y3)],
+        dtype=np.int32,
+    )
+    mask = np.zeros((HEIGHT, WIDTH), np.uint8)
+    cv2.fillPoly(mask, [outline], 255)
+    picture = background()
+    picture[mask > 0] = printed(WIDTH, HEIGHT, 210)[mask > 0]
+
+    found = located(png(picture))
+
+    assert found.opposite_side_ratio == pytest.approx(630.0 / 510.0, abs=0.05)
+    for corner, expected in zip(found.corners, drawn, strict=True):
+        assert corner == pytest.approx(expected, abs=15)
+
+
 def test_a_landscape_card_is_ordered_the_same_way() -> None:
     left, top, height, width = CARD  # the card on its side
     found = located(png(photograph(card=(top - 200, left + 125, width, height))))
