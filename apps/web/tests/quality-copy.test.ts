@@ -75,6 +75,16 @@ describe("quality copy", () => {
     expect(faultsIn(refused)).toEqual(["No card could be found in the picture."]);
   });
 
+  it("says the card is in a case when that is why it was refused", () => {
+    // #320. "No card could be found" would send a slab owner back to retake a
+    // photograph that can never pass.
+    const refused = image({ quality_status: "unusable", refusal: "card_in_a_case" });
+
+    expect(faultsIn(refused)).toEqual([
+      "The card is in a graded case. Photograph it out of the case.",
+    ]);
+  });
+
   it("puts the refusal before the faults the gate did manage to find", () => {
     const refused = image({
       quality_status: "unusable",

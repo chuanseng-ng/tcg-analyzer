@@ -57,6 +57,9 @@ const CONDITION_COPY: Readonly<Record<QualityCondition, string>> = {
  */
 const REFUSAL_COPY: Readonly<Record<GateRefusal, string>> = {
   no_card_found: "No card could be found in the picture.",
+  // #320. A slab is refused, never graded through: spec §4 excludes slab
+  // analysis, so the only useful sentence is how to take a photograph V1 reads.
+  card_in_a_case: "The card is in a graded case. Photograph it out of the case.",
 };
 
 /** How each side is named in a sentence about it. */
