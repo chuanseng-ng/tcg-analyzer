@@ -494,6 +494,32 @@ def test_a_panel_sharing_the_cards_own_edges_is_not_a_second_card_either() -> No
     assert found.area_fraction == pytest.approx(0.288, abs=0.02)
 
 
+def test_a_panel_whose_fitted_corner_leaves_the_card_is_not_a_second_card() -> None:
+    """#335: a panel inside the card whose quadrilateral juts past its edge.
+
+    On a real front shot on dark cloth the text panel's fitted corner landed
+    40 px outside the card, far past #206's slack, and the card was counted as
+    three. Almost all of the panel still lies inside the card; that share, and
+    not four corners, is what makes it the card's own structure.
+    """
+    picture = photograph()
+    left, top, width, _height = CARD
+    panel = np.array(
+        [
+            [left + 40, top + 80],
+            [left + width - 40, top + 80],
+            [left + width + 20, top + 520],
+            [left + 40, top + 520],
+        ],
+        np.int32,
+    )
+    cv2.fillConvexPoly(picture, panel, (90, 110, 60))
+    found = located(png(picture))
+
+    assert found.candidates == 1
+    assert found.area_fraction == pytest.approx(0.287, abs=0.02)
+
+
 def test_a_card_found_by_more_than_one_pass_is_still_one_card() -> None:
     """Three extraction passes and a closed edge ribbon each yield a contour.
 

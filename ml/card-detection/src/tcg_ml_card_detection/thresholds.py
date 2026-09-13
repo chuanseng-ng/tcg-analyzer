@@ -90,6 +90,20 @@ class DetectionThresholds:
     #: because the jitter is the edge ribbon's wall thickness plus the fit's
     #: error, which does not scale with the card.
     containment_slack_px: float = 6.0
+    #: Or a group is inside another when at least this share of its outermost
+    #: quadrilateral's area lies within the other's, which must itself be
+    #: card-shaped (#335). On dark cloth a text panel's fitted corner landed
+    #: 40 px past the card and the artwork group escaped by 6.0 px — shares
+    #: 0.98 and 1.00. Measured on every group escaping the corner test over
+    #: 105 real photographs: panels and cards in slab shells 0.97-1.00,
+    #: frame-corner phantoms 0.00-0.47. **No real second card overlapping
+    #: another has been photographed**, so do not lower it on that basis.
+    #:
+    #: **Only inside a card-shaped container** (corner aspect at least
+    #: :attr:`case_max_aspect`): ungated, a keystoned TAG slab's card (0.497)
+    #: was dropped from its 0.588 shell, which `_is_a_case` declines, and the
+    #: shell was returned at `poor`.
+    containment_min_overlap: float = 0.9
 
     #: How far outside the card a quadrilateral must sit **on every one of its
     #: four sides**, as a fraction of the card's own long edge, before it is a
@@ -242,6 +256,10 @@ class DetectionThresholds:
         if self.containment_slack_px < 0.0:
             raise ValueError(
                 f"containment_slack_px must not be negative, got {self.containment_slack_px!r}"
+            )
+        if not 0.0 < self.containment_min_overlap <= 1.0:
+            raise ValueError(
+                f"containment_min_overlap must lie in (0, 1], got {self.containment_min_overlap!r}"
             )
         if not 0.0 < self.frame_margin_fraction < 1.0:
             raise ValueError(
