@@ -99,6 +99,17 @@ square-on, at a slab's proportions and not a card's, is refused on its shape.
 Only square-on, because a keystone lowers the aspect too: the angled PSA slabs
 read level with warned bare tilts and are left to the perspective warning.
 
+**A group touching the frame with no edge where it ends is not a second card.**
+#334: on a bare tilted card the Otsu region pass cut the table's lighting
+falloff at the frame's corner into a card-aspect rectangle, 0.077 of the frame
+— too small for the frame-filling refusal, outside the card so never
+contained — and the gate refused a one-card scene for `multiple_cards`. The
+frame supplies its two outer sides; its other two lie where the light fades,
+and no edge runs along them. A second card clipped by the frame has edges
+there. So such a group is not *counted*, and only a group other than the
+card's: a slab photograph's winning quadrilateral has unsupported sides too,
+and selection and the case rules above are not touched.
+
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
@@ -194,6 +205,14 @@ _WEAR_CLOSE: Final = 9
 #: couple of dozen tones whatever the exposure.
 _SHADOW_EDGE_LEVELS: Final = (20, 60)
 
+#: How #334's edge support is read: points sampled along a side (its middle
+#: 80%), how far from one an edge may lie (a square kernel, in pixels at the
+#: working scale), and how close both corners must sit to a frame edge for the
+#: side to be the frame's rather than the object's.
+_SIDE_SAMPLES: Final = 40
+_EDGE_REACH: Final = 7
+_ON_FRAME_PX: Final = 4.0
+
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
@@ -235,7 +254,8 @@ def detect(
     gray, saturation, scale = _working_copies(colour, long_edge=thresholds.work_long_edge)
     height, width = gray.shape[:2]
 
-    candidates = _candidates(gray, saturation, thresholds=thresholds)
+    binaries = _binary_maps(gray, saturation)
+    candidates = _candidates(gray, binaries, thresholds=thresholds)
     if not candidates:
         return InsufficientInformation(_NOTHING_FOUND)
 
@@ -280,6 +300,17 @@ def detect(
         and _opposite_side_ratio(card.quad) <= thresholds.case_square_on_max_perspective_ratio
     ):
         return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
+    # A frame-touching group with no edge where it ends is lighting on the
+    # table, not a second card (#334). Counting only: the card group is never
+    # tested, because a slab's own returned quadrilateral has such sides too.
+    # The median-level Canny pass is the edge evidence, not a second Canny.
+    edges = cv2.dilate(binaries[0], np.ones((_EDGE_REACH, _EDGE_REACH), np.uint8))
+    counted = [
+        group
+        for group in groups
+        if group is card_group
+        or not _unsupported_at_frame(group, edges=edges, thresholds=thresholds)
+    ]
 
     return CardGeometry(
         corners=_rescaled(card.quad, scale=scale, width=original_width, height=original_height),
@@ -287,7 +318,7 @@ def detect(
         frame_width=original_width,
         frame_height=original_height,
         detector=CARD_DETECTION_VERSION,
-        candidates=len(groups),
+        candidates=len(counted),
         enclosing_ratio=_enclosing_ratio(card_group, thresholds=thresholds),
         thresholds=thresholds.as_record(),
     )
@@ -371,7 +402,7 @@ def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
 
 
 def _candidates(
-    gray: _Gray, saturation: _Gray, *, thresholds: DetectionThresholds
+    gray: _Gray, binaries: tuple[_Gray, ...], *, thresholds: DetectionThresholds
 ) -> list[_Candidate]:
     """Every card-like quadrilateral any pass found, before grouping."""
     height, width = gray.shape[:2]
@@ -380,7 +411,7 @@ def _candidates(
     largest = thresholds.max_area_fraction * frame_area
 
     found: list[_Candidate] = []
-    for binary in _binary_maps(gray, saturation):
+    for binary in binaries:
         # RETR_LIST rather than RETR_EXTERNAL: a sleeve is *inside* the outline
         # of nothing, but a card is inside a sleeve, and the enclosed one is the
         # one this package exists to find.
@@ -550,6 +581,52 @@ def _hugs_frame(
         candidate.boundary_margin <= thresholds.frame_margin_fraction
         and candidate.area >= thresholds.frame_fill_fraction * frame_area
     )
+
+
+def _unsupported_at_frame(
+    group: list[_Candidate], *, edges: _Gray, thresholds: DetectionThresholds
+) -> bool:
+    """Whether a group touches the frame and no edge runs where it ends (#334).
+
+    Only the sides clear of the frame are read: the frame supplies the others,
+    for a phantom and a clipped card alike. One supported side is enough to
+    count the group, so a clipped card whose far edge is soft is still a card.
+    """
+    outer = max(group, key=lambda member: member.area)
+    if outer.boundary_margin > thresholds.frame_margin_fraction:
+        return False
+    height, width = edges.shape[:2]
+    for index in range(4):
+        first, second = outer.quad[index], outer.quad[(index + 1) % 4]
+        if _on_frame(first, second, width=width, height=height):
+            continue
+        if _edge_support(first, second, edges) >= thresholds.phantom_min_edge_support:
+            return False
+    return True
+
+
+def _on_frame(first: Corner, second: Corner, *, width: int, height: int) -> bool:
+    """Whether both corners of a side lie against the same frame edge."""
+
+    def gaps(point: Corner) -> tuple[float, float, float, float]:
+        return (point[0], point[1], width - point[0], height - point[1])
+
+    return any(
+        near <= _ON_FRAME_PX and far <= _ON_FRAME_PX
+        for near, far in zip(gaps(first), gaps(second), strict=True)
+    )
+
+
+def _edge_support(first: Corner, second: Corner, edges: _Gray) -> float:
+    """The share of a side's sampled points lying on or near an edge."""
+    height, width = edges.shape[:2]
+    hits = 0
+    for step in np.linspace(0.1, 0.9, _SIDE_SAMPLES):
+        column = round(first[0] + (second[0] - first[0]) * step)
+        row = round(first[1] + (second[1] - first[1]) * step)
+        if 0 <= column < width and 0 <= row < height and edges[row, column] > 0:
+            hits += 1
+    return hits / _SIDE_SAMPLES
 
 
 def _group_by_centre(candidates: list[_Candidate], *, tolerance: float) -> list[list[_Candidate]]:

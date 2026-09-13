@@ -193,6 +193,15 @@ class DetectionThresholds:
     #: returned at 76-82% confidence. A clipped card touches the boundary too,
     #: which is why the fill condition is required as well.
     frame_fill_fraction: float = 0.70
+    #: A group other than the card's, touching the frame boundary, is counted
+    #: as a card only if at least one of its sides clear of the frame has an
+    #: edge along this share of its length (#334). An Otsu region cut from a
+    #: table's lighting falloff has none. Measured on all 103 real photographs:
+    #: every such phantom 0.00-0.17 (a bare card's, 0.12; seven on slabs); a
+    #: second card clipped by the frame, synthesised, 1.00 on every side. This
+    #: sits in that gap. **No real clipped second card has been photographed**,
+    #: so do not lower it on the phantoms' side alone.
+    phantom_min_edge_support: float = 0.5
 
     def __post_init__(self) -> None:
         if self.work_long_edge <= 0:
@@ -241,6 +250,11 @@ class DetectionThresholds:
         if not 0.0 < self.frame_fill_fraction <= 1.0:
             raise ValueError(
                 f"frame_fill_fraction must lie in (0, 1], got {self.frame_fill_fraction!r}"
+            )
+        if not 0.0 < self.phantom_min_edge_support <= 1.0:
+            raise ValueError(
+                "phantom_min_edge_support must lie in (0, 1], got "
+                f"{self.phantom_min_edge_support!r}"
             )
 
         for name, low, high in (
