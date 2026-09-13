@@ -384,14 +384,25 @@ def _as_candidate(
     """One contour as a card-like quadrilateral, or `None` if it is not one."""
     perimeter = float(cv2.arcLength(contour, closed=True))
     approximation = cv2.approxPolyDP(contour, thresholds.approx_epsilon * perimeter, closed=True)
+    corners: _Quad | None = None
     if len(approximation) == 4 and cv2.isContourConvex(approximation):
         points = approximation.reshape(4, 2).astype(float)
     else:
         # A card whose corner is rounded, occluded by a finger, or lost to a
         # compression artifact approximates to five or six points. Its minimal
-        # enclosing rectangle is still the right answer; the rectangularity
-        # check below is what refuses the shapes for which it is not.
+        # enclosing rectangle still decides whether it is a card — the
+        # rectangularity, aspect and area below, and the aspect #320's case
+        # rule reads — but it is not where the card is (#324): a rectangle has
+        # no keystone, so a tilted card read through it reports a perspective
+        # ratio of exactly 1.0 and corners that clip one end and overshoot the
+        # other. The corners are the four-sided polygon fitted to the contour's
+        # hull instead, which follows the keystone.
+        #
+        # Admission stays on the rectangle on purpose: judged on the tighter
+        # polygon, a card-plus-shadow blob clears the rectangularity line, and
+        # on the corpus it was then read as a case around the card and refused.
         points = cv2.boxPoints(cv2.minAreaRect(contour)).astype(float)
+        corners = _keystone(contour)
 
     quad = _clockwise_from_top_left(points)
     area = _area(quad)
@@ -410,6 +421,8 @@ def _as_candidate(
         return None
 
     gaps = [gap for x, y in quad for gap in (x, y, width - x, height - y)]
+    if corners is not None:
+        quad = corners
     return _Candidate(
         quad=quad,
         area=area,
@@ -418,6 +431,21 @@ def _as_candidate(
         aspect=aspect,
         boundary_margin=max(0.0, min(gaps)) / float(min(width, height)),
     )
+
+
+def _keystone(contour: MatLike) -> _Quad | None:
+    """The four-sided polygon closest in area to the contour's hull, or `None`.
+
+    `approxPolyN` contracts the hull's vertices until four remain, each step
+    the one adding least area, so a corner lost to rounding or a finger is
+    extended back to where the card's two edges meet — on a keystoned card too,
+    which a minimum-area rectangle cannot represent. Returned as `(1, 4, 2)`,
+    not `approxPolyDP`'s `(4, 1, 2)`.
+    """
+    polygon = cv2.approxPolyN(contour, 4, ensure_convex=True)
+    if polygon is None or polygon.size != 8:
+        return None
+    return _clockwise_from_top_left(polygon.reshape(4, 2).astype(float))
 
 
 # ---------------------------------------------------------------------------
