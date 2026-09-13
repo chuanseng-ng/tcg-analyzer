@@ -63,6 +63,7 @@ from tcg_domain.analysis import QualityStatus
 from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.confidence import InsufficientInformation, Uncertain
 from tcg_domain.image_quality import (
+    CardNotLocated,
     ConditionVerdict,
     GateRefusal,
     QualityCondition,
@@ -159,13 +160,24 @@ def assess(
         version=IMAGE_QUALITY_VERSION,
         thresholds={**thresholds.as_record(), **(located.thresholds if located else {})},
         detector=None if located is None else located.detector,
-        # A detector that ran and found nothing, rather than one that never
-        # ran: the six above are undetermined either way, but only this one is
-        # a photograph the user can do something about.
-        refusal=(
-            GateRefusal.NO_CARD_FOUND if isinstance(geometry, InsufficientInformation) else None
-        ),
+        refusal=_refusal(geometry),
     )
+
+
+def _refusal(geometry: Uncertain[CardGeometry] | None) -> GateRefusal | None:
+    """Why the photograph is refused outright, when a detector ran and has no card.
+
+    A detector that ran and found nothing, rather than one that never ran: the
+    six geometric conditions are undetermined either way, but only this one is
+    a photograph the user can do something about. A detector that knows *why*
+    it has no card — a case around it (#320) — says so, and that is refused for
+    the case; any other failure is `no_card_found`.
+    """
+    if isinstance(geometry, CardNotLocated):
+        return geometry.refusal
+    if isinstance(geometry, InsufficientInformation):
+        return GateRefusal.NO_CARD_FOUND
+    return None
 
 
 def _why_not_decided(geometry: Uncertain[CardGeometry] | None) -> str:
