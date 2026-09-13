@@ -413,6 +413,40 @@ def test_two_cards_are_counted_as_two() -> None:
     assert located(png(picture)).candidates == 2
 
 
+def test_a_soft_lit_frame_corner_is_not_a_second_card() -> None:
+    """#334: a patch of empty table was counted as a second card.
+
+    On a real tilted photograph the Otsu region pass split the table's lighting
+    falloff at the frame's top-right corner into a rectangle — 0.077 of the
+    frame, card-aspect, touching the boundary — and the gate refused a one-card
+    scene for `multiple_cards`. It is too small for the frame-filling refusal
+    and outside the card, so containment never saw it. What it lacks is an
+    edge: nothing in the picture ends where its free sides say it does.
+    """
+    picture = background()
+    light = np.zeros((HEIGHT, WIDTH), np.float32)
+    light[0:450, 850:WIDTH] = 90
+    light = cv2.GaussianBlur(light, (0, 0), 40)
+    picture = np.clip(picture.astype(np.float32) + light[:, :, None], 0, 255).astype(np.uint8)
+    place(picture, (150, 600, 630, 880), 210)
+
+    assert located(png(picture)).candidates == 1
+
+
+def test_a_second_card_clipped_by_the_frame_is_still_counted() -> None:
+    """#334's guard: a real card touches the frame too, and has edges.
+
+    The phantom rule must not become "ignore what touches the frame" — a
+    second card half out of the picture is exactly what `multiple_cards`
+    exists to refuse.
+    """
+    _left, _top, width, height = CARD
+    picture = place(background(), (60, 300, width, height), 210)
+    picture[0:680, 820:WIDTH] = printed(width, height, 210)[200:, :380]
+
+    assert located(png(picture)).candidates == 2
+
+
 def test_an_artwork_window_inside_the_card_is_not_a_second_card() -> None:
     """#206's first failure shape: the artwork window survives as a phantom.
 
