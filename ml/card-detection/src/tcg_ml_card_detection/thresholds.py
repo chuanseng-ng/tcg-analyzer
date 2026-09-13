@@ -123,6 +123,22 @@ class DetectionThresholds:
     #: mat or a mount. A top-loader sits near 1.3.
     sleeve_max_ratio: float = 1.50
 
+    #: A quadrilateral containing a card-shaped one, and itself below this
+    #: aspect, is a case around a card rather than the card (#320). A grader's
+    #: slab — PSA, BGS and CGC share 3.25 x 5.25 inches — is 0.619; a card is
+    #: 0.716, a top-loader 0.75. Measured on real photographs: the one slab
+    #: that returned a quadrilateral, 0.615; the corpus's 28 bare cards, every
+    #: containing quadrilateral 0.691-0.720 and every winner 0.683-0.743. This
+    #: sits near the middle of that gap.
+    #:
+    #: **It refuses only a container.** A bare card tilted until its own
+    #: aspect falls below this line is untouched unless something card-shaped
+    #: is found inside it and is closer to a card's proportions than it is —
+    #: which is also required. What is not measured is a slab photographed at
+    #: an angle, or one whose card lands in the shell's centre group; the
+    #: corpus holds one slab that returned a quadrilateral at all.
+    case_max_aspect: float = 0.65
+
     #: A corner within this fraction of the frame's short edge of the frame
     #: boundary counts as touching it — the same normalisation, and the same
     #: number, as the gate's `border_margin_poor`, because they describe the
@@ -148,6 +164,10 @@ class DetectionThresholds:
             raise ValueError(
                 "sleeve_standoff_fraction must lie in (0, 1), got "
                 f"{self.sleeve_standoff_fraction!r}"
+            )
+        if not 0.0 < self.case_max_aspect < CARD_ASPECT:
+            raise ValueError(
+                f"case_max_aspect must lie in (0, {CARD_ASPECT:.3f}), got {self.case_max_aspect!r}"
             )
         if self.containment_slack_px < 0.0:
             raise ValueError(

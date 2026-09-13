@@ -20,6 +20,7 @@ import pytest
 from numpy.typing import NDArray
 from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.confidence import InsufficientInformation
+from tcg_domain.image_quality import CardNotLocated, GateRefusal
 from tcg_ml_card_detection import CARD_DETECTION_VERSION, DEFAULT_DETECTION_THRESHOLDS, detect
 
 #: Portrait, and large enough that the working downscale is a real one.
@@ -447,6 +448,56 @@ def test_a_clipped_card_reports_no_margin_rather_than_inventing_the_missing_part
 
 
 # ---------------------------------------------------------------------------
+# Cases
+# ---------------------------------------------------------------------------
+
+
+def slab(picture: NDArray[np.uint8], *, label: int = 380) -> NDArray[np.uint8]:
+    """A grader's case around `CARD`: 3.25 x 5.25 inches, the label on top.
+
+    At this file's 10 px/mm the shell is 826 x 1334 — aspect 0.619, the
+    published size PSA, BGS and CGC share — and the card sits below a label
+    band, so its centre is 153 px under the shell's. That offset is what the
+    one real slab photograph measured (#320): far enough apart to escape the
+    concentric grouping, so the card is a *contained group* and the shell wins.
+    """
+    left, _top, width, _height = CARD
+    shell_left, shell_top = left - 98, 513 - label
+    picture[shell_top : shell_top + 1334, shell_left : shell_left + 826] = printed(826, 1334, 120)
+    picture[shell_top + 30 : shell_top + label - 30, shell_left + 40 : shell_left + 786] = 235
+    return place(picture, (left, shell_top + label, width, 880), 215)
+
+
+def test_a_card_inside_a_graded_case_is_refused_not_returned() -> None:
+    """#320: the detector returned the slab as the card, at `good`.
+
+    Every geometric condition then reported clean about the wrong object, and
+    `sleeve_obstruction` read "bare card" because a slab encloses by more than
+    the band a sleeve lives in. The case is recognised from its proportions:
+    the quadrilateral containing a card-shaped one is not itself card-shaped.
+    """
+    found = detect(png(slab(background())))
+
+    assert isinstance(found, CardNotLocated), found
+    assert found.refusal is GateRefusal.CARD_IN_A_CASE
+    assert found.reason is not None and "case" in found.reason
+
+
+def test_a_container_of_a_cards_own_proportions_is_not_a_case() -> None:
+    """The other half of the rule, and the reason it cannot refuse a bare card.
+
+    Off-centre, so the card is a contained group exactly as in a slab — but the
+    container is card-shaped, which is what #206's artwork windows look like
+    from the other side: the card is the container. Over the corpus's 28 real
+    photographs every containing quadrilateral measured 0.69-0.72.
+    """
+    picture = background()
+    place(picture, (150, 150, 900, 1260), 120)
+    place(picture, (285, 480, 630, 880), 215)
+
+    assert isinstance(detect(png(picture)), CardGeometry)
+
+
 # Sleeves
 # ---------------------------------------------------------------------------
 
@@ -563,6 +614,7 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("sleeve_standoff_fraction", 0.0, "sleeve_standoff_fraction"),
         ("sleeve_standoff_fraction", 1.0, "sleeve_standoff_fraction"),
         ("containment_slack_px", -1.0, "containment_slack_px"),
+        ("case_max_aspect", 0.8, "case_max_aspect"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
