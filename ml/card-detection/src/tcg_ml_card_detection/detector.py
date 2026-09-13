@@ -23,8 +23,13 @@ chroma *fragments* — a border ring severed at whitened corners, a mottled
 swirl — that a 3x3 closing never joins into a card. #193 names a sixth: a
 light-bordered card on a light table, whose only boundary evidence is its own
 drop shadow, a gradient the median-derived Canny levels of a mostly-white
-frame sit far above — a fixed low-threshold Canny pass sees it. Any pass may
-find the card, and their results are pooled and then grouped.
+frame sit far above — a fixed low-threshold Canny pass sees it. #335 names a
+seventh: a card on glare-lit dark cloth, whose weave the Gaussian-blurred
+Canny passes keep as speckle that the closing joins to the card's edge, so
+the card is admitted only as part of a blob that is not rectangular — and on
+one photograph the artwork window was returned instead. A median blur removes
+the speckle and keeps the edge. Any pass may find the card, and their results
+are pooled and then grouped.
 
 **A frame-filling quadrilateral is refused, not returned.** #176's shadow-merged
 close-ups fitted a quadrilateral running to the frame's own corner and reported
@@ -70,6 +75,12 @@ a contour that shares the card's edges, whose fitted corners landed 2.8 px
 purpose — a card is contained by its sleeve too, but concentrically, so it is
 already in the sleeve's group, and dropping contained candidates before
 grouping would take the sleeve's answer apart.
+
+**Or almost wholly inside it** (#335): on dark cloth a text panel's fitted
+corner landed 40 px past the card, and a panel whose area lies nine-tenths
+inside a card-shaped quadrilateral is still that card's structure. Only a
+card-shaped one: inside a slab's shell the contained quadrilateral is the
+card, which the case rule below must see.
 
 **Unless the container is the one that is not card-shaped.** #320: a grader's
 slab is a rigid 3.25 x 5.25-inch shell at aspect 0.619, and on the one real slab
@@ -205,6 +216,12 @@ _WEAR_CLOSE: Final = 9
 #: couple of dozen tones whatever the exposure.
 _SHADOW_EDGE_LEVELS: Final = (20, 60)
 
+#: The textured-surface pass's median kernel (#335), in pixels at the working
+#: scale. On near-black cloth under glare a 5x5 Gaussian leaves the weave as
+#: edge speckle, which the closing joins to the card's edge; 7 removes it and
+#: 11 found the same card, so the smaller is kept.
+_TEXTURE_MEDIAN: Final = 7
+
 #: How #334's edge support is read: points sampled along a side (its middle
 #: 80%), how far from one an edge may lie (a square kernel, in pixels at the
 #: working scale), and how close both corners must sit to a frame edge for the
@@ -270,7 +287,7 @@ def detect(
     groups = _group_by_centre(
         grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
-    contained = _containment(groups, slack=thresholds.containment_slack_px)
+    contained = _containment(groups, thresholds=thresholds)
     # A card-shaped quadrilateral inside one that is not is a card in a case
     # (#320), and a case is refused rather than returned as the card.
     if any(_is_a_case(outer, inner, thresholds=thresholds) for outer, inner in contained):
@@ -356,9 +373,9 @@ def _working_copies(colour: _Gray, *, long_edge: int) -> tuple[_Gray, _Gray, flo
 
 
 def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
-    """The five extraction passes, as maps `findContours` can walk.
+    """The six extraction passes, as maps `findContours` can walk.
 
-    Six maps rather than five: the Otsu pass contributes both polarities. See
+    Seven maps rather than six: the Otsu pass contributes both polarities. See
     the module docstring for why there are five. The 3x3 closing kernel joins
     an edge that a compression artifact or a soft focus left with a gap in it —
     without it a card is found as four unconnected lines and no quadrilateral at
@@ -377,6 +394,10 @@ def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
     equalised = cv2.GaussianBlur(
         cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray), (5, 5), 0
     )
+    textured = cv2.medianBlur(gray, _TEXTURE_MEDIAN)
+    textured_median = float(np.median(textured))
+    median_lower = int(max(0.0, 0.66 * textured_median))
+    median_upper = int(min(255.0, 1.33 * textured_median))
     _level, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     region: _Gray = cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel)
 
@@ -398,6 +419,14 @@ def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
         # The drop-shadow pass (#193): fixed low Canny levels, for the card
         # whose only boundary evidence is the shadow it casts.
         cv2.morphologyEx(cv2.Canny(blurred, *_SHADOW_EDGE_LEVELS), cv2.MORPH_CLOSE, kernel),
+        # The textured-surface pass (#335): a median blur removes a cloth's
+        # speckle and keeps the card's step edge, so the closing no longer
+        # joins the two into one blob.
+        #
+        # ponytail: no synthetic scene reproduces the merge (five tried), so
+        # the evidence is two real photographs on dark cloth; a test lands
+        # with the first scene that fails without this pass.
+        cv2.morphologyEx(cv2.Canny(textured, median_lower, median_upper), cv2.MORPH_CLOSE, kernel),
     )
 
 
@@ -664,7 +693,7 @@ def _gap(first: Corner, second: Corner) -> float:
 
 
 def _containment(
-    groups: list[list[_Candidate]], *, slack: float
+    groups: list[list[_Candidate]], *, thresholds: DetectionThresholds
 ) -> list[tuple[_Candidate, list[_Candidate]]]:
     """Every group whose outermost member sits inside another group's, with it.
 
@@ -674,6 +703,11 @@ def _containment(
     where the two edges coincide, the fitted corners land a couple of pixels
     either side of the winning quadrilateral's, and a strict test would keep
     exactly the shape that is most obviously not a second card.
+
+    Or by overlap, inside a card-shaped container only (#335): a panel whose
+    fitted corner juts well past the card is still almost wholly inside it.
+    Not inside a case-shaped one, where the contained card is a question for
+    `_is_a_case` and a keystoned card can fail it, leaving the shell returned.
     """
     pairs: list[tuple[_Candidate, list[_Candidate]]] = []
     for group in groups:
@@ -684,11 +718,21 @@ def _containment(
                 continue
             boundary = np.array(outer.quad, dtype=np.float32)
             if all(
-                cv2.pointPolygonTest(boundary, corner, measureDist=True) >= -slack
+                cv2.pointPolygonTest(boundary, corner, measureDist=True)
+                >= -thresholds.containment_slack_px
                 for corner in inner.quad
+            ) or (
+                _quad_aspect(outer.quad) >= thresholds.case_max_aspect
+                and _overlap(inner.quad, boundary) >= thresholds.containment_min_overlap
             ):
                 pairs.append((outer, group))
     return pairs
+
+
+def _overlap(inner: _Quad, boundary: MatLike) -> float:
+    """The share of `inner`'s area lying inside the convex `boundary`."""
+    shared, _polygon = cv2.intersectConvexConvex(np.array(inner, dtype=np.float32), boundary)
+    return float(shared) / max(_area(inner), 1e-9)
 
 
 def _is_a_case(
