@@ -247,7 +247,8 @@ class ImageQualityResponse(BaseModel):
         description=(
             "Why the gate refused this photograph for something none of the "
             "eleven conditions names — `no_card_found` when a detector ran and "
-            "could not locate a card, which makes the photograph `unusable` "
+            "could not locate a card, `card_in_a_case` when what it located was "
+            "a grader's case around one. Either makes the photograph `unusable` "
             "however clean the conditions it could check came back. Null for "
             "every photograph the gate was able to judge."
         ),

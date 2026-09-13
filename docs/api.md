@@ -140,10 +140,13 @@ difference is whether trying again could ever help.
 **Why a photograph was refused is on the photograph, not on the failure.**
 `images[].findings` carries all eleven of spec §19's conditions, and
 `images[].refusal` carries the one thing that is not a condition:
-`no_card_found`, when a detector ran and could not locate a card at all. That
-photograph is `unusable` however clean the conditions it could still check came
-back, because six of the eleven were never reachable — and it is the one
-refusal a client can turn into "photograph it again". Null for every photograph
+`no_card_found`, when a detector ran and could not locate a card at all, or
+`card_in_a_case`, when what it located was a grader's case around a card (#320)
+— V1 analyses raw cards, and the case is refused rather than measured as the
+card. Either photograph is `unusable` however clean the conditions it could
+still check came back, because six of the eleven were never reachable. The
+first is the refusal a client can turn into "photograph it again"; the second
+into "photograph it out of the case". Null for every photograph
 the gate was able to judge. Neither a finding's measurement nor its reason is
 served; the words a person reads are the client's, from this vocabulary.
 
