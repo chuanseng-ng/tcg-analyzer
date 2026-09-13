@@ -560,8 +560,32 @@ def test_a_card_grouped_with_its_case_is_still_refused() -> None:
     found = detect(data)
     assert isinstance(found, CardNotLocated), found
     assert found.refusal is GateRefusal.CARD_IN_A_CASE
+    # The shell is 0.619 and square-on, so #332's shape rule is disabled too:
+    # only #330's in-group rule stands between it and being returned.
+    neither = DetectionThresholds(case_max_area_ratio=0.01, case_square_on_max_aspect=0.1)
+    assert isinstance(detect(data, thresholds=neither), CardGeometry)
+
+
+def test_a_square_on_quadrilateral_of_a_slabs_proportions_is_refused() -> None:
+    """#332: a square-on PSA slab was returned as the card, at `good`.
+
+    Its card was never found as a group, of its own or inside the shell's, so
+    no containment rule had a pair to test. What is left is the shape: read
+    square-on, a quadrilateral at 0.60 is not a card. Real shells read 0.566
+    and 0.584; the corpus's square-on winners 0.670 and up, and synthetic
+    tilts still rated `good` at skew 1.12 or less 0.641 and up.
+    """
+    from tcg_ml_card_detection import DetectionThresholds
+
+    picture = background()
+    picture[200:1400, 240:960] = printed(720, 1200, 120)
+    data = png(picture)
+
+    found = detect(data)
+    assert isinstance(found, CardNotLocated), found
+    assert found.refusal is GateRefusal.CARD_IN_A_CASE
     assert isinstance(
-        detect(data, thresholds=DetectionThresholds(case_max_area_ratio=0.01)), CardGeometry
+        detect(data, thresholds=DetectionThresholds(case_square_on_max_aspect=0.1)), CardGeometry
     )
 
 
@@ -719,6 +743,8 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("containment_slack_px", -1.0, "containment_slack_px"),
         ("case_max_aspect", 0.8, "case_max_aspect"),
         ("case_max_perspective_ratio", 1.0, "case_max_perspective_ratio"),
+        ("case_square_on_max_aspect", 0.7, "case_square_on_max_aspect"),
+        ("case_square_on_max_perspective_ratio", 1.0, "case_square_on_max_perspective_ratio"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
