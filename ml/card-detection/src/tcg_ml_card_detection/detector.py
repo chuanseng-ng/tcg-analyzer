@@ -81,7 +81,9 @@ dropped by the rule above, leaving the shell to be returned as the card at
 proportions than itself, refuses the photograph as a card in a case. #206's
 phantoms are the same pair the other way round — on every one of the corpus's
 four the container was the card, 0.69-0.72 — which is why the comparison
-between the two is required and not only the line. Refused rather than
+between the two is required and not only the line. The card stays a contained
+group only because grouping does not chain through a member between the two
+centres (#327). Refused rather than
 analysed through: spec §4 excludes slab analysis. **Never through a strong
 keystone** (#325): a tilted bare card's text region can read nearer a card than
 the foreshortened card does, so past the gate's perspective unusable line the
@@ -532,11 +534,17 @@ def _hugs_frame(
 def _group_by_centre(candidates: list[_Candidate], *, tolerance: float) -> list[list[_Candidate]]:
     """Concentric candidates, gathered — one group is one card.
 
-    Single-link clustering on the centre, which is all that is wanted here: the
-    inner and outer walls of an edge ribbon, the same card found by three
-    passes, and a card inside its sleeve all share a centre, while two cards
-    lying side by side do not. This is what stops a sleeve being reported as a
-    second card, which the gate would refuse the photograph for.
+    Clustered on the centre of each group's largest member, which is all that
+    is wanted here: the inner and outer walls of an edge ribbon, the same card
+    found by three passes, and a card inside its sleeve all share a centre,
+    while two cards lying side by side do not. This is what stops a sleeve
+    being reported as a second card, which the gate would refuse the
+    photograph for.
+
+    **Not single-link** (#327): chained through any member, a group drifts. On
+    the one real slab a second shell member, its centre moved 23 px by #324's
+    keystone corners, bridged the shell to the card 64 px below it, so the card
+    was never a contained group and #320's case rule decided on the label.
 
     ponytail: quadratic in the number of candidates, which is at most a few
     dozen after the area and aspect filters. A grid index if a photograph ever
@@ -545,7 +553,7 @@ def _group_by_centre(candidates: list[_Candidate], *, tolerance: float) -> list[
     groups: list[list[_Candidate]] = []
     for candidate in sorted(candidates, key=lambda member: -member.area):
         for group in groups:
-            if any(_gap(candidate.centre, member.centre) <= tolerance for member in group):
+            if _gap(candidate.centre, group[0].centre) <= tolerance:
                 group.append(candidate)
                 break
         else:

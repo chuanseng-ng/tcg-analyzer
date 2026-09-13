@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.8.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.9.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
@@ -136,10 +136,10 @@ class DetectionThresholds:
     #: is found inside it and is closer to a card's proportions than it is —
     #: which is also required, and which a real tilt defeated (#325; see
     #: :attr:`case_max_perspective_ratio`). What is not measured is a slab
-    #: photographed at an angle. Since v0.7.0 the one real slab's card groups
-    #: with its shell, and the photograph is refused only because the *label*
-    #: (0.6159) reads nearer a card than the shell (0.6147) does — a margin of
-    #: 0.0012.
+    #: photographed at an angle, and a PSA or TAG slab. The one real slab is
+    #: refused on its card (0.742 inside the shell's 0.6147, a margin of
+    #: 0.075); from v0.7.0 until #327 its card chained into the shell's group
+    #: and the refusal rested on the label, by 0.0012.
     case_max_aspect: float = 0.65
     #: A container keystoned past this opposite-side ratio is not tested as a
     #: case at all (#325): an aspect read through that much perspective is the

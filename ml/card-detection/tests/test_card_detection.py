@@ -519,7 +519,6 @@ def test_a_container_keystoned_past_the_unusable_line_is_not_read_as_a_case() ->
     0.611, so the region was "nearer a card" by noise. An aspect read through a
     keystone that strong is the tilt's, not the object's — so past the gate's
     `perspective_ratio_unusable` the case test does not run, and the photograph
-    is the perspective refusal's instead. Shown here on the slab itself,
     is the perspective refusal's instead.
 
     Drawn as that misfire's shape: a card keystoned to aspect ~0.57 at skew
@@ -554,6 +553,27 @@ def test_a_container_of_a_cards_own_proportions_is_not_a_case() -> None:
     place(picture, (285, 480, 630, 880), 215)
 
     assert isinstance(detect(png(picture)), CardGeometry)
+
+
+def test_a_group_does_not_chain_through_a_member_between_two_centres() -> None:
+    """#327: the one real slab's card joined its shell's group through a bridge.
+
+    Centres measured at the working scale: shell at y=508, a second shell
+    member at y=531 (#324's keystone corners moved it there from 508), the card
+    at y=572, against a 46 px tolerance. Chained, the three are one group, so
+    the card is never a contained group and #320's rule never sees the pair.
+    Grouped on the largest member's centre, the card stands apart by 64 px.
+    """
+    from tcg_ml_card_detection.detector import _Candidate, _group_by_centre
+
+    def at(y: float, area: float) -> _Candidate:
+        quad = ((0.0, y - 1), (1.0, y - 1), (1.0, y + 1), (0.0, y + 1))
+        return _Candidate(quad, area, (365.0, y), 1.0, 0.7, 0.1)
+
+    shell, bridge, card = at(508.0, 481440.0), at(531.0, 473088.0), at(572.0, 318330.0)
+    groups = _group_by_centre([card, bridge, shell], tolerance=46.0)
+
+    assert groups == [[shell, bridge], [card]]
 
 
 # Sleeves
