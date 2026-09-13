@@ -82,7 +82,10 @@ proportions than itself, refuses the photograph as a card in a case. #206's
 phantoms are the same pair the other way round — on every one of the corpus's
 four the container was the card, 0.69-0.72 — which is why the comparison
 between the two is required and not only the line. Refused rather than
-analysed through: spec §4 excludes slab analysis.
+analysed through: spec §4 excludes slab analysis. **Never through a strong
+keystone** (#325): a tilted bare card's text region can read nearer a card than
+the foreshortened card does, so past the gate's perspective unusable line the
+question is not asked and the perspective refusal answers instead.
 
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
@@ -591,13 +594,27 @@ def _is_a_case(
     :attr:`DetectionThresholds.case_max_aspect` — and what it contains must be
     closer to a card's proportions than it is. The second is what keeps the
     rule off #206's phantoms, where the container *is* the card and the thing
-    inside it is an artwork window, and off a bare card tilted far enough to
-    foreshorten below the line: its artwork window is foreshortened with it.
+    inside it is an artwork window.
+
+    It does not keep the rule off a tilted bare card (#325): on real tilts the
+    card's text region foreshortened *less* than the card, by under 0.02, and
+    the comparison was decided by noise. So neither half is read through a
+    keystone past :attr:`DetectionThresholds.case_max_perspective_ratio`, which
+    is the gate's unusable line — such a photograph is refused on perspective
+    whatever this answers.
     """
+    if _opposite_side_ratio(outer.quad) > thresholds.case_max_perspective_ratio:
+        return False
     contained = max(inner, key=lambda member: member.area)
     return outer.aspect < thresholds.case_max_aspect and abs(contained.aspect - CARD_ASPECT) < abs(
         outer.aspect - CARD_ASPECT
     )
+
+
+def _opposite_side_ratio(quad: _Quad) -> float:
+    """`CardGeometry.opposite_side_ratio`, on a working-copy quadrilateral."""
+    top, right, bottom, left = _side_lengths(quad)
+    return max(max(top, bottom) / min(top, bottom), max(left, right) / min(left, right))
 
 
 def _enclosing_ratio(group: list[_Candidate], *, thresholds: DetectionThresholds) -> float:

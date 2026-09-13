@@ -512,6 +512,35 @@ def test_a_card_inside_a_graded_case_is_refused_not_returned() -> None:
     assert found.reason is not None and "case" in found.reason
 
 
+def test_a_container_keystoned_past_the_unusable_line_is_not_read_as_a_case() -> None:
+    """#325: a tilted bare card was refused `card_in_a_case`.
+
+    On a real 20° tilt the card foreshortened to 0.604 and its text region to
+    0.611, so the region was "nearer a card" by noise. An aspect read through a
+    keystone that strong is the tilt's, not the object's — so past the gate's
+    `perspective_ratio_unusable` the case test does not run, and the photograph
+    is the perspective refusal's instead. Shown here on the slab itself,
+    is the perspective refusal's instead.
+
+    Drawn as that misfire's shape: a card keystoned to aspect ~0.57 at skew
+    ~1.55, holding an off-centre region of a card's own proportions. Read
+    square-on, the same pair is a case — which is what makes the exemption,
+    and not the drawing, the thing under test.
+    """
+    from tcg_ml_card_detection import DetectionThresholds
+
+    picture = background()
+    keystoned = np.array([[200, 150], [900, 380], [900, 1220], [200, 1450]], np.int32)
+    cv2.fillConvexPoly(picture, keystoned, (120, 120, 120))
+    place(picture, (300, 620, 400, 560), 215)
+    data = png(picture)
+
+    read_square_on = DetectionThresholds(case_max_perspective_ratio=100.0)
+    assert isinstance(detect(data, thresholds=read_square_on), CardNotLocated)
+    found = located(data)
+    assert found.opposite_side_ratio > DEFAULT_DETECTION_THRESHOLDS.case_max_perspective_ratio
+
+
 def test_a_container_of_a_cards_own_proportions_is_not_a_case() -> None:
     """The other half of the rule, and the reason it cannot refuse a bare card.
 
@@ -644,6 +673,7 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("sleeve_standoff_fraction", 1.0, "sleeve_standoff_fraction"),
         ("containment_slack_px", -1.0, "containment_slack_px"),
         ("case_max_aspect", 0.8, "case_max_aspect"),
+        ("case_max_perspective_ratio", 1.0, "case_max_perspective_ratio"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
