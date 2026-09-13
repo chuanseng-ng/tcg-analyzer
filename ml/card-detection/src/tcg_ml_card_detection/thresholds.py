@@ -134,10 +134,26 @@ class DetectionThresholds:
     #: **It refuses only a container.** A bare card tilted until its own
     #: aspect falls below this line is untouched unless something card-shaped
     #: is found inside it and is closer to a card's proportions than it is —
-    #: which is also required. What is not measured is a slab photographed at
-    #: an angle, or one whose card lands in the shell's centre group; the
-    #: corpus holds one slab that returned a quadrilateral at all.
+    #: which is also required, and which a real tilt defeated (#325; see
+    #: :attr:`case_max_perspective_ratio`). What is not measured is a slab
+    #: photographed at an angle. Since v0.7.0 the one real slab's card groups
+    #: with its shell, and the photograph is refused only because the *label*
+    #: (0.6159) reads nearer a card than the shell (0.6147) does — a margin of
+    #: 0.0012.
     case_max_aspect: float = 0.65
+    #: A container keystoned past this opposite-side ratio is not tested as a
+    #: case at all (#325): an aspect read through that much perspective is the
+    #: tilt's, not the object's. On real tilted bare cards the card
+    #: foreshortened to 0.604 and 0.610 and its own text region to 0.611 and
+    #: 0.628 — "nearer a card" by noise — and both were refused as a case, at
+    #: skew 1.504 and 1.640. The one real slab's shell reads 1.040.
+    #:
+    #: **The same number as `tcg_ml_image_quality`'s
+    #: `perspective_ratio_unusable`, and it must stay so.** Exempting only what
+    #: the gate refuses on perspective anyway means this can change a refusal's
+    #: reason and never turn a refusal into an answer. A copy rather than an
+    #: import, because neither ML package imports the other.
+    case_max_perspective_ratio: float = 1.45
 
     #: A corner within this fraction of the frame's short edge of the frame
     #: boundary counts as touching it — the same normalisation, and the same
@@ -168,6 +184,10 @@ class DetectionThresholds:
         if not 0.0 < self.case_max_aspect < CARD_ASPECT:
             raise ValueError(
                 f"case_max_aspect must lie in (0, {CARD_ASPECT:.3f}), got {self.case_max_aspect!r}"
+            )
+        if self.case_max_perspective_ratio <= 1.0:
+            raise ValueError(
+                f"case_max_perspective_ratio must exceed 1, got {self.case_max_perspective_ratio!r}"
             )
         if self.containment_slack_px < 0.0:
             raise ValueError(
