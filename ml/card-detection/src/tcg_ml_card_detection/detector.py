@@ -71,6 +71,19 @@ purpose — a card is contained by its sleeve too, but concentrically, so it is
 already in the sleeve's group, and dropping contained candidates before
 grouping would take the sleeve's answer apart.
 
+**Unless the container is the one that is not card-shaped.** #320: a grader's
+slab is a rigid 3.25 x 5.25-inch shell at aspect 0.619, and on the one real slab
+photograph that returned a quadrilateral the card inside it was found — at
+0.742 — as a contained group, pushed off the shell's centre by the label and
+dropped by the rule above, leaving the shell to be returned as the card at
+`good`. So a containing quadrilateral below
+:attr:`DetectionThresholds.case_max_aspect`, holding one closer to a card's
+proportions than itself, refuses the photograph as a card in a case. #206's
+phantoms are the same pair the other way round — on every one of the corpus's
+four the container was the card, 0.69-0.72 — which is why the comparison
+between the two is required and not only the line. Refused rather than
+analysed through: spec §4 excludes slab analysis.
+
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
@@ -98,6 +111,7 @@ import numpy as np
 from cv2.typing import MatLike
 from tcg_domain.card_geometry import CardGeometry, Corner
 from tcg_domain.confidence import Confidence, InsufficientInformation, Uncertain
+from tcg_domain.image_quality import CardNotLocated, GateRefusal
 
 from tcg_ml_card_detection.thresholds import (
     CARD_ASPECT,
@@ -123,6 +137,11 @@ _NOTHING_FOUND: Final = "no card-like quadrilateral was found in the photograph"
 _FRAME_FILLING: Final = (
     "only a frame-filling quadrilateral was found, which is the picture's own "
     "boundary rather than a card"
+)
+
+#: Said when a case was found around the card (#320), rather than the card.
+_IN_A_CASE: Final = (
+    "the card is inside a rigid case, and the quadrilateral found is the case rather than the card"
 )
 
 #: Said when the bytes did not decode. The gate raises for this case; this
@@ -216,14 +235,16 @@ def detect(
     groups = _group_by_centre(
         grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
-    # A group wholly inside another group's outermost quadrilateral is that
-    # card's own structure — an artwork window, a text panel — never a second
-    # card (#206). Dropped before counting and selection alike.
-    groups = [
-        group
-        for group in groups
-        if not _inside_another(group, groups, slack=thresholds.containment_slack_px)
-    ]
+    contained = _containment(groups, slack=thresholds.containment_slack_px)
+    # A card-shaped quadrilateral inside one that is not is a card in a case
+    # (#320), and a case is refused rather than returned as the card.
+    if any(_is_a_case(outer, inner, thresholds=thresholds) for outer, inner in contained):
+        return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
+    # Any other group wholly inside another group's outermost quadrilateral is
+    # that card's own structure — an artwork window, a text panel — never a
+    # second card (#206). Dropped before counting and selection alike.
+    inside = [inner for _outer, inner in contained]
+    groups = [group for group in groups if not any(group is member for member in inside)]
     card_group = max(groups, key=lambda group: max(member.area for member in group))
     # The outermost member clear of the frame boundary, and the outermost of
     # all only when every member touches it (#192) — a clipped card is still
@@ -505,31 +526,50 @@ def _gap(first: Corner, second: Corner) -> float:
     return math.hypot(first[0] - second[0], first[1] - second[1])
 
 
-def _inside_another(
-    group: list[_Candidate], groups: list[list[_Candidate]], *, slack: float
-) -> bool:
-    """Whether this group's outermost member sits inside another group's.
+def _containment(
+    groups: list[list[_Candidate]], *, slack: float
+) -> list[tuple[_Candidate, list[_Candidate]]]:
+    """Every group whose outermost member sits inside another group's, with it.
 
-    Strictly larger by area, so two groups cannot drop each other. The slack is
-    for a phantom whose contour shares the card's own boundary: where the two
-    edges coincide, the fitted corners land a couple of pixels either side of
-    the winning quadrilateral's, and a strict test would keep exactly the shape
-    that is most obviously not a second card.
+    Each pair is the containing group's outermost member and the contained
+    group. Strictly larger by area, so two groups cannot contain each other.
+    The slack is for a phantom whose contour shares the card's own boundary:
+    where the two edges coincide, the fitted corners land a couple of pixels
+    either side of the winning quadrilateral's, and a strict test would keep
+    exactly the shape that is most obviously not a second card.
     """
-    inner = max(group, key=lambda member: member.area)
-    for other in groups:
-        if other is group:
-            continue
-        outer = max(other, key=lambda member: member.area)
-        if outer.area <= inner.area:
-            continue
-        boundary = np.array(outer.quad, dtype=np.float32)
-        if all(
-            cv2.pointPolygonTest(boundary, corner, measureDist=True) >= -slack
-            for corner in inner.quad
-        ):
-            return True
-    return False
+    pairs: list[tuple[_Candidate, list[_Candidate]]] = []
+    for group in groups:
+        inner = max(group, key=lambda member: member.area)
+        for other in groups:
+            outer = max(other, key=lambda member: member.area)
+            if other is group or outer.area <= inner.area:
+                continue
+            boundary = np.array(outer.quad, dtype=np.float32)
+            if all(
+                cv2.pointPolygonTest(boundary, corner, measureDist=True) >= -slack
+                for corner in inner.quad
+            ):
+                pairs.append((outer, group))
+    return pairs
+
+
+def _is_a_case(
+    outer: _Candidate, inner: list[_Candidate], *, thresholds: DetectionThresholds
+) -> bool:
+    """Whether a containing quadrilateral is a case around the card it contains.
+
+    Both halves are needed. The container must not be card-shaped — below
+    :attr:`DetectionThresholds.case_max_aspect` — and what it contains must be
+    closer to a card's proportions than it is. The second is what keeps the
+    rule off #206's phantoms, where the container *is* the card and the thing
+    inside it is an artwork window, and off a bare card tilted far enough to
+    foreshorten below the line: its artwork window is foreshortened with it.
+    """
+    contained = max(inner, key=lambda member: member.area)
+    return outer.aspect < thresholds.case_max_aspect and abs(contained.aspect - CARD_ASPECT) < abs(
+        outer.aspect - CARD_ASPECT
+    )
 
 
 def _enclosing_ratio(group: list[_Candidate], *, thresholds: DetectionThresholds) -> float:

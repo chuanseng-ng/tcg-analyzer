@@ -13,6 +13,7 @@ from tcg_domain.errors import InvalidQualityReport
 from tcg_domain.image_quality import (
     DECIDABLE_WITHOUT_GEOMETRY,
     NEEDS_CARD_GEOMETRY,
+    CardNotLocated,
     ConditionVerdict,
     GateRefusal,
     QualityCondition,
@@ -222,6 +223,27 @@ def test_a_refused_photograph_is_unusable_however_clean_its_findings() -> None:
     report = a_report(refusal=GateRefusal.NO_CARD_FOUND)
 
     assert report.status is QualityStatus.UNUSABLE
+
+
+def test_a_card_in_a_case_is_refused_like_a_missing_one() -> None:
+    """#320: a slab is not a bare card, and V1 analyses bare cards.
+
+    The second refusal outranks the fold exactly as the first does — the
+    findings it carries are the ones that never needed the card.
+    """
+    assert a_report(refusal=GateRefusal.CARD_IN_A_CASE).status is QualityStatus.UNUSABLE
+
+
+def test_a_detector_failure_is_still_an_admission_and_says_which_refusal() -> None:
+    """`CardNotLocated` is an `InsufficientInformation`, so nothing that reads a
+    failed detection as falsy changes; it only adds the gate's word for why."""
+    found_nothing = CardNotLocated("no card-like quadrilateral was found")
+    in_a_case = CardNotLocated("a case", refusal=GateRefusal.CARD_IN_A_CASE)
+
+    assert not found_nothing
+    assert found_nothing.refusal is GateRefusal.NO_CARD_FOUND
+    assert in_a_case.refusal is GateRefusal.CARD_IN_A_CASE
+    assert in_a_case.reason == "a case"
 
 
 def test_an_unrefused_report_still_folds_its_findings() -> None:

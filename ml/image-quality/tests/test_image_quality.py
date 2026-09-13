@@ -24,6 +24,7 @@ from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.confidence import INSUFFICIENT_INFORMATION, Confidence, InsufficientInformation
 from tcg_domain.image_quality import (
     NEEDS_CARD_GEOMETRY,
+    CardNotLocated,
     ConditionVerdict,
     GateRefusal,
     QualityCondition,
@@ -422,6 +423,22 @@ def test_a_photograph_with_no_findable_card_is_refused() -> None:
     # The issue's non-goal, pinned: scoring an unchecked condition is exactly
     # what `_score` must not do, so a refusal moves the status and nothing else.
     assert report.score == assess(data).score
+
+
+def test_a_card_the_detector_found_in_a_case_is_refused_for_the_case() -> None:
+    """#320. The detector knows *why* it has no card; the gate says so.
+
+    A plain `InsufficientInformation` is still `no_card_found` — the test above
+    — and the score is still the frame's alone, for #319's reason.
+    """
+    data = png(a_photograph())
+    excuse = "the card is inside a rigid case"
+    report = assess(data, geometry=CardNotLocated(excuse, refusal=GateRefusal.CARD_IN_A_CASE))
+
+    assert report.refusal is GateRefusal.CARD_IN_A_CASE
+    assert report.status is QualityStatus.UNUSABLE
+    assert report.score == assess(data).score
+    assert report.of(QualityCondition.SLEEVE_OBSTRUCTION).reason == excuse
 
 
 def test_a_refused_photograph_still_reports_the_six_it_could_not_check() -> None:

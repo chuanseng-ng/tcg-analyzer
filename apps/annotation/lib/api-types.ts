@@ -1850,7 +1850,7 @@ export interface components {
          *     findings it does carry are the ones that never needed the card.
          * @enum {string}
          */
-        GateRefusal: "no_card_found";
+        GateRefusal: "no_card_found" | "card_in_a_case";
         /**
          * GradeProbabilityResponse
          * @description One term of a grade distribution — spec §2.1's `P(g)`.
@@ -2013,7 +2013,7 @@ export interface components {
             quality_score: number | null;
             /** @description Spec §19's verdict, or null while the gate has not run. `unusable` means the analysis stopped; `poor` means it went on and the user must be told. */
             quality_status: components["schemas"]["QualityStatus"] | null;
-            /** @description Why the gate refused this photograph for something none of the eleven conditions names — `no_card_found` when a detector ran and could not locate a card, which makes the photograph `unusable` however clean the conditions it could check came back. Null for every photograph the gate was able to judge. */
+            /** @description Why the gate refused this photograph for something none of the eleven conditions names — `no_card_found` when a detector ran and could not locate a card, `card_in_a_case` when what it located was a grader's case around one. Either makes the photograph `unusable` however clean the conditions it could check came back. Null for every photograph the gate was able to judge. */
             refusal: components["schemas"]["GateRefusal"] | null;
             /** @description Which view of the card this is. */
             side: components["schemas"]["ImageSide"];

@@ -30,8 +30,9 @@ photograph with six conditions unchecked cannot be `good` however sharp it is.
 **What such a photograph *is* depends on why the card is missing**, and the two
 answers are not the same (#319). A detector that ran and found nothing has not
 merely left six questions open — it could not assess the photograph at all, so
-the report carries a `refusal` of `no_card_found` and the verdict is
-`unusable`: spec §19's "analysis should stop", and the one failure the person
+the report carries a `refusal` of `no_card_found` — or `card_in_a_case`, when
+what the detector found was a grader's case around the card (#320) — and the
+verdict is `unusable`: spec §19's "analysis should stop", and the one failure the person
 holding the phone can act on. A gate asked to judge a frame with no detector
 run against it — which the corpus normalization pass does, and the API pipeline
 never does — stops at `acceptable`, "nothing wrong found, and something not

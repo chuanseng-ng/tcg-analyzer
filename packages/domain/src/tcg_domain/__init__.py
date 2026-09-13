@@ -84,6 +84,7 @@ from tcg_domain.identification import CardIdentification
 from tcg_domain.image_quality import (
     DECIDABLE_WITHOUT_GEOMETRY,
     NEEDS_CARD_GEOMETRY,
+    CardNotLocated,
     ConditionVerdict,
     GateRefusal,
     QualityCondition,
@@ -129,6 +130,7 @@ __all__ = [
     "CardGeometry",
     "CardId",
     "CardIdentification",
+    "CardNotLocated",
     "CardPage",
     "CardQuery",
     "CardReference",
