@@ -93,7 +93,11 @@ group, so the same two halves are asked of the returned quadrilateral and its
 group's members, with the member required to be well inside by area — and
 aspects read from the corners, which for a fallback candidate are not the
 admission rectangle's (#324). One angled slab, a group of one, is out of reach
-and left to the perspective warning.
+and left to the perspective warning. **Nor only when a card is found** (#332):
+a square-on PSA slab's card was never found at all, so a quadrilateral read
+square-on, at a slab's proportions and not a card's, is refused on its shape.
+Only square-on, because a keystone lowers the aspect too: the angled PSA slabs
+read level with warned bare tilts and are left to the perspective warning.
 
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
@@ -268,6 +272,13 @@ def detect(
     # The same case, with its card grouped alongside it rather than contained
     # as a group of its own (#330).
     if _holds_a_card(card, card_group, thresholds=thresholds):
+        return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
+    # And the same case with no card found inside it at all, which only its
+    # shape gives away, and only square-on (#332).
+    if (
+        _quad_aspect(card.quad) < thresholds.case_square_on_max_aspect
+        and _opposite_side_ratio(card.quad) <= thresholds.case_square_on_max_perspective_ratio
+    ):
         return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
 
     return CardGeometry(

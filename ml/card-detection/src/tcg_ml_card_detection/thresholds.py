@@ -162,6 +162,25 @@ class DetectionThresholds:
     #: domain (tilted, skew under 1.45) measured 0.966 and 0.980, and no
     #: corpus card reaches the domain at all.
     case_max_area_ratio: float = 0.75
+    #: A returned quadrilateral below this aspect, read square-on (skew no
+    #: more than :attr:`case_square_on_max_perspective_ratio`), is a case
+    #: whose card was never found at all (#332). Measured from the corners:
+    #: square-on PSA shells 0.566 and 0.584, and a close-up's panel through a
+    #: case 0.598; the corpus's 28 winners 0.670 and up; #322's synthetic tilts
+    #: still rated `good` or `poor` at that skew, 0.641 and up. This sits in
+    #: that gap.
+    #:
+    #: **Not a floor at any skew.** Warned synthetic tilts at skew up to 1.45
+    #: read as low as 0.509 (#322), level with the angled PSA and TAG slabs
+    #: this does not reach (0.509-0.523). Those are left to the perspective
+    #: warning.
+    case_square_on_max_aspect: float = 0.62
+    #: The skew a quadrilateral may carry and still have its aspect read as
+    #: the object's (#332). **The same number as `tcg_ml_image_quality`'s
+    #: `perspective_ratio_poor`**: past it the gate warns of perspective, and
+    #: the aspect is the tilt's as much as the object's. A copy, as with
+    #: :attr:`case_max_perspective_ratio`.
+    case_square_on_max_perspective_ratio: float = 1.12
 
     #: A corner within this fraction of the frame's short edge of the frame
     #: boundary counts as touching it — the same normalisation, and the same
@@ -200,6 +219,16 @@ class DetectionThresholds:
         if not 0.0 < self.case_max_area_ratio < 1.0:
             raise ValueError(
                 f"case_max_area_ratio must lie in (0, 1), got {self.case_max_area_ratio!r}"
+            )
+        if not 0.0 < self.case_square_on_max_aspect <= self.case_max_aspect:
+            raise ValueError(
+                "case_square_on_max_aspect must lie in (0, case_max_aspect], got "
+                f"{self.case_square_on_max_aspect!r}"
+            )
+        if not 1.0 < self.case_square_on_max_perspective_ratio <= self.case_max_perspective_ratio:
+            raise ValueError(
+                "case_square_on_max_perspective_ratio must lie in "
+                f"(1, case_max_perspective_ratio], got {self.case_square_on_max_perspective_ratio!r}"
             )
         if self.containment_slack_px < 0.0:
             raise ValueError(
