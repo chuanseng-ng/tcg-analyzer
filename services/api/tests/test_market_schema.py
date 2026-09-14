@@ -45,7 +45,13 @@ from tcg_api.market.snapshots import (
     get_snapshot,
     resolve_prices,
 )
-from tcg_api.market.tables import market_observations, market_providers, market_snapshots
+from tcg_api.market.tables import (
+    exchange_rates,
+    market_observations,
+    market_providers,
+    market_quarantine,
+    market_snapshots,
+)
 from tcg_domain.catalog import Card, Set
 from tcg_grading_companies import GradingCompany
 from tcg_grading_companies.errors import UnsupportedGrade
@@ -127,7 +133,8 @@ def empty_tables() -> Iterator[None]:
             # all now that an UPDATE is refused.
             connection.execute(
                 sa.text(
-                    "TRUNCATE market_snapshots, market_observations, market_providers, "
+                    "TRUNCATE market_snapshots, market_observations, market_quarantine, "
+                    "exchange_rates, market_providers, "
                     "images, analyses, analysis_sessions, "
                     "card_external_ids, cards, sets RESTART IDENTITY CASCADE"
                 )
@@ -213,6 +220,9 @@ def observation_values(**overrides: Any) -> dict[str, Any]:
         "observed_at": SEEN_AT,
     }
     values.update(overrides)
+    # An SGD row is stored unconverted, so the fixture follows `price` unless a
+    # test says otherwise.
+    values.setdefault("price_sgd", values["price"])
     return values
 
 
@@ -388,8 +398,16 @@ def test_a_negative_price_is_refused(catalog_and_provider: None) -> None:
 
 @pytest.mark.parametrize("code", ["SGD", "USD", "JPY"])
 def test_any_iso_4217_code_is_storable(code: str, catalog_and_provider: None) -> None:
-    """The selected provider prices in USD; an observation records what it said."""
-    observe(currency=code)
+    """The selected provider prices in USD; an observation records what it said.
+
+    A foreign quote names the rate that converted it (#53), so one is recorded
+    for every code but SGD.
+    """
+    if code == "SGD":
+        observe(currency=code)
+    else:
+        record_rate(base_currency=code)
+        observe(currency=code, price_sgd=Decimal("1.00"), exchange_rate_id=RATE_ID)
     assert query(sa.select(market_observations.c.currency))[0][0] == code
 
 
@@ -489,6 +507,115 @@ def test_a_provider_name_that_is_not_a_slug_is_refused() -> None:
     """ADR 0006 binds 'PokePriceTracker'; that goes in `name`, never in `slug`."""
     with pytest.raises(IntegrityError, match="slug_is_a_lowercase_slug"):
         register(slug="PokePriceTracker")
+
+
+# ---------------------------------------------------------------------------
+# #53 — conversion is recorded, and a quarantined record is kept
+# ---------------------------------------------------------------------------
+RATE_ID = uuid.UUID("88888888-8888-5888-8888-888888888888")
+
+
+def record_rate(**overrides: Any) -> None:
+    values: dict[str, Any] = {
+        "id": RATE_ID,
+        "base_currency": "USD",
+        "quote_currency": "SGD",
+        "rate": Decimal("1.34210000"),
+        "as_of": READ_ON,
+        "source_reference": "https://example.test/rates",
+    }
+    values.update(overrides)
+    write([(sa.insert(exchange_rates), values)])
+
+
+def quarantine(**overrides: Any) -> None:
+    values: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "provider_id": PROVIDER_ID,
+        "external_id": "base1-4",
+        "reason": "unmapped_card",
+        "detail": "no catalog card carries it",
+        "record": {"amount": "1.00"},
+    }
+    values.update(overrides)
+    write([(sa.insert(market_quarantine), values)])
+
+
+def test_a_converted_price_is_stored_with_its_rate(catalog_and_provider: None) -> None:
+    record_rate()
+    observe(
+        currency="USD",
+        price=Decimal("100.00"),
+        price_sgd=Decimal("134.21"),
+        exchange_rate_id=RATE_ID,
+    )
+
+    assert query(sa.select(market_observations.c.price_sgd))[0][0] == Decimal("134.21")
+
+
+def test_a_foreign_price_without_a_rate_is_refused(catalog_and_provider: None) -> None:
+    with pytest.raises(IntegrityError, match="foreign_prices_name_their_exchange_rate"):
+        observe(currency="USD", price=Decimal("100.00"), price_sgd=Decimal("134.21"))
+
+
+def test_an_sgd_price_naming_a_rate_is_refused(catalog_and_provider: None) -> None:
+    record_rate()
+    with pytest.raises(IntegrityError, match="foreign_prices_name_their_exchange_rate"):
+        observe(exchange_rate_id=RATE_ID)
+
+
+def test_an_sgd_price_cannot_be_converted(catalog_and_provider: None) -> None:
+    with pytest.raises(IntegrityError, match="sgd_prices_are_not_converted"):
+        observe(price=Decimal("412.50"), price_sgd=Decimal("500.00"))
+
+
+def test_a_rate_in_use_cannot_be_deleted(catalog_and_provider: None) -> None:
+    record_rate()
+    observe(
+        currency="USD", price=Decimal("1.00"), price_sgd=Decimal("1.34"), exchange_rate_id=RATE_ID
+    )
+    with pytest.raises(IntegrityError, match="fk_market_observations_exchange_rate_id"):
+        write([(sa.text("DELETE FROM exchange_rates"), None)])
+
+
+def test_a_second_rate_for_the_same_day_is_refused(catalog_and_provider: None) -> None:
+    record_rate()
+    with pytest.raises(IntegrityError, match="uq_exchange_rates"):
+        record_rate(id=uuid.uuid4())
+
+
+@pytest.mark.parametrize(
+    ("overrides", "constraint"),
+    [
+        ({"quote_currency": "USD"}, "quote_currency_is_sgd"),
+        ({"rate": Decimal("0")}, "rate_is_positive"),
+        ({"base_currency": "usd"}, "base_currency_is_an_iso_4217_code"),
+    ],
+)
+def test_an_unusable_rate_is_refused(
+    overrides: dict[str, Any], constraint: str, catalog_and_provider: None
+) -> None:
+    with pytest.raises(IntegrityError, match=constraint):
+        record_rate(**overrides)
+
+
+def test_a_quarantine_reason_outside_the_vocabulary_is_refused(
+    catalog_and_provider: None,
+) -> None:
+    quarantine()
+    with pytest.raises(IntegrityError, match="reason_is_a_quarantine_reason"):
+        quarantine(reason="looked_wrong")
+
+
+@pytest.mark.parametrize("table", ["exchange_rates", "market_quarantine"])
+def test_rates_and_quarantined_records_are_append_only(
+    table: str, catalog_and_provider: None
+) -> None:
+    """A rewritten rate would silently reprice every observation that names it."""
+    record_rate()
+    quarantine()
+    with pytest.raises(IntegrityError, match=f"{table} is append-only"):
+        write([(sa.text(f"UPDATE {table} SET created_at = now()"), None)])  # noqa: S608
 
 
 def test_an_observation_needs_a_provider(catalog_and_provider: None) -> None:
