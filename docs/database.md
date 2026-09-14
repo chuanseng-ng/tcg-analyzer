@@ -390,10 +390,7 @@ requires of `ml/*`.
 
 ```bash
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg_corpus
-uv run tcg-restore-dataset-version \
-  --manifest datasets/manifests/pokemon-condition-v0.1.0.json \
-  --manifest datasets/manifests/pokemon-condition-v0.2.0.json \
-  --copies copies.csv --license "owned outright" --commercial-use-allowed --derivative-use-allowed
+uv run tcg-restore-dataset-version --manifest datasets/manifests/pokemon-condition-v0.1.0.json --manifest datasets/manifests/pokemon-condition-v0.2.0.json --copies copies.csv --license "owned outright" --commercial-use-allowed --derivative-use-allowed
 ```
 
 | Flag | Accepts |
