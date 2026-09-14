@@ -423,9 +423,11 @@ def _binary_maps(gray: _Gray, saturation: _Gray) -> tuple[_Gray, ...]:
         # speckle and keeps the card's step edge, so the closing no longer
         # joins the two into one blob.
         #
-        # ponytail: no synthetic scene reproduces the merge (five tried), so
-        # the evidence is two real photographs on dark cloth; a test lands
-        # with the first scene that fails without this pass.
+        # It also keeps a steeply keystoned card's outline above
+        # `min_rectangularity` where dark artwork notches every other pass
+        # (#338's test). ponytail: the glare-lit speckle merge itself has no
+        # synthetic scene (five tried in #335) and rests on two photographs;
+        # #343 owns the photographs that would give it a test.
         cv2.morphologyEx(cv2.Canny(textured, median_lower, median_upper), cv2.MORPH_CLOSE, kernel),
     )
 
