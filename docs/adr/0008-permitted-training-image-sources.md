@@ -337,3 +337,31 @@ is everywhere, because the artwork is not the person who consented's to grant
 either. R1 still stands. And the class still carries **no grade, permanently**:
 the user is asking what grade the card might get, which is the product. Class 4
 can never be the only source, and the register's asymmetry is why.
+
+## Addendum — 2026-09-14 (#313, PR #315)
+
+**A copy photographed through its slab may be trained on, and never tested on.**
+The Consequences above leave *"whether a domain-mismatched approved source
+should be trained on at all"* to M7 and M8. For class 2 the answer is now on the
+record: `photographed_owned_slab` scores 0 on domain match, so a slab-sourced
+copy in the test split would turn §27's within-±1 Wilson bound into a measurement
+of something the product never receives. It may sit in train. It may not sit in
+test.
+
+**The rule is visible, not enforced.** Nothing in the schema or the splitter
+stops a slab copy landing in test: `acquisition_method` carries no CHECK beyond
+being non-blank, it is not one of §32's grouping keys, and `ml/*` never reads it
+back. A CHECK or a splitter rule pinning the class to train was considered and
+rejected, because the splitter assigns deterministic groups by share and pinning
+a class biases the achieved proportions with a grouping relation §32 does not
+list. The rule is a purchasing discipline: which copies enter the corpus is the
+operator's decision, and `tcg-publish-dataset-version` prints each split's
+provenance mix, so the publish log is where the decision is checked (PR #315).
+
+**Both published versions are clean.** Every image in
+`pokemon-condition-v0.1.0` (20 / 6 / 2) and `pokemon-condition-v0.2.0`
+(20 / 4 / 4) is `photographed_before_submission`, on every split.
+
+**What this does not change.** The four approved sources are still four, class 2
+is still approved, and R1 still stands. This is not the scheduled review either:
+that re-read is still due by **2026-11-26** and is held under #313.

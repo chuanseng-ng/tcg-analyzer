@@ -230,8 +230,8 @@ one-key `{"insufficient_information": reason}` object, in the vocabulary
 is satisfied by evaluating and reporting, which is what it asks for; it is not
 satisfied by a curve over four images, and a fitted calibrator over a handful of
 labels is noise wearing a curve. One — temperature scaling, isotonic regression —
-re-enters behind a bumped `EVALUATION_VERSION`, fitted on train and validation
-outcomes only, because calibrating against the test split stays forbidden (§27).
+re-enters behind a bumped `GRADE_EVALUATION_VERSION`, fitted on train and
+validation outcomes only, because calibrating against the test split stays forbidden (§27).
 
 **4. A V1 distribution covers the company's full ladder. No bucket.**
 
@@ -323,7 +323,7 @@ which only the run can know. Different questions, both correct.
 A trained per-company model re-enters through the injected-predictor seam and
 #189's registry, superseding a baseline's constant with a registry version; nothing
 here has to be undone for it. A fitted calibrator re-enters behind a bumped
-`EVALUATION_VERSION`, on train and validation outcomes. §27's claim re-enters the
+`GRADE_EVALUATION_VERSION`, on train and validation outcomes. §27's claim re-enters the
 moment the Wilson bound clears, with no further agreement needed — which is what
 fixing the rule now buys. A bucketed distribution re-enters if a learned model has
 a reason to emit one; every layer already accepts it.
@@ -388,3 +388,29 @@ decide whether a `ManifestMember` may carry an issued grade; #165 raised that as
 ADR 0008 question and #220 owns it. It does not design the promote-and-retire path,
 which belongs to the first trained artifact. And it chooses no model architecture:
 it fixes only what the interval before one looks like.
+
+## Correction — 2026-09-14 (#313)
+
+**This is not the scheduled review.** That re-read is still due by
+**2026-11-22** and is held under #313. Two statements in this record were wrong
+on facts that do not touch the decision, and are corrected here rather than by a
+new ADR.
+
+**A fitted grade calibrator bumps `GRADE_EVALUATION_VERSION`.** Decision 3 and
+the re-entry triggers named `EVALUATION_VERSION`, which is the condition
+harness's constant. Grade calibration lives in `tcg_ml_evaluation.grading`,
+beside `GRADE_EVALUATION_VERSION`, and the two constants never move together
+(`ml/evaluation/README.md`). Both sites now name the right one; nothing else in
+either sentence changed.
+
+**The size of a §27 claim is about 107 graded cards per company, not several
+hundred.** Decision 2 read the test split as "about one image in seven". The
+splitter aims at **70/15/15 by card** (`splitting.py`'s `DEFAULT_PROPORTIONS`),
+so 16 test-split outcomes means about 107 graded cards for one company, and
+about 330 for all three, since a card sits in one slab at a time. #311 measured
+this and plans on 112 ([the submission plan](../model-training-and-testing.md)).
+The Wilson rule and the 16 are unchanged; only the corpus size quoted beside
+them was wrong. The text of Decision 2 is left as it was accepted.
+
+**No review trigger has fired.** `grading_outcomes` holds no rows, no standard
+revision has changed a scale, and no bundle is registered.
