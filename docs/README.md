@@ -11,6 +11,7 @@ Project documentation.
 | [`development.md`](development.md) | Host-based workflows — the web application, the annotation tool, object storage, background jobs |
 | [`v1-trial-setup.md`](v1-trial-setup.md) | Running V1 for a trial: what it can and cannot show, the local look and the hosted setup, what testers do, and what the operator watches |
 | [`model-training-and-testing.md`](model-training-and-testing.md) | How the models are trained and tested: what exists today, the corpus loop from photograph to graded outcome, the evaluation harnesses, and what is not built yet |
+| [`rebuilding-the-corpus.md`](rebuilding-the-corpus.md) | The runbook for a lost `tcg_corpus`: restore from the committed manifests and the originals, normalize at the annotation-era detector, and prove it with `--regenerate` |
 | [`retention.md`](retention.md) | How long uploaded photographs and analyses are kept, and what deletes them |
 | [`observability.md`](observability.md) | Spec §67's eight signals: the event each is read from, the budget it is held to, and the first measurement off a CI run |
 | [`market-provider-research.md`](market-provider-research.md) | The rubric the V1 market-data provider is chosen against, and the evidence for each candidate |

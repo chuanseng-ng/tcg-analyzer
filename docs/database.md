@@ -386,6 +386,31 @@ is the most a version can leave behind. Each member carries enough for a trainin
 run to resolve its file without reading the database, which is what ADR 0009
 requires of `ml/*`.
 
+### Restoring a lost corpus from its manifests
+
+```bash
+export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg_corpus
+uv run tcg-restore-dataset-version \
+  --manifest datasets/manifests/pokemon-condition-v0.1.0.json \
+  --manifest datasets/manifests/pokemon-condition-v0.2.0.json \
+  --copies copies.csv --license "owned outright" --commercial-use-allowed --derivative-use-allowed
+```
+
+| Flag | Accepts |
+| --- | --- |
+| `--manifest` | A published manifest. Repeat it for every version. Order doesn't matter, and ordinals are restored as recorded. |
+| `--copies` | A CSV headed `file,physical_copy_id,acquired_at`, with one row per original. `file` is relative to the CSV, and `acquired_at` must carry an offset. |
+| `--license`, `--commercial-use-allowed`, `--derivative-use-allowed` | As for ingestion, and checked by `verify_provenance` against every member's source. Optional to argparse; ADR 0008 refuses them missing. |
+| `--annotator-id` | The opaque id the restored annotations are recorded under. Defaults to `TCG_API_ANNOTATOR_ID`. |
+
+It keeps every id and timestamp the manifests record. It matches originals to
+members by `sha256` and refuses a mismatch rather than re-encoding. **It refuses
+a database that holds any corpus row.** It normalizes nothing, and it runs from
+the API image. The whole procedure is
+[`rebuilding-the-corpus.md`](rebuilding-the-corpus.md), including normalizing at
+the annotation-era detector and the `--regenerate` check that proves the
+rebuild.
+
 ## Annotating a training image
 
 Spec §30's internal annotation application writes into two tables, and
