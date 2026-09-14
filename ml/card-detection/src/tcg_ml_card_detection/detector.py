@@ -121,6 +121,14 @@ there. So such a group is not *counted*, and only a group other than the
 card's: a slab photograph's winning quadrilateral has unsupported sides too,
 and selection and the case rules above are not touched.
 
+**A square-on quadrilateral too wide for one card is two cards.** #342: two
+overlapping cards were traced as one quadrilateral, admitted under the wide
+aspect band, and each card inside it was dropped as structure by #206's rule —
+so a two-card photograph passed at `good`. Read square-on, where the aspect is
+the object's and not the tilt's, a quadrilateral at 0.77 or wider is counted as
+two, the mirror of #332's slab shape rule. It is only a count: the gate's
+`multiple_cards` refuses, and nothing about selection changes.
+
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
@@ -328,6 +336,12 @@ def detect(
         if group is card_group
         or not _unsupported_at_frame(group, edges=edges, thresholds=thresholds)
     ]
+    # A square-on quadrilateral too wide for one card is two overlapping cards
+    # traced together (#342): each card inside it was dropped as structure.
+    two_cards = (
+        _quad_aspect(card.quad) >= thresholds.pair_square_on_min_aspect
+        and _opposite_side_ratio(card.quad) <= thresholds.case_square_on_max_perspective_ratio
+    )
 
     return CardGeometry(
         corners=_rescaled(card.quad, scale=scale, width=original_width, height=original_height),
@@ -335,7 +349,7 @@ def detect(
         frame_width=original_width,
         frame_height=original_height,
         detector=CARD_DETECTION_VERSION,
-        candidates=len(counted),
+        candidates=max(len(counted), 2) if two_cards else len(counted),
         enclosing_ratio=_enclosing_ratio(card_group, thresholds=thresholds),
         thresholds=thresholds.as_record(),
     )
