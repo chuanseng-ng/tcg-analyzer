@@ -354,6 +354,47 @@ def test_a_keystoned_card_with_a_lost_corner_keeps_its_perspective() -> None:
         assert corner == pytest.approx(expected, abs=15)
 
 
+def test_a_steeply_keystoned_card_with_dark_art_at_its_edge_is_found() -> None:
+    """#338: the textured-surface pass (#335) finds what the other six cannot.
+
+    Measured on `erika-invitation-en-front-10`/`-20` on black cloth. A card at
+    skew 1.45 is a trapezoid filling at most (1 + 1/1.45) / 2 = 0.845 of its
+    minimum-area rectangle, a few points above `min_rectangularity`. Dark
+    artwork running into one long side notches every Gaussian-blurred and
+    region pass below the line (0.71-0.79 on the photographs, 0.72-0.76 here);
+    the median blur keeps the outline at 0.84. Surface 9 with grain, face 90,
+    a rim of 47: the photographs' own levels.
+    """
+    drawn = ((382.7, 380.0), (817.3, 380.0), (915.0, 1240.0), (285.0, 1240.0))
+    rng = np.random.default_rng(0)
+    picture = np.clip(9 + rng.normal(0, 4.0, (HEIGHT, WIDTH, 1)), 0, 255)
+    picture = picture.repeat(3, axis=2).astype(np.uint8)
+
+    card = np.zeros((HEIGHT, WIDTH), np.uint8)
+    cv2.fillConvexPoly(card, np.array(drawn, np.int32), 255)
+    picture[card > 0] = printed(WIDTH, HEIGHT, 90)[card > 0]
+    rim = card & ~cv2.erode(card, np.ones((9, 9), np.uint8))
+    picture[rim > 0] = 47
+
+    art = np.zeros((HEIGHT, WIDTH), np.uint8)
+    for centre, radius in (
+        ((356, 1095), 86),
+        ((366, 953), 85),
+        ((395, 1016), 104),
+        ((367, 988), 78),
+        ((351, 949), 96),
+        ((338, 973), 95),
+    ):
+        cv2.circle(art, centre, radius, 255, -1)
+    picture[(art & card) > 0] = 20
+
+    found = located(png(picture))
+
+    assert found.area_fraction == pytest.approx(0.238, abs=0.02)
+    assert found.opposite_side_ratio == pytest.approx(1.45, abs=0.1)
+    assert found.candidates == 1
+
+
 def test_a_landscape_card_is_ordered_the_same_way() -> None:
     left, top, height, width = CARD  # the card on its side
     found = located(png(photograph(card=(top - 200, left + 125, width, height))))
