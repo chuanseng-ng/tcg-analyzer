@@ -285,11 +285,20 @@ The bound is what sets the size of the job. Even a perfect record needs **at
 least 16 graded cards in the test split per company** before it clears 0.80;
 four out of four gives a bound of 0.51. Here is the arithmetic:
 
-1. The test split is about a seventh of the corpus, so 16 test cards means
-   about 112 graded cards per company.
+1. The splitter aims at 70 / 15 / 15 **by physical card** and does not force
+   it, so 16 test cards means about 107 graded cards per company. **Plan on
+   about 112**, which leaves room for a split that lands short.
 2. A card sits in one slab at a time (crack-and-resubmit is outside V1), so the
    three companies need about **330 cards between them**.
-3. That assumes no mistakes; a model that makes some needs more.
+3. That assumes no mistakes. A model that makes some needs more:
+
+   | Misses on the test split | Test-split grades needed | Graded cards at a 15% test share |
+   | --- | --- | --- |
+   | 0 | 16 (bound 0.806) | about 107 |
+   | 1 | 25 (bound 0.805) | about 167 |
+   | 2 | 33 (bound 0.804) | about 220 |
+
+   Computed with `tcg_ml_evaluation.metrics.wilson_lower_bound` at z = 1.96.
 4. Each card costs a grading fee and weeks to months of turnaround.
 
 The binding constraint is graded cards, not code.
@@ -297,6 +306,104 @@ The binding constraint is graded cards, not code.
 A trained model re-enters the product the moment `grading_outcomes` holds
 test-split rows. The 0.50 confidence gate and the 80% target do not move to
 meet the data; changing either is a new ADR.
+
+## The first submission batch
+
+Decided on 2026-09-14 (#311).
+
+**TAG goes first.** BGS gets a two-card tracer; PSA is deferred.
+- **TAG** issues whole grades, so "within one step" is judged on the same
+  scale as PSA. It is also the cheapest per card through Singapore's only
+  authorised TAG dealer (Newtro).
+- **BGS** issues half grades, so one step is half a grade and the ±1 bar is
+  the hardest of the three. Two cards prove the round trip and the half-grade
+  path through `tcg-record-grading-outcome` before any volume goes that way.
+- **PSA** takes no direct submissions from Singapore; they go through a
+  middleman (Oxley, SGCardBros). Its cheapest tiers are paused until about
+  October 2026.
+
+**The first round is 12 cards, and every one is already in
+`pokemon-condition-v0.2.0`.** They are photographed, ingested and annotated
+under `photographed_before_submission`, so no new photography is needed.
+
+| Company | Card | Set · number | Split in v0.2.0 |
+| --- | --- | --- | --- |
+| TAG | Bulbasaur AR (JP) | M1L 064/063 | validation |
+| TAG | Clobbopus AR (JP) | sv7a 072/064 | train |
+| TAG | Ivysaur AR (JP) | M1L 065/063 | train |
+| TAG | Misty's Lapras AR (JP) | sv9a 072/063 | train |
+| TAG | Meowth AR (Simplified Chinese) | CBB3C 0207/07 | train |
+| TAG | Mew ex SAR (Simplified Chinese) | 151C 191/151 | validation |
+| TAG | Team Rocket's Mimikyu AR (JP) | M2a 205/193 | train |
+| TAG | Misty's Psyduck AR (JP) | sv9a 071/063 | train |
+| TAG | Mega Venusaur ex SAR (JP) | M1L 087/063 | **test** |
+| TAG | Wally's Compassion SAR (JP) | M1S 091/063 | train |
+| BGS | Pikachu ex SAR (JP) | M2a 234/193 | train |
+| BGS | Milotic, Trainer Gallery (EN) | Silver Tempest TG02/TG30 | train |
+
+What the round buys, stated plainly:
+- **It yields one TAG test-split grade**, not sixteen, so §27 stays
+  unclaimable after it. It is the first tranche toward about 112 TAG grades,
+  not the plan that reaches them.
+- **A later version can move cards between splits.** The column above is
+  v0.2.0's assignment; a version published with more cards re-splits the whole
+  corpus.
+- **The two Chinese cards are outside V1**, which covers English and Japanese.
+  Their grades are recorded, but they are not in-scope evidence for §27.
+- **Two cards stay raw:** Ditto (MEW 132/165) and Feraligatr (Expedition
+  12/165). Not every photographed card is submitted. A card that is never
+  shipped is condition data only and never carries a grade.
+
+### Cost and turnaround
+
+A snapshot taken 2026-09-14 at US$1 = S$1.27. **Every cheap tier at all three
+companies is paused, so reconfirm each figure with the dealer before shipping.**
+
+| Company | Tier | Grading fee | All-in per card, Singapore | Turnaround (business days, excluding transit) | State on 2026-09-14 |
+| --- | --- | --- | --- | --- | --- |
+| TAG | Basic (10-card minimum) | US$22 | about S$33 (Newtro) | 45+ | paused |
+| TAG | Standard | US$39 | not quoted | 30 | paused |
+| BGS | Base (no subgrades / all four) | US$14.95 / US$17.95 | S$60–100 (Newtro) | 75+ | reopens 2026-09-15 |
+| BGS | Standard | US$34.95 | S$60–100 (Newtro) | 45 | reopens 2026-09-15 |
+| PSA | Value Bulk (Collectors Club US$149 a year, 20-card minimum) | US$24.99 | S$51–70 (Oxley) | 95 | paused until about October |
+
+- **The first round is 10 × TAG Basic plus 2 × BGS Base.** That comes to about
+  **S$450–650** with the dealer's fee and return shipping.
+- **At 112 cards, the TAG plan is about S$3,700 at Basic.**
+- **Cadence.** The round ships on the first Newtro cutoff (the last Sunday of
+  each month) after TAG Basic and BGS Base reopen. Later TAG tranches follow
+  monthly as cards are bought and photographed.
+- **Turnaround, door to door:**
+  - TAG Basic: about 3–4 months.
+  - BGS Base: about 4–5 months.
+  - That includes the wait for the cutoff and shipping both ways.
+  - **#314 should plan against the first TAG grades no earlier than about four
+    months after the round ships.**
+
+Sources: [TAG pricing](https://taggrading.com/pages/pricing) and
+[a tier summary](https://cardgrade.io/tag-card-grading-cost);
+[BGS tiers and pauses](https://cardgrade.io/blog/bgs-grading-cost-breakdown);
+[PSA tiers and pauses](https://allvintagecards.com/psa-grading-costs/);
+[Singapore all-in costs](https://tcgtalk.com/guides/pokemon-card-grading-costs-singapore)
+and [dealers](https://tcgtalk.com/guides/psa-grading-services-singapore);
+[Newtro's grading service](https://newtroshop.com/grading-made-simple).
+The Singapore figures are community-reported.
+
+### Before a card leaves the house
+
+The mapping from card to physical-copy id stays **outside the repository,
+beside the photographs**:
+- `copies.csv` for the v0.2.0 cards;
+- `cards.ingested.csv` for any batch that `tcg-ingest-training-batch` ingests.
+
+For every card:
+1. **Photograph** the front and back.
+2. **Ingest** both photographs.
+3. **Check that the card's `physical_copy_id` is in the mapping file.**
+4. Only then put the card in the submission.
+
+No card ships unphotographed or without its copy id. When the slab comes back,
+record the grade against that id (step 4 of the loop).
 
 ## Where trial data fits
 
@@ -335,5 +442,8 @@ meet the data; changing either is a new ADR.
   because nobody has been asked yet. #151 is the outbound request.
 - **Grading turnaround sets the pace.** No label arrives faster than a slab
   comes back.
+- **Paused tiers set the start date.** On 2026-09-14 the cheap tiers at all
+  three companies were closed to new submissions, so the first round cannot ship
+  until they reopen (see [The first submission batch](#the-first-submission-batch)).
 - **ADR 0011 is due for review on 2026-11-22,** or sooner at the first
   test-split grade or the first registered trained bundle.
