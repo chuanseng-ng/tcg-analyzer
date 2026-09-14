@@ -41,8 +41,11 @@ PostgreSQL as the development database `tcg`.
   them.** An integration test run truncates whatever database it is pointed at,
   so pytest refuses `tcg_corpus` outright (#196).
 - **`down -v` destroys it.** It deletes the corpus, its artifacts and every
-  annotation. Photographs can be re-ingested from the originals; **annotations
-  cannot be recovered**.
+  annotation. It happened on 2026-09-07. What a committed manifest records
+  (images, splits, annotations, centering, outcomes) comes back from the
+  manifest plus the original photographs; follow
+  [`rebuilding-the-corpus.md`](rebuilding-the-corpus.md). **Anything
+  annotated since the last published version cannot be recovered.**
 
 The current version is `pokemon-condition-v0.2.0`:
 - 14 physical cards and 28 photographs, all photographed by this project before

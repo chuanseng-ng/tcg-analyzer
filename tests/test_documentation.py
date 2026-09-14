@@ -76,6 +76,9 @@ LINKED_DOCUMENTS: tuple[str, ...] = (
     "docs/image-quality-gate-research.md",
     "docs/security-review.md",
     "docs/retention.md",
+    # Links only: its bash blocks carry a heredoc script and line continuations,
+    # which the per-line command check cannot tokenize.
+    "docs/rebuilding-the-corpus.md",
     "datasets/README.md",
     "datasets/documentation/README.md",
     "datasets/documentation/contributor-photography-grant.md",
