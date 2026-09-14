@@ -183,6 +183,20 @@ class DetectionThresholds:
     #: other (0.767-0.995 measured). The one real in-group surface quad held
     #: the card at 0.587. Moving this moves both rules.
     case_max_area_ratio: float = 0.75
+    #: The returned member gives way to a copy of the same card (area above
+    #: :attr:`case_max_area_ratio` of its own) whose opposite-side ratio is
+    #: lower by at least this much (#339): two passes tracing one card do not
+    #: disagree on its perspective by that much, so the keystone is whatever
+    #: one pass merged in. On near-black cloth a shadow-Canny quad took in a
+    #: spur of weave at skew 1.198 over the median pass's clean card at 1.027,
+    #: a gap of 0.171. Over 150 real photographs the widest same-card gap that
+    #: moved a verdict or a reason was 0.102 (a tilt, unusable either way);
+    #: corpus winners and their copies sit within 0.05. This sits in that gap.
+    #:
+    #: **One real positive.** Do not lower it without another photograph.
+    #: Rectangularity is not the signal: corpus winners read 0.81-0.94 around a
+    #: 1.00 copy, and that outer boundary is the edge whitening (#37).
+    same_card_max_skew_gap: float = 0.14
     #: A returned quadrilateral below this aspect, read square-on (skew no
     #: more than :attr:`case_square_on_max_perspective_ratio`), is a case
     #: whose card was never found at all (#332). Measured from the corners:
@@ -265,6 +279,10 @@ class DetectionThresholds:
         if not 0.0 < self.case_max_area_ratio < 1.0:
             raise ValueError(
                 f"case_max_area_ratio must lie in (0, 1), got {self.case_max_area_ratio!r}"
+            )
+        if self.same_card_max_skew_gap <= 0.0:
+            raise ValueError(
+                f"same_card_max_skew_gap must be positive, got {self.same_card_max_skew_gap!r}"
             )
         if not 0.0 < self.case_square_on_max_aspect <= self.case_max_aspect:
             raise ValueError(

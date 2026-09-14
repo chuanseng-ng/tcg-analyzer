@@ -14,6 +14,8 @@ package does not already depend on. PNG unless the point is the JPEG decoder.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import cv2
 import numpy as np
 import pytest
@@ -22,6 +24,9 @@ from tcg_domain.card_geometry import CardGeometry
 from tcg_domain.confidence import InsufficientInformation
 from tcg_domain.image_quality import CardNotLocated, GateRefusal
 from tcg_ml_card_detection import CARD_DETECTION_VERSION, DEFAULT_DETECTION_THRESHOLDS, detect
+
+if TYPE_CHECKING:
+    from tcg_ml_card_detection.detector import _Candidate
 
 #: Portrait, and large enough that the working downscale is a real one.
 HEIGHT, WIDTH = 1600, 1200
@@ -783,6 +788,46 @@ def test_a_group_does_not_chain_through_a_member_between_two_centres() -> None:
     assert groups == [[shell, bridge], [card]]
 
 
+def _member(quad: tuple[tuple[float, float], ...], area: float) -> _Candidate:
+    from tcg_ml_card_detection.detector import _Candidate
+
+    return _Candidate(quad, area, (50.0, 70.0), 1.0, 0.7, 0.1)  # type: ignore[arg-type]
+
+
+def test_a_keystoned_blob_gives_way_to_a_squarer_copy_of_the_card_in_its_group() -> None:
+    """#339: on dark cloth a pass traced the card plus a spur of weave.
+
+    Measured on `ditto_jp_front_2`: the returned quadrilateral 0.548 of the
+    frame at skew 1.198, the median pass's clean card 0.471 at 1.027 — the
+    same object by area (0.86), and two passes tracing one card cannot
+    disagree on its perspective by 0.17. The keystone is the spur's.
+    """
+    from tcg_ml_card_detection.detector import _outermost
+
+    blob = _member(((0.0, 0.0), (100.0, 0.0), (110.0, 140.0), (-10.0, 140.0)), 548.0)
+    card = _member(((5.0, 5.0), (95.0, 5.0), (95.0, 131.0), (5.0, 131.0)), 471.0)
+
+    assert _outermost([blob, card], thresholds=DEFAULT_DETECTION_THRESHOLDS) is card
+
+
+@pytest.mark.parametrize(
+    ("bottom", "card_area"),
+    [
+        # Skew 1.10 against 1.0: inside the passes' disagreement (0.102 measured).
+        (5.0, 471.0),
+        # Squarer by 0.2, but well inside by area: a distinct object, not a copy.
+        (10.0, 400.0),
+    ],
+)
+def test_the_outermost_member_is_kept_otherwise(bottom: float, card_area: float) -> None:
+    from tcg_ml_card_detection.detector import _outermost
+
+    blob = _member(((0.0, 0.0), (100.0, 0.0), (100.0 + bottom, 140.0), (-bottom, 140.0)), 548.0)
+    card = _member(((5.0, 5.0), (95.0, 5.0), (95.0, 131.0), (5.0, 131.0)), card_area)
+
+    assert _outermost([blob, card], thresholds=DEFAULT_DETECTION_THRESHOLDS) is blob
+
+
 # Sleeves
 # ---------------------------------------------------------------------------
 
@@ -905,6 +950,7 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("case_square_on_max_perspective_ratio", 1.0, "case_square_on_max_perspective_ratio"),
         ("pair_square_on_min_aspect", 0.7, "pair_square_on_min_aspect"),
         ("pair_square_on_min_aspect", 0.98, "pair_square_on_min_aspect"),
+        ("same_card_max_skew_gap", 0.0, "same_card_max_skew_gap"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
