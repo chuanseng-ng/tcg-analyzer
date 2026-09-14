@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.16.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.17.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
@@ -230,7 +230,8 @@ class DetectionThresholds:
     #: refused either way is the safe direction, with the wrong message. No
     #: such photograph exists, so do not lower this without one, and do not
     #: raise it past 0.80, where the nearest real pair sits. A card-shaped
-    #: union (0.719) and a near-stack (0.745) are below it and not reached.
+    #: union (0.719) and a near-stack (0.745) are below it: those two are
+    #: counted by #345's saturation-union rule instead, which is not a shape.
     pair_square_on_min_aspect: float = 0.77
 
     #: A corner within this fraction of the frame's short edge of the frame

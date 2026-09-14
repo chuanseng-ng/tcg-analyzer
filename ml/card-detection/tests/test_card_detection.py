@@ -479,6 +479,71 @@ def test_two_overlapping_cards_square_on_are_counted_as_two() -> None:
     assert detect(data, thresholds=lenient).candidates == 1  # type: ignore[union-attr]
 
 
+#: #345's scenes: a saturated card at the surface's own grey, flat, which only
+#: the saturation pass can see, and a bright saturated printed face, which every
+#: pass can. BGR.
+_SURFACE_GREY = 120
+_SATURATED_AT_SURFACE_GREY = (240, 128, 60)
+_BRIGHT_SATURATED = (250, 190, 110)
+
+
+def tinted(
+    width: int, height: int, colour: tuple[int, int, int], *, ink: bool
+) -> NDArray[np.uint8]:
+    """A face in one colour with a little grain, printed like `printed` when `ink`."""
+    face = np.zeros((height, width, 3), np.int16)
+    face[:] = colour
+    if ink:
+        rows, columns = np.mgrid[0:height, 0:width]
+        face[(((rows // 20) + (columns // 20)) % 2).astype(bool)] -= 40
+    face += np.random.default_rng(7).integers(-8, 9, size=(height, width, 1))
+    return np.clip(face, 0, 255).astype(np.uint8)
+
+
+def test_two_overlapping_cards_only_the_saturation_pass_joins_are_counted_as_two() -> None:
+    """#345: two diagonally offset card backs were returned as one card, at `good`.
+
+    Their union is card-shaped (0.719 on the real photograph), below #342's
+    shape line, and only the saturation pass's wear closing traced it: every
+    luminance pass traced the upper card alone, which was then dropped as the
+    union's structure. Here the lower card sits at the surface's grey, so no
+    luminance pass sees it, as on the real leather mat.
+    """
+    picture = background(_SURFACE_GREY)
+    width, height = 480, 670
+    left, top = 200, 300
+    lower = tinted(width, height, _SATURATED_AT_SURFACE_GREY, ink=False)
+    picture[
+        top + height // 4 : top + height // 4 + height,
+        left + width // 4 : left + width // 4 + width,
+    ] = lower
+    picture[top : top + height, left : left + width] = tinted(
+        width, height, _BRIGHT_SATURATED, ink=True
+    )
+
+    assert located(png(picture)).candidates >= 2
+
+
+def test_an_artwork_window_on_a_card_only_the_saturation_pass_finds_is_not_a_second_card() -> None:
+    """#345's guard: a card the saturation pass alone traces, with a bright window.
+
+    Also a saturation-only quadrilateral holding a luminance-traced one, but the
+    window lies across the card, not along it; two overlapping cards lie
+    parallel (0-3 degrees on the real pairs, artwork windows 87-89).
+    """
+    picture = background(_SURFACE_GREY)
+    width, height = 480, 670
+    left, top = 300, 400
+    picture[top : top + height, left : left + width] = tinted(
+        width, height, _SATURATED_AT_SURFACE_GREY, ink=False
+    )
+    picture[top + 60 : top + 400, left + 30 : left + 450] = tinted(
+        420, 340, _BRIGHT_SATURATED, ink=True
+    )
+
+    assert located(png(picture)).candidates == 1
+
+
 def test_a_soft_lit_frame_corner_is_not_a_second_card() -> None:
     """#334: a patch of empty table was counted as a second card.
 
