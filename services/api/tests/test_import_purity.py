@@ -367,6 +367,15 @@ def test_serving_a_training_image_pulls_in_neither_opencv_nor_the_analysis_stage
     assert stages == [], stages
 
 
+def test_restoring_a_corpus_pulls_in_neither_opencv_nor_the_analysis_stages() -> None:
+    """#348: a rebuild writes rows and bytes; normalization is a separate, later step."""
+    cv = _modules_matching("cv2", after_importing="tcg_api.datasets.restore")
+    stages = _modules_matching("tcg_ml_", after_importing="tcg_api.datasets.restore")
+
+    assert cv == [], f"importing tcg_api.datasets.restore pulled in {cv}"
+    assert stages == [], stages
+
+
 # ---------------------------------------------------------------------------
 # Spec §68's feedback never reaches training — #270
 # ---------------------------------------------------------------------------
@@ -381,6 +390,7 @@ DATASET_MODULES = (
     "tcg_api.datasets.ingestion",
     "tcg_api.datasets.normalization",
     "tcg_api.datasets.outcomes",
+    "tcg_api.datasets.restore",
     "tcg_api.datasets.splitting",
     "tcg_api.datasets.tables",
     "tcg_api.datasets.versioning",
