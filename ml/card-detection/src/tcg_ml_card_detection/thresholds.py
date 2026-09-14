@@ -175,6 +175,13 @@ class DetectionThresholds:
     #: measured 0.464-0.712 of the returned shell; bare cards in the same
     #: domain (tilted, skew under 1.45) measured 0.966 and 0.980, and no
     #: corpus card reaches the domain at all.
+    #:
+    #: **Also where selection's enclosure test starts** (#340): a member at
+    #: no more than this share of another's area is a distinct object, and
+    #: the larger is returned only if it encloses it. Above it, members are
+    #: the same edge found by two passes, and poke up to 90 px outside each
+    #: other (0.767-0.995 measured). The one real in-group surface quad held
+    #: the card at 0.587. Moving this moves both rules.
     case_max_area_ratio: float = 0.75
     #: A returned quadrilateral below this aspect, read square-on (skew no
     #: more than :attr:`case_square_on_max_perspective_ratio`), is a case

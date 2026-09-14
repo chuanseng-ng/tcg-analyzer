@@ -82,6 +82,14 @@ inside a card-shaped quadrilateral is still that card's structure. Only a
 card-shaped one: inside a slab's shell the contained quadrilateral is the
 card, which the case rule below must see.
 
+**Never by a quadrilateral that ends on the frame** (#340): on a black surface
+ridges in the texture were traced into a quadrilateral that ran to the
+picture's edge, cut a corner off the card, and still held nine-tenths of it —
+so the card was dropped as its structure and the surface was returned. A
+container touching the frame that holds a group clear of it only by that
+share, not by its corners, is card plus surface: the container is dropped and
+the card kept. #192's reason, lifted from members to groups.
+
 **Unless the container is the one that is not card-shaped.** #320: a grader's
 slab is a rigid 3.25 x 5.25-inch shell at aspect 0.619, and on the one real slab
 photograph that returned a quadrilateral the card inside it was found — at
@@ -136,7 +144,10 @@ whitening that matters most. One exception (#192): a member touching the frame
 boundary loses to any member clear of it, however large — the corpus's
 card-plus-shadow blobs sat below the frame-filling refusal's area line, and a
 quadrilateral that ends on the picture's own edge ends there because the
-picture does, not because the card does.
+picture does, not because the card does. And "outermost" means it encloses
+(#340): a member is passed over when a corner of a distinct object in its
+group — one well inside it by area — lies outside it, as the card's did under
+a square-on surface quadrilateral that shared its centre.
 
 **Failure is a result, not an exception.** Nothing card-like found means
 :data:`INSUFFICIENT_INFORMATION` with a reason, never a guessed quadrilateral —
@@ -295,6 +306,10 @@ def detect(
     groups = _group_by_centre(
         grounded, tolerance=thresholds.duplicate_centre_fraction * min(width, height)
     )
+    # A frame-touching quadrilateral holding a card clear of the frame by
+    # overlap alone is card plus surface (#340), and gives way to the card.
+    surface = _card_plus_surface(groups, thresholds=thresholds)
+    groups = [group for group in groups if not any(group is member for member in surface)]
     contained = _containment(groups, thresholds=thresholds)
     # A card-shaped quadrilateral inside one that is not is a card in a case
     # (#320), and a case is refused rather than returned as the card.
@@ -313,7 +328,19 @@ def detect(
     clear_of_the_boundary = [
         member for member in card_group if member.boundary_margin > thresholds.frame_margin_fraction
     ]
-    card = max(clear_of_the_boundary or card_group, key=lambda member: member.area)
+    pool = clear_of_the_boundary or card_group
+    # And only a member that encloses the distinct objects in its group (#340):
+    # those well inside it by area, not another pass's copy of the same edge.
+    enclosing = [
+        member
+        for member in pool
+        if all(
+            _encloses(member.quad, other.quad, thresholds=thresholds)
+            for other in pool
+            if other.area <= thresholds.case_max_area_ratio * member.area
+        )
+    ]
+    card = max(enclosing or pool, key=lambda member: member.area)
     # The same case, with its card grouped alongside it rather than contained
     # as a group of its own (#330).
     if _holds_a_card(card, card_group, thresholds=thresholds):
@@ -732,17 +759,57 @@ def _containment(
             outer = max(other, key=lambda member: member.area)
             if other is group or outer.area <= inner.area:
                 continue
-            boundary = np.array(outer.quad, dtype=np.float32)
-            if all(
-                cv2.pointPolygonTest(boundary, corner, measureDist=True)
-                >= -thresholds.containment_slack_px
-                for corner in inner.quad
-            ) or (
-                _quad_aspect(outer.quad) >= thresholds.case_max_aspect
-                and _overlap(inner.quad, boundary) >= thresholds.containment_min_overlap
+            if _encloses(outer.quad, inner.quad, thresholds=thresholds) or _overlaps(
+                outer, inner, thresholds=thresholds
             ):
                 pairs.append((outer, group))
     return pairs
+
+
+def _card_plus_surface(
+    groups: list[list[_Candidate]], *, thresholds: DetectionThresholds
+) -> list[list[_Candidate]]:
+    """Every group that is the card plus the surface beside it (#340).
+
+    Its outermost member touches the frame, and holds another group's clear of
+    it by #335's overlap share but not by its corners: a quadrilateral traced
+    along the surface that cuts the card. A card's own panel never lies clear
+    of a card that is not, so #335's case is untouched.
+    """
+    surfaces: list[list[_Candidate]] = []
+    for other in groups:
+        outer = max(other, key=lambda member: member.area)
+        if outer.boundary_margin > thresholds.frame_margin_fraction:
+            continue
+        for group in groups:
+            inner = max(group, key=lambda member: member.area)
+            if (
+                group is not other
+                and inner.area < outer.area
+                and inner.boundary_margin > thresholds.frame_margin_fraction
+                and _overlaps(outer, inner, thresholds=thresholds)
+                and not _encloses(outer.quad, inner.quad, thresholds=thresholds)
+            ):
+                surfaces.append(other)
+                break
+    return surfaces
+
+
+def _encloses(outer: _Quad, inner: _Quad, *, thresholds: DetectionThresholds) -> bool:
+    """Whether every corner of `inner` lies inside `outer`, give or take the slack."""
+    boundary = np.array(outer, dtype=np.float32)
+    return all(
+        cv2.pointPolygonTest(boundary, corner, measureDist=True) >= -thresholds.containment_slack_px
+        for corner in inner
+    )
+
+
+def _overlaps(outer: _Candidate, inner: _Candidate, *, thresholds: DetectionThresholds) -> bool:
+    """#335's overlap containment: a card-shaped container holding nine-tenths."""
+    return _quad_aspect(outer.quad) >= thresholds.case_max_aspect and (
+        _overlap(inner.quad, np.array(outer.quad, dtype=np.float32))
+        >= thresholds.containment_min_overlap
+    )
 
 
 def _overlap(inner: _Quad, boundary: MatLike) -> float:
