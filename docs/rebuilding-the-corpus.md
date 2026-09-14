@@ -42,8 +42,14 @@ docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres 
 docker compose -f infrastructure/local/docker-compose.yml exec postgres createdb -U tcg tcg_corpus
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg_corpus
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
+# The restore and normalization write to MinIO, so they also need the bucket and credentials.
+# These are the local defaults from .env.example; use your own if you changed them.
+export TCG_API_STORAGE_BUCKET=tcg-local TCG_API_STORAGE_REGION=us-east-1
+export TCG_API_STORAGE_ACCESS_KEY_ID=tcg TCG_API_STORAGE_SECRET_ACCESS_KEY=tcglocaldev
 uv run alembic upgrade head
 ```
+
+Every later step assumes these variables are still set in the same shell.
 
 If `createdb` says the database exists, check that it is really empty before
 going on. The restore refuses a database holding any corpus row, and that
@@ -131,20 +137,31 @@ PYTHONPATH="../tcg-analyzer-d087f98/ml/card-detection/src" uv run tcg-normalize-
 If `ml/normalization` also changed, put its `src` on `PYTHONPATH` too. The
 separator is `;` on Windows and `:` elsewhere.
 
-Then check that every artifact records the old versions:
+**`normalization_details` records the normalization version, never the
+detector's**, so the database cannot tell you which detector ran. Check the
+override **before** normalizing: Python must import the detector from the
+worktree, and its source must name the pinned version.
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml exec postgres psql -U tcg tcg_corpus -c \
-  "SELECT count(*) FILTER (WHERE normalization_details::text LIKE '%card-detection-opencv-v0.3.0%') AS pinned,
-          count(*) FILTER (WHERE normalized_uri IS NULL) AS missing,
-          count(*) AS total
-     FROM training_images"
+PYTHONPATH="../tcg-analyzer-d087f98/ml/card-detection/src" uv run python -c "import tcg_ml_card_detection as m; print(m.__file__)"
+grep -rhoI 'card-detection-opencv-v[0-9.]*' ../tcg-analyzer-d087f98/ml/card-detection/src | sort -u
 ```
 
-`pinned` must equal `total`, and `missing` must be 0. If not, the wrong
-detector ran. Clear `normalized_uri` and `normalization_details` on those rows
-(it is the *artifact* that is wrong, not the annotation), then run this step
-again.
+The first line must print a path inside `../tcg-analyzer-d087f98`, and the
+second must print only `card-detection-opencv-v0.3.0`.
+
+After normalizing, check that no artifact is missing and that every one records
+the pinned normalization version:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml exec postgres psql -U tcg tcg_corpus -c "SELECT count(*) FILTER (WHERE normalization_details->>'version' = 'normalization-opencv-v0.2.0') AS pinned, count(*) FILTER (WHERE normalized_uri IS NULL) AS missing, count(*) AS total FROM training_images"
+```
+
+`pinned` must equal `total`, and `missing` must be 0.
+
+If the override didn't take and HEAD's detector ran, the artifacts are wrong,
+not the annotations. Clear `normalized_uri` and `normalization_details` on
+every row, then run this step again.
 
 ## 5. Fingerprints
 
