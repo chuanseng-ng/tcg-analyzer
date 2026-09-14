@@ -147,7 +147,10 @@ quadrilateral that ends on the picture's own edge ends there because the
 picture does, not because the card does. And "outermost" means it encloses
 (#340): a member is passed over when a corner of a distinct object in its
 group — one well inside it by area — lies outside it, as the card's did under
-a square-on surface quadrilateral that shared its centre.
+a square-on surface quadrilateral that shared its centre. It is also passed over
+for a copy of the same card that reads markedly squarer (#339): two passes do not
+disagree about one card's perspective by that much, so the keystone is cloth the
+larger one took in.
 
 **Failure is a result, not an exception.** Nothing card-like found means
 :data:`INSUFFICIENT_INFORMATION` with a reason, never a guessed quadrilateral —
@@ -328,19 +331,7 @@ def detect(
     clear_of_the_boundary = [
         member for member in card_group if member.boundary_margin > thresholds.frame_margin_fraction
     ]
-    pool = clear_of_the_boundary or card_group
-    # And only a member that encloses the distinct objects in its group (#340):
-    # those well inside it by area, not another pass's copy of the same edge.
-    enclosing = [
-        member
-        for member in pool
-        if all(
-            _encloses(member.quad, other.quad, thresholds=thresholds)
-            for other in pool
-            if other.area <= thresholds.case_max_area_ratio * member.area
-        )
-    ]
-    card = max(enclosing or pool, key=lambda member: member.area)
+    card = _outermost(clear_of_the_boundary or card_group, thresholds=thresholds)
     # The same case, with its card grouped alongside it rather than contained
     # as a group of its own (#330).
     if _holds_a_card(card, card_group, thresholds=thresholds):
@@ -793,6 +784,38 @@ def _card_plus_surface(
                 surfaces.append(other)
                 break
     return surfaces
+
+
+def _outermost(pool: list[_Candidate], *, thresholds: DetectionThresholds) -> _Candidate:
+    """The member returned as the card: the largest, with two exceptions.
+
+    It must enclose the distinct objects in its group (#340): those well inside
+    it by area, not another pass's copy of the same edge.
+
+    And it gives way to a copy of the same card that reads squarer by at least
+    :attr:`DetectionThresholds.same_card_max_skew_gap` (#339): the keystone is
+    then whatever the larger merged in — on dark cloth, a spur of weave — not
+    the card's own perspective.
+    """
+    enclosing = [
+        member
+        for member in pool
+        if all(
+            _encloses(member.quad, other.quad, thresholds=thresholds)
+            for other in pool
+            if other.area <= thresholds.case_max_area_ratio * member.area
+        )
+    ]
+    candidates = enclosing or pool
+    largest = max(candidates, key=lambda member: member.area)
+    skew = _opposite_side_ratio(largest.quad)
+    squarer = [
+        member
+        for member in candidates
+        if member.area > thresholds.case_max_area_ratio * largest.area
+        and skew - _opposite_side_ratio(member.quad) >= thresholds.same_card_max_skew_gap
+    ]
+    return max(squarer or [largest], key=lambda member: member.area)
 
 
 def _encloses(outer: _Quad, inner: _Quad, *, thresholds: DetectionThresholds) -> bool:
