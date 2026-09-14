@@ -135,7 +135,12 @@ aspect band, and each card inside it was dropped as structure by #206's rule —
 so a two-card photograph passed at `good`. Read square-on, where the aspect is
 the object's and not the tilt's, a quadrilateral at 0.77 or wider is counted as
 two, the mirror of #332's slab shape rule. It is only a count: the gate's
-`multiple_cards` refuses, and nothing about selection changes.
+`multiple_cards` refuses, and nothing about selection changes. **Nor only by
+shape** (#345): a union of two backs offset diagonally is card-shaped, and
+there only the saturation pass's wear closing joined the two, while every
+luminance pass traced the upper card inside it. A returned quadrilateral no
+other pass traced, holding a luminance-traced one that lies along it, is
+counted as two the same way.
 
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
@@ -252,6 +257,15 @@ _SIDE_SAMPLES: Final = 40
 _EDGE_REACH: Final = 7
 _ON_FRAME_PX: Final = 4.0
 
+#: Where the saturation pass sits in :func:`_binary_maps`'s tuple (#345).
+_SATURATION_MAP: Final = 4
+
+#: How far apart two long axes may lie and still run the same way (#345): the
+#: midpoint between parallel and perpendicular, not a fitted value. A second
+#: card overlapping the first lies along it (0-3 degrees on the real pairs); a
+#: front's artwork window lies across it (87-89).
+_PARALLEL_MAX_DEGREES: Final = 45.0
+
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
@@ -265,6 +279,9 @@ class _Candidate:
     #: Least corner-to-frame-edge gap as a fraction of the frame's short edge —
     #: the working-copy twin of `CardGeometry.border_margin_fraction`.
     boundary_margin: float
+    #: Whether the saturation pass found it (#345): its wear closing is the one
+    #: pass that joins two overlapping saturated cards into one region.
+    saturation: bool = False
 
 
 def detect(
@@ -359,7 +376,7 @@ def detect(
     two_cards = (
         _quad_aspect(card.quad) >= thresholds.pair_square_on_min_aspect
         and _opposite_side_ratio(card.quad) <= thresholds.case_square_on_max_perspective_ratio
-    )
+    ) or _saturation_union(card, grounded, thresholds=thresholds)
 
     return CardGeometry(
         corners=_rescaled(card.quad, scale=scale, width=original_width, height=original_height),
@@ -474,7 +491,7 @@ def _candidates(
     largest = thresholds.max_area_fraction * frame_area
 
     found: list[_Candidate] = []
-    for binary in binaries:
+    for index, binary in enumerate(binaries):
         # RETR_LIST rather than RETR_EXTERNAL: a sleeve is *inside* the outline
         # of nothing, but a card is inside a sleeve, and the enclosed one is the
         # one this package exists to find.
@@ -486,7 +503,12 @@ def _candidates(
             if not smallest <= contour_area <= largest:
                 continue
             candidate = _as_candidate(
-                contour, contour_area, width=width, height=height, thresholds=thresholds
+                contour,
+                contour_area,
+                width=width,
+                height=height,
+                saturation=index == _SATURATION_MAP,
+                thresholds=thresholds,
             )
             if candidate is not None and smallest <= candidate.area <= largest:
                 found.append(candidate)
@@ -499,6 +521,7 @@ def _as_candidate(
     *,
     width: int,
     height: int,
+    saturation: bool,
     thresholds: DetectionThresholds,
 ) -> _Candidate | None:
     """One contour as a card-like quadrilateral, or `None` if it is not one."""
@@ -550,6 +573,7 @@ def _as_candidate(
         rectangularity=min(1.0, rectangularity),
         aspect=aspect,
         boundary_margin=max(0.0, min(gaps)) / float(min(width, height)),
+        saturation=saturation,
     )
 
 
@@ -894,6 +918,62 @@ def _holds_a_card(
         for member in group
         if member is not card
     )
+
+
+def _saturation_union(
+    card: _Candidate, candidates: list[_Candidate], *, thresholds: DetectionThresholds
+) -> bool:
+    """Whether the returned quadrilateral is two cards only the saturation pass joined.
+
+    #345: on a card-shaped union of two overlapping saturated backs, every
+    luminance pass traced the upper card and only the saturation pass's wear
+    closing traced the union, which #342's shape line does not reach. So: read
+    square-on, every copy of the returned quadrilateral (another pass tracing
+    the same outline) came from the saturation pass, and it holds something a
+    luminance pass traced — well inside by area, square-on, and lying along it.
+
+    Along it, not across: a card the saturation pass alone finds can hold a
+    bright artwork window, which lies across the card. Over 150 real
+    photographs the returned quadrilateral was saturation-only on the
+    Steelix/Garganacl pairs and one corpus front with nothing inside it.
+
+    ponytail: two real positives from one scene. A union a luminance pass also
+    traces, or a pair of unsaturated backs, is not reached; a learned detector
+    that counts cards is the upgrade.
+    """
+    if _opposite_side_ratio(card.quad) > thresholds.case_square_on_max_perspective_ratio:
+        return False
+    boundary = np.array(card.quad, dtype=np.float32)
+    copies = [
+        other
+        for other in candidates
+        if other.area > thresholds.case_max_area_ratio * card.area
+        and card.area > thresholds.case_max_area_ratio * other.area
+        and _overlap(other.quad, boundary) >= thresholds.containment_min_overlap
+    ]
+    if not all(copy.saturation for copy in [card, *copies]):
+        return False
+    axis = _long_axis_degrees(card.quad)
+    return any(
+        not inner.saturation
+        and inner.area <= thresholds.case_max_area_ratio * card.area
+        and (
+            _encloses(card.quad, inner.quad, thresholds=thresholds)
+            or _overlap(inner.quad, boundary) >= thresholds.containment_min_overlap
+        )
+        and _opposite_side_ratio(inner.quad) <= thresholds.case_square_on_max_perspective_ratio
+        and abs((_long_axis_degrees(inner.quad) - axis + 90.0) % 180.0 - 90.0)
+        <= _PARALLEL_MAX_DEGREES
+        for inner in candidates
+    )
+
+
+def _long_axis_degrees(quad: _Quad) -> float:
+    """The direction of a quadrilateral's longer pair of sides, in `[0, 180)`."""
+    top, right, bottom, left = _side_lengths(quad)
+    start = 0 if top + bottom >= right + left else 1
+    (x0, y0), (x1, y1) = quad[start], quad[start + 1]
+    return math.degrees(math.atan2(y1 - y0, x1 - x0)) % 180.0
 
 
 def _quad_aspect(quad: _Quad) -> float:
