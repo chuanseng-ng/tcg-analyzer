@@ -581,6 +581,43 @@ def test_a_panel_whose_fitted_corner_leaves_the_card_is_not_a_second_card() -> N
     assert found.area_fraction == pytest.approx(0.287, abs=0.02)
 
 
+def assert_on_the_card(found: CardGeometry) -> None:
+    left, top, width, height = CARD
+    assert found.corners[0] == pytest.approx((left, top), abs=8)
+    assert found.corners[2] == pytest.approx((left + width, top + height), abs=8)
+
+
+def test_a_frame_touching_surface_quad_cutting_the_card_is_not_returned() -> None:
+    """#340: ridges on a black surface traced a quadrilateral around the card.
+
+    It ran to the frame's edge, cut one of the card's corners off, and still
+    held nine-tenths of the card, so #335's overlap rule dropped the card as
+    its structure and the surface was returned at `poor`. A quadrilateral that
+    ends on the picture's edge is not a card around a card clear of it.
+    """
+    picture = photograph()
+    ridges = np.array([[0, 470], [1000, 300], [1120, 1450], [60, 1300]], np.int32)
+    cv2.polylines(picture, [ridges], isClosed=True, color=(110, 110, 110), thickness=4)
+    found = located(png(picture))
+
+    assert_on_the_card(found)
+    assert found.candidates == 1
+
+
+def test_a_surface_quad_around_the_card_that_cuts_its_corner_is_not_returned() -> None:
+    """#340, square-on: the same ridges, centred on the card, clear of the frame.
+
+    Grouped with the card, the larger quadrilateral won selection, though one
+    of the card's corners lies well outside it. The returned quadrilateral
+    must enclose what it is returned around.
+    """
+    picture = photograph()
+    ridges = np.array([[150, 250], [1050, 200], [1000, 1400], [180, 1160]], np.int32)
+    cv2.polylines(picture, [ridges], isClosed=True, color=(110, 110, 110), thickness=4)
+
+    assert_on_the_card(located(png(picture)))
+
+
 def test_a_card_found_by_more_than_one_pass_is_still_one_card() -> None:
     """Three extraction passes and a closed edge ribbon each yield a contour.
 
