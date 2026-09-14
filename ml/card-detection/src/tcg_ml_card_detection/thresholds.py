@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.13.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.14.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
@@ -195,6 +195,22 @@ class DetectionThresholds:
     #: the aspect is the tilt's as much as the object's. A copy, as with
     #: :attr:`case_max_perspective_ratio`.
     case_square_on_max_perspective_ratio: float = 1.12
+    #: A returned quadrilateral at or above this aspect, read square-on (skew
+    #: no more than :attr:`case_square_on_max_perspective_ratio`), is two
+    #: overlapping cards traced as one, and is counted as two (#342). The
+    #: mirror of :attr:`case_square_on_max_aspect`. Measured from the corners
+    #: over 150 real photographs: every square-on single card 0.741 or less
+    #: (a Heracross on the blue mat 0.740 at skew 1.09); the square-on
+    #: overlapping pairs 0.800-0.969. This sits in that gap.
+    #:
+    #: **The ceiling is a far, steep tilt.** A pinhole card tilted about its
+    #: short axis stays under skew 1.12 while reading 0.731 at 30 cm, 0.784 at
+    #: 40 cm and 0.907 at 60 cm, and is then refused as `multiple_cards`:
+    #: refused either way is the safe direction, with the wrong message. No
+    #: such photograph exists, so do not lower this without one, and do not
+    #: raise it past 0.80, where the nearest real pair sits. A card-shaped
+    #: union (0.719) and a near-stack (0.745) are below it and not reached.
+    pair_square_on_min_aspect: float = 0.77
 
     #: A corner within this fraction of the frame's short edge of the frame
     #: boundary counts as touching it — the same normalisation, and the same
@@ -285,6 +301,12 @@ class DetectionThresholds:
                     f"the {name} band must be an ordered pair of positive numbers, "
                     f"got {low!r} and {high!r}"
                 )
+        # After the bands, so an unordered aspect band is named as that.
+        if not CARD_ASPECT < self.pair_square_on_min_aspect <= self.max_aspect:
+            raise ValueError(
+                f"pair_square_on_min_aspect must lie in ({CARD_ASPECT:.3f}, max_aspect], got "
+                f"{self.pair_square_on_min_aspect!r}"
+            )
 
     def as_record(self) -> dict[str, float]:
         """The form merged into the quality report's thresholds.

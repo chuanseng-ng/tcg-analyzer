@@ -454,6 +454,26 @@ def test_two_cards_are_counted_as_two() -> None:
     assert located(png(picture)).candidates == 2
 
 
+def test_two_overlapping_cards_square_on_are_counted_as_two() -> None:
+    """#342: two overlapping cards were returned as one card, at `good`.
+
+    Their union is admitted as a quadrilateral, and each card inside it is
+    dropped as that "card's" structure. What is left is the shape: read
+    square-on, a quadrilateral at 0.93 is not one card. Real pairs read
+    0.800-0.969; every square-on single card on disk 0.741 or less.
+    """
+    from tcg_ml_card_detection import DetectionThresholds
+
+    _left, top, width, height = CARD
+    picture = place(background(), (100, top, width, height), 180)
+    place(picture, (100 + width // 2, top, width, height), 215)
+    data = png(picture)
+
+    assert located(data).candidates >= 2
+    lenient = DetectionThresholds(pair_square_on_min_aspect=0.97)
+    assert detect(data, thresholds=lenient).candidates == 1  # type: ignore[union-attr]
+
+
 def test_a_soft_lit_frame_corner_is_not_a_second_card() -> None:
     """#334: a patch of empty table was counted as a second card.
 
@@ -846,6 +866,8 @@ def test_the_thresholds_are_a_parameter() -> None:
         ("case_max_perspective_ratio", 1.0, "case_max_perspective_ratio"),
         ("case_square_on_max_aspect", 0.7, "case_square_on_max_aspect"),
         ("case_square_on_max_perspective_ratio", 1.0, "case_square_on_max_perspective_ratio"),
+        ("pair_square_on_min_aspect", 0.7, "pair_square_on_min_aspect"),
+        ("pair_square_on_min_aspect", 0.98, "pair_square_on_min_aspect"),
         ("max_aspect", 0.1, "aspect band"),
         ("frame_margin_fraction", 0.0, "frame_margin_fraction"),
         ("frame_fill_fraction", 1.5, "frame_fill_fraction"),
