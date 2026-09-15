@@ -33,6 +33,7 @@ is that caller.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -99,7 +100,7 @@ _CENTS_EXPONENT: Final = -2
 
 
 class QuarantineReason(StrEnum):
-    """Why a quote was not stored. Closed: #50's CHECK is built from it.
+    """Why a quote was not stored. Closed: `market_quarantine`'s CHECK is built from it.
 
     `UNMAPPED_CARD` is a catalog problem worth reporting, not something to
     invent a card for. `AMBIGUOUS_CARD` exists because
@@ -152,18 +153,26 @@ class ProviderQuote:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def as_record(self) -> dict[str, object]:
-        """The quote as JSON-safe values, for `market_quarantine.record`.
+        """The quote as strict JSON values, for `market_quarantine.record`.
 
         Text for a `Decimal` and ISO 8601 for a timestamp, so nothing is rounded
         or re-zoned on the way into JSONB: a quarantined record has to show what
-        the provider said, not what a serializer made of it.
+        the provider said, not what a serializer made of it. A non-finite number
+        becomes text too, nested values included — JSONB refuses NaN, and one
+        such value would fail the INSERT for every good quote in the batch.
         """
 
         def text(value: object) -> object:
-            if value is None or isinstance(value, bool | int | float | str):
+            if value is None or isinstance(value, bool | int | str):
                 return value
+            if isinstance(value, float):
+                return value if math.isfinite(value) else str(value)
             if isinstance(value, datetime):
                 return value.isoformat()
+            if isinstance(value, Mapping):
+                return {str(key): text(item) for key, item in value.items()}
+            if isinstance(value, list | tuple):
+                return [text(item) for item in value]
             return str(value)
 
         return {
@@ -174,7 +183,7 @@ class ProviderQuote:
             "confidence": text(self.confidence),
             "grading_company": text(self.grading_company),
             "grade": text(self.grade),
-            "metadata": dict(self.metadata),
+            "metadata": text(self.metadata),
         }
 
 

@@ -301,6 +301,26 @@ def test_a_quote_renders_as_a_json_safe_record_of_what_was_said() -> None:
     assert record["metadata"] == {"n": 3}
 
 
+def test_a_record_is_strict_json_even_when_the_provider_sent_none() -> None:
+    """JSONB refuses NaN, and a Decimal is not JSON at all.
+
+    One such value would fail the batch's INSERT and abandon every good quote
+    beside it, so non-finite numbers and anything not JSON become text — nested
+    inside `metadata` too, because stored observations write it as well.
+    """
+    import json
+
+    quote = a_quote(
+        confidence=float("nan"),
+        metadata={"spread": float("inf"), "median": Decimal("1.5"), "sales": [1, float("nan")]},
+    )
+    record = quote.as_record()
+
+    json.dumps(record, allow_nan=False)
+    assert record["confidence"] == "nan"
+    assert record["metadata"] == {"spread": "inf", "median": "1.5", "sales": [1, "nan"]}
+
+
 def test_normalize_never_raises_for_bad_data() -> None:
     """Every refusal is a result; an exception would abandon the whole run."""
     garbage = ProviderQuote(
