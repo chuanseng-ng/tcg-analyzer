@@ -436,7 +436,9 @@ def test_serving_the_api_never_reaches_market_ingestion() -> None:
 
 def test_the_worker_is_what_reaches_market_ingestion() -> None:
     """Guard the guard: without this, a misspelt module name passes the test above."""
-    pulled = _modules_matching("tcg_api.market.ingestion", after_importing="tcg_api.market.ingestion")
+    pulled = _modules_matching(
+        "tcg_api.market.ingestion", after_importing="tcg_api.market.ingestion"
+    )
 
     assert pulled == ["tcg_api.market.ingestion"]
 

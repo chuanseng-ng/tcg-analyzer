@@ -264,7 +264,7 @@ def test_the_feedback_sweep_is_registered_and_not_retried(configured: Any) -> No
 
 
 def test_every_sweep_is_scheduled(configured: Any) -> None:
-    """Four now. An equality, so a fifth has to be written down here as well.
+    """Four sweeps and #54's ingestion. An equality, so a sixth is written down here too.
 
     A sweep that exists and is never scheduled is a retention policy that does
     not run, which is the failure `docs/retention.md` is written against.
@@ -274,7 +274,45 @@ def test_every_sweep_is_scheduled(configured: Any) -> None:
         "sweep-stalled-analyses",
         "sweep-orphan-objects",
         "sweep-expired-grade-feedback",
+        "ingest-market-prices",
     }
+
+
+# ---------------------------------------------------------------------------
+# Daily market ingestion — issue #54, spec §37
+# ---------------------------------------------------------------------------
+def test_market_ingestion_runs_once_a_day(configured: Any) -> None:
+    """§37's target. 18:00 UTC is 02:00 in Singapore, where V1's users are asleep."""
+    entry = configured.conf.beat_schedule["ingest-market-prices"]
+
+    assert entry["task"] == jobs.INGEST_MARKET
+    assert entry["options"]["queue"] == jobs.QUEUE
+    assert entry["schedule"].hour == {18}
+    assert entry["schedule"].minute == {0}
+    assert entry["schedule"].day_of_week == set(range(7))
+
+
+def test_market_ingestion_is_registered_and_not_retried(configured: Any) -> None:
+    """Tomorrow's tick is the retry; a failed run is recorded, not re-driven."""
+    task = configured.tasks[jobs.INGEST_MARKET]
+
+    assert task.max_retries == 0
+    assert task.soft_time_limit is None
+    assert task.time_limit is None
+
+
+def test_market_ingestion_takes_no_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What to ingest and from where is configuration, never a message payload."""
+    ran: list[Any] = []
+
+    async def ingesting() -> None:
+        ran.append(True)
+
+    monkeypatch.setattr(jobs, "_ingest_market", ingesting)
+
+    jobs.ingest_market_prices.run()
+
+    assert ran == [True]
 
 
 # ---------------------------------------------------------------------------
