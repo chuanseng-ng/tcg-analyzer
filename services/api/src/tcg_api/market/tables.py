@@ -1,10 +1,10 @@
 """Spec §35's market tables and spec §36's snapshots, as SQLAlchemy Core.
 
-Five tables. One row per price a provider reported for a card at a moment, one
+Six tables. One row per price a provider reported for a card at a moment, one
 row per provider recording **what this project is licensed to do with those
 prices**, one row per immutable snapshot of the first, one row per
-operator-recorded exchange rate, and one row per provider record normalization
-refused (#53). `license`,
+operator-recorded exchange rate, one row per provider record normalization
+refused (#53), and one row per scheduled ingestion run (#54). `license`,
 `commercial_use` and `terms_reference` are enforcement fields rather than
 documentation: ADR 0006 relies on one right — derived data, its risk R5 — that
 no shortlisted candidate grants expressly, and gates commercial use on an active
@@ -62,8 +62,9 @@ Six decisions, each of which binds a later milestone:
   join a snapshot that was cut before it arrived. `tcg_api.market.snapshots`
   resolves it; nothing copies a price.
 
-All five tables are append-only, and say so in the database rather than in a
-comment — see the triggers at the foot of this module.
+Every table but `market_ingestion_runs` is append-only, and says so in the
+database rather than in a comment — see the triggers at the foot of this module.
+A run record moves from `running` to its outcome; it is not market data.
 """
 
 from __future__ import annotations
@@ -87,8 +88,11 @@ from tcg_api.tables import PRINTED as _PRINTED
 from tcg_api.tables import metadata, one_of
 
 __all__ = [
+    "INGESTION_FAILURE_REASONS",
+    "INGESTION_RUN_STATUSES",
     "TABLES",
     "exchange_rates",
+    "market_ingestion_runs",
     "market_observations",
     "market_providers",
     "market_quarantine",
@@ -682,12 +686,124 @@ market_quarantine = sa.Table(
 )
 
 
+#: Where a run is. `running` until it reaches one of the other three.
+INGESTION_RUN_STATUSES: Final = ("running", "completed", "failed", "skipped")
+
+#: Why a run failed — a code, never a message, for the dead-letter rule's reason.
+INGESTION_FAILURE_REASONS: Final = ("abandoned", "provider_unavailable", "store_unreachable")
+
+
+market_ingestion_runs = sa.Table(
+    "market_ingestion_runs",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "provider_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            "market_providers.id",
+            ondelete="RESTRICT",
+            name="fk_market_ingestion_runs_provider_id_market_providers",
+        ),
+        nullable=True,
+        comment="The provider ingested from. NULL only for a `skipped` run, which had none.",
+    ),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column(
+        "failure_reason",
+        sa.Text(),
+        nullable=True,
+        comment="Why a `failed` run failed, as a code. NULL for every other status.",
+    ),
+    sa.Column(
+        "started_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False
+    ),
+    sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    sa.Column(
+        "batches",
+        sa.Integer(),
+        server_default="0",
+        nullable=False,
+        comment="Batches of provider identifiers the run asked for.",
+    ),
+    sa.Column(
+        "batches_failed",
+        sa.Integer(),
+        server_default="0",
+        nullable=False,
+        comment="Batches the provider did not answer after every retry. A partial run is still a run.",
+    ),
+    sa.Column("stored", sa.Integer(), server_default="0", nullable=False),
+    sa.Column(
+        "quarantined",
+        postgresql.JSONB(),
+        server_default=sa.text("'{}'::jsonb"),
+        nullable=False,
+        comment="Quarantined quotes by `QuarantineReason`. Absent reasons are absent, not zero.",
+    ),
+    sa.Column(
+        "unmapped",
+        sa.Integer(),
+        server_default="0",
+        nullable=False,
+        comment="Provider identifiers no catalog card carries. Counts only; the identifiers are in `market_quarantine`.",
+    ),
+    sa.Column(
+        "snapshot_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            "market_snapshots.id",
+            ondelete="RESTRICT",
+            name="fk_market_ingestion_runs_snapshot_id_market_snapshots",
+        ),
+        nullable=True,
+        comment="The snapshot a `completed` run cut, in the transaction that wrote its observations.",
+    ),
+    sa.PrimaryKeyConstraint("id", name="pk_market_ingestion_runs"),
+    sa.CheckConstraint(one_of("status", INGESTION_RUN_STATUSES), name="status_is_a_run_status"),
+    sa.CheckConstraint(
+        one_of("failure_reason", INGESTION_FAILURE_REASONS), name="failure_reason_is_a_run_failure"
+    ),
+    sa.CheckConstraint(
+        "(status = 'failed') = (failure_reason IS NOT NULL)", name="failed_runs_name_a_reason"
+    ),
+    sa.CheckConstraint(
+        "(status = 'completed') = (snapshot_id IS NOT NULL)", name="completed_runs_name_a_snapshot"
+    ),
+    sa.CheckConstraint(
+        "(status = 'running') = (completed_at IS NULL)", name="only_running_runs_are_unfinished"
+    ),
+    sa.CheckConstraint(
+        "status = 'skipped' OR provider_id IS NOT NULL", name="only_skipped_runs_have_no_provider"
+    ),
+    sa.CheckConstraint(
+        "batches >= 0 AND batches_failed >= 0 AND stored >= 0 AND unmapped >= 0",
+        name="counts_are_not_negative",
+    ),
+    # #51's cut-line is sound only while there is one ingestion writer, so the
+    # database refuses a second `running` row rather than trusting the schedule.
+    #
+    # ponytail: no index for "the last completed run". One row a day.
+    sa.Index(
+        "uq_market_ingestion_runs_one_running",
+        "status",
+        unique=True,
+        postgresql_where=sa.text("status = 'running'"),
+    ),
+    comment=(
+        "One scheduled market ingestion run and what it did — issue #54. Not append-only: "
+        "a row moves from `running` to its outcome. The coverage alert reads the counts."
+    ),
+)
+
+
 TABLES: Final = (
     market_providers,
     exchange_rates,
     market_observations,
     market_snapshots,
     market_quarantine,
+    market_ingestion_runs,
 )
 
 
