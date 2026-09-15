@@ -166,7 +166,9 @@ group — one well inside it by area — lies outside it, as the card's did unde
 a square-on surface quadrilateral that shared its centre. It is also passed over
 for a copy of the same card that reads markedly squarer (#339): two passes do not
 disagree about one card's perspective by that much, so the keystone is cloth the
-larger one took in.
+larger one took in. And "largest" is measured on the corners returned, not the
+rectangle a fallback candidate was admitted on (#360): that rectangle overstates
+a polygon lying inside the card's edge.
 
 **Failure is a result, not an exception.** Nothing card-like found means
 :data:`INSUFFICIENT_INFORMATION` with a reason, never a guessed quadrilateral —
@@ -853,6 +855,11 @@ def _outermost(pool: list[_Candidate], *, thresholds: DetectionThresholds) -> _C
     :attr:`DetectionThresholds.same_card_max_skew_gap` (#339): the keystone is
     then whatever the larger merged in — on dark cloth, a spur of weave — not
     the card's own perspective.
+
+    "Largest" is the area of the corners it would return (#360), not the
+    recorded area: a fallback candidate records its admission rectangle's
+    (#324), which on a gold front beat the card's own edge while its corners
+    sat inside it.
     """
     enclosing = [
         member
@@ -864,7 +871,7 @@ def _outermost(pool: list[_Candidate], *, thresholds: DetectionThresholds) -> _C
         )
     ]
     candidates = enclosing or pool
-    largest = max(candidates, key=lambda member: member.area)
+    largest = max(candidates, key=lambda member: _area(member.quad))
     skew = _opposite_side_ratio(largest.quad)
     squarer = [
         member
@@ -872,7 +879,7 @@ def _outermost(pool: list[_Candidate], *, thresholds: DetectionThresholds) -> _C
         if member.area > thresholds.case_max_area_ratio * largest.area
         and skew - _opposite_side_ratio(member.quad) >= thresholds.same_card_max_skew_gap
     ]
-    return max(squarer or [largest], key=lambda member: member.area)
+    return max(squarer or [largest], key=lambda member: _area(member.quad))
 
 
 def _encloses(outer: _Quad, inner: _Quad, *, thresholds: DetectionThresholds) -> bool:

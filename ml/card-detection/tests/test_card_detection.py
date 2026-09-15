@@ -975,6 +975,22 @@ def test_the_outermost_member_is_kept_otherwise(bottom: float, card_area: float)
     assert _outermost([blob, card], thresholds=DEFAULT_DETECTION_THRESHOLDS) is blob
 
 
+def test_a_fallback_copy_gives_way_to_a_copy_whose_corners_enclose_more() -> None:
+    """#360: a fallback's recorded area is its admission rectangle's (#324).
+
+    Measured on the gold `blissey-en-front-20`: the shadow pass's fallback
+    recorded 0.371 of the frame while its corners enclosed 0.322, inside seven
+    rect-1.00 copies on the card's edge at 0.348-0.350. Compared on recorded
+    area, the inner quadrilateral was returned as the card.
+    """
+    from tcg_ml_card_detection.detector import _outermost
+
+    fallback = _member(((4.0, 4.0), (96.0, 4.0), (96.0, 136.0), (4.0, 136.0)), 548.0)
+    edge = _member(((0.0, 0.0), (100.0, 0.0), (100.0, 140.0), (0.0, 140.0)), 520.0)
+
+    assert _outermost([fallback, edge], thresholds=DEFAULT_DETECTION_THRESHOLDS) is edge
+
+
 # Sleeves
 # ---------------------------------------------------------------------------
 
