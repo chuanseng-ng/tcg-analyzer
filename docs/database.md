@@ -639,8 +639,7 @@ outcome; it is a record of the job, not market data. Re-running by hand is safe
 while no run holds the claim:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml exec worker \
-  celery --app tcg_api.analysis.worker call tcg_api.market.ingest
+docker compose -f infrastructure/local/docker-compose.yml exec worker celery --app tcg_api.analysis.worker call tcg_api.market.ingest
 ```
 
 The alerts the counts drive are listed in `docs/observability.md`, section 4.
