@@ -1168,9 +1168,10 @@ def priced_card() -> uuid.UUID:
     ):
         executing(
             "INSERT INTO market_observations "
-            "(id, card_id, provider_id, currency, price, confidence, observed_at, "
+            "(id, card_id, provider_id, currency, price, price_sgd, confidence, observed_at, "
             "grading_company, grade) VALUES "
-            "(:id, :card, :provider, 'SGD', :price, 0.9, now(), :company, :grade)",
+            # An SGD quote is stored unconverted, so `price_sgd` is `price` (#53).
+            "(:id, :card, :provider, 'SGD', :price, :price, 0.9, now(), :company, :grade)",
             id=uuid.uuid4(),
             card=CARD_ID,
             provider=PROVIDER_ID,
