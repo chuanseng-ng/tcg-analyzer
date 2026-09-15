@@ -40,12 +40,11 @@ sits on the API's event loop where a blocking call is an outage under load.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from tcg_domain.card import CardReference, validated_slug
 from tcg_domain.confidence import Confidence, Uncertain
@@ -56,16 +55,10 @@ from tcg_grading_companies.errors import UnsupportedGrade
 
 from tcg_market_data.errors import InvalidMarketObservation
 
-if TYPE_CHECKING:
-    # `normalization` imports this module for `PriceObservation`, so the quote
-    # type is named for annotations only.
-    from tcg_market_data.normalization import ProviderQuote
-
 __all__ = [
     "MarketDataProvider",
     "MarketType",
     "PriceObservation",
-    "QuoteSource",
     "validated_grade_key",
 ]
 
@@ -343,40 +336,6 @@ class MarketDataProvider(Protocol):
         :meth:`tcg_domain.repository.CardRepository.external_ids` already takes,
         and the reason this method is not wrapped in
         :data:`~tcg_domain.confidence.Uncertain` when the price methods are.
-
-        Raises:
-            MarketProviderUnavailable: If the provider could not be reached.
-        """
-
-
-class QuoteSource(Protocol):
-    """Where a daily ingestion run reads a provider's quotes from — issue #54.
-
-    The other shape from :class:`MarketDataProvider`. That port answers one card
-    at a time for a reader holding a `CardReference`; a run over a whole catalog
-    asks for a batch of the provider's **own identifiers** and wants back what
-    the provider said, as neutral quotes
-    (:class:`~tcg_market_data.normalization.ProviderQuote`). Nothing is
-    converted, mapped to a card or bound-checked here — all three are
-    normalization's (#53), and doing them twice is how two answers start
-    disagreeing.
-
-    #52's adapter implements this. **Pacing to the provider's quota is the
-    source's job**, because only the adapter knows the quota; the run promises
-    only that it never calls :meth:`fetch` concurrently.
-    """
-
-    @property
-    def provider(self) -> str:
-        """The provider's lowercase slug — the `market_providers.slug` it ingests under."""
-
-    async def fetch(self, external_ids: Sequence[str]) -> Sequence[ProviderQuote]:
-        """What the provider says for each identifier it has a price for.
-
-        An identifier with no price is simply absent from the result. A quote
-        for an identifier nobody asked about is returned as it came, and
-        normalization quarantines it as unmapped rather than this method
-        guessing.
 
         Raises:
             MarketProviderUnavailable: If the provider could not be reached.

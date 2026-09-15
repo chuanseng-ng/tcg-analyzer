@@ -42,13 +42,13 @@ from tcg_market_data.normalization import (
     ProviderQuote,
     Quarantined,
     QuarantineReason,
+    QuoteSource,
     normalize,
 )
 from tcg_market_data.port import (
     MarketDataProvider,
     MarketType,
     PriceObservation,
-    QuoteSource,
     validated_grade_key,
 )
 from tcg_market_data.snapshot import MarketSnapshot
