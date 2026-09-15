@@ -660,6 +660,25 @@ def test_a_second_card_clipped_by_the_frame_is_still_counted() -> None:
     assert located(png(picture)).candidates == 2
 
 
+def test_a_lone_trace_against_the_frame_is_not_a_second_card_whatever_its_edges() -> None:
+    """#363: on a blue mat the Otsu pass alone traced a patch at the frame.
+
+    Measured on `jumpluff_en_front-20` at working size (768x1024): one member,
+    0.040 of the frame, aspect 0.700, against the top-right corner. The mat's
+    texture put Canny edges along its free sides (0.68, 1.00, 0.50), so #334's
+    support read it as a card and the gate refused `multiple_cards`. Every real
+    second card measured is traced by several members; the synthetic clipped
+    one above by five.
+    """
+    from tcg_ml_card_detection.detector import _Candidate, _unsupported_at_frame
+
+    quad = ((565.0, 9.0), (767.0, 0.0), (767.0, 175.0), (627.0, 196.0))
+    patch = _Candidate(quad, 31416.0, (681.5, 95.0), 1.0, 0.700, 0.0)  # type: ignore[arg-type]
+    edges = np.full((1024, 768), 255, np.uint8)
+
+    assert _unsupported_at_frame([patch], edges=edges, thresholds=DEFAULT_DETECTION_THRESHOLDS)
+
+
 def test_an_artwork_window_inside_the_card_is_not_a_second_card() -> None:
     """#206's first failure shape: the artwork window survives as a phantom.
 
