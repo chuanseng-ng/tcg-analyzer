@@ -69,6 +69,7 @@ from uuid import UUID
 import structlog
 from celery import Celery, Task, shared_task
 from celery.exceptions import OperationalError, SoftTimeLimitExceeded
+from celery.schedules import crontab
 from celery.utils.time import get_exponential_backoff_interval
 from sqlalchemy.ext.asyncio import AsyncSession
 from tcg_domain.analysis import AnalysisStatus, QualityStatus
@@ -96,6 +97,7 @@ from tcg_api.storage import get_object_storage
 from tcg_api.version import application_version
 
 __all__ = [
+    "INGEST_MARKET",
     "PURGE_EXPIRED",
     "QUEUE",
     "RUN_ANALYSIS",
@@ -105,6 +107,7 @@ __all__ = [
     "JobQueueUnavailable",
     "enqueue_analysis",
     "get_celery_app",
+    "ingest_market_prices",
     "purge_expired_sessions",
     "run_analysis",
     "sweep_expired_feedback",
@@ -137,6 +140,10 @@ SWEEP_ORPHANS = "tcg_api.analysis.sweep_orphans"
 #: #270's feedback sweep. In this module because every task this application
 #: registers is declared here; the statement it runs is the feedback domain's.
 SWEEP_FEEDBACK = "tcg_api.analysis.sweep_grade_feedback"
+
+#: #54's daily market ingestion. Declared here with every other task this
+#: application registers; the run itself is `tcg_api.market.ingestion`'s.
+INGEST_MARKET = "tcg_api.market.ingest"
 
 #: How many times a failing run is retried before it is dead-lettered. Four
 #: attempts in total.
@@ -292,6 +299,17 @@ def get_celery_app() -> Celery:
             "sweep-expired-grade-feedback": {
                 "task": SWEEP_FEEDBACK,
                 "schedule": SWEEP_INTERVAL_SECONDS,
+                "options": {"queue": QUEUE},
+            },
+            # #54, spec §37's "once per day". 18:00 UTC is 02:00 in Singapore,
+            # when V1's users are least likely to be waiting on an analysis.
+            #
+            # ponytail: on the analysis queue, so a full run (~99 minutes once
+            # #52 exists) holds one worker slot. A queue of its own is the
+            # upgrade if #52's runs measure analyses waiting behind it.
+            "ingest-market-prices": {
+                "task": INGEST_MARKET,
+                "schedule": crontab(hour=18, minute=0),
                 "options": {"queue": QUEUE},
             },
         },
@@ -751,3 +769,33 @@ def sweep_orphan_objects() -> None:
     and the configured period, not something a caller gets to assert.
     """
     asyncio.run(_sweep_orphans(SWEEP_LIMIT))
+
+
+async def _ingest_market() -> None:
+    """Run one market ingestion. Engine built and disposed here, as `_purge` does."""
+    # Imported here rather than at the top, for `_advance`'s reason turned
+    # around: `routers/analyses.py` imports this module to enqueue, and nothing a
+    # request reaches may import the run that calls a provider (spec §37).
+    # `test_import_purity.py` fails if this moves.
+    from tcg_api.market.ingestion import get_quote_source, ingest
+
+    engine = create_engine()
+    try:
+        await ingest(create_session_factory(engine), get_quote_source(), now=datetime.now(UTC))
+    finally:
+        await engine.dispose()
+
+
+# No retries and no time limit. Tomorrow's tick is the retry, and a run that
+# failed has already recorded why. `acks_late` means a worker killed mid-run
+# leaves the message for redelivery; the redelivered run finds the claim still
+# held and steps aside, and the next day's run marks the dead one `abandoned`.
+@shared_task(name=INGEST_MARKET, max_retries=0, acks_late=True)
+def ingest_market_prices() -> None:
+    """Refresh market prices from the configured provider and cut a snapshot — #54.
+
+    Takes no arguments: which provider, and which cards, is configuration and
+    the catalog, never a message payload. Through V1 no provider is configured,
+    so every run records `skipped`.
+    """
+    asyncio.run(_ingest_market())

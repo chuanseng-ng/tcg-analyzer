@@ -47,6 +47,7 @@ from tcg_api.market.snapshots import (
 )
 from tcg_api.market.tables import (
     exchange_rates,
+    market_ingestion_runs,
     market_observations,
     market_providers,
     market_quarantine,
@@ -983,3 +984,62 @@ def test_a_provider_with_snapshots_cannot_be_deleted(catalog_and_provider: None)
 
     with pytest.raises(IntegrityError, match="fk_market_snapshots_provider_id"):
         write([(sa.text("DELETE FROM market_providers"), None)])
+
+
+# ---------------------------------------------------------------------------
+# #54 — ingestion runs
+# ---------------------------------------------------------------------------
+def start_a_run(**overrides: Any) -> None:
+    values: dict[str, Any] = {"id": uuid.uuid4(), "provider_id": PROVIDER_ID, "status": "running"}
+    values.update(overrides)
+    write([(sa.insert(market_ingestion_runs), values)])
+
+
+def test_a_second_running_run_is_refused(catalog_and_provider: None) -> None:
+    """One ingestion writer, enforced by the database rather than by timing."""
+    start_a_run()
+
+    with pytest.raises(IntegrityError, match="uq_market_ingestion_runs_one_running"):
+        start_a_run()
+
+
+def test_finished_runs_do_not_count_against_the_running_one(catalog_and_provider: None) -> None:
+    now = datetime.now(UTC)
+    start_a_run(status="skipped", provider_id=None, completed_at=now)
+    start_a_run(status="failed", failure_reason="provider_unavailable", completed_at=now)
+    start_a_run()
+
+    assert query(sa.select(sa.func.count()).select_from(market_ingestion_runs))[0][0] == 3
+
+
+def test_a_failed_run_names_its_reason(catalog_and_provider: None) -> None:
+    with pytest.raises(IntegrityError, match="failed_runs_name_a_reason"):
+        start_a_run(status="failed", completed_at=datetime.now(UTC))
+
+
+def test_a_completed_run_names_its_snapshot(catalog_and_provider: None) -> None:
+    with pytest.raises(IntegrityError, match="completed_runs_name_a_snapshot"):
+        start_a_run(status="completed", completed_at=datetime.now(UTC))
+
+
+def test_a_finished_run_records_when_it_finished(catalog_and_provider: None) -> None:
+    with pytest.raises(IntegrityError, match="only_running_runs_are_unfinished"):
+        start_a_run(status="skipped", provider_id=None)
+
+
+def test_a_run_record_moves_to_its_outcome(catalog_and_provider: None) -> None:
+    """Not append-only: the row is the run's progress, not market data."""
+    start_a_run()
+    write(
+        [
+            (
+                sa.text(
+                    "UPDATE market_ingestion_runs SET status = 'failed', "
+                    "failure_reason = 'abandoned', completed_at = now()"
+                ),
+                None,
+            )
+        ]
+    )
+
+    assert query(sa.select(market_ingestion_runs.c.status))[0][0] == "failed"

@@ -622,6 +622,28 @@ The bounds are named constants in `tcg_market_data.normalization` and are
 **uncalibrated**: nothing has been ingested to calibrate them against, and #54's
 first real runs are expected to revisit them.
 
+## Market ingestion runs
+
+The worker's beat runs `tcg_api.market.ingest` daily at 18:00 UTC (#54). Each run
+leaves one row in `market_ingestion_runs`:
+
+| `status` | Means |
+| --- | --- |
+| `running` | Claimed and not yet finished. **At most one row may hold it** — a partial unique index, because a snapshot's cut-line is sound only while one run writes. |
+| `completed` | Quotes recorded and a snapshot cut in one transaction; `snapshot_id` names it. Some batches may have failed (`batches_failed`) — a partial run still cuts a snapshot. |
+| `failed` | `failure_reason` says why: `provider_unavailable` (no batch answered), `store_unreachable` (the write rolled back), or `abandoned` (left `running` for over 6 h, so its worker died). No snapshot. |
+| `skipped` | No provider was configured, or none has a `market_providers` row. **Every run is this until #52.** |
+
+Unlike the other market tables, a run row is updated as the run moves to its
+outcome; it is a record of the job, not market data. Re-running by hand is safe
+while no run holds the claim:
+
+```bash
+docker compose -f infrastructure/local/docker-compose.yml exec worker celery --app tcg_api.analysis.worker call tcg_api.market.ingest
+```
+
+The alerts the counts drive are listed in `docs/observability.md`, section 4.
+
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
 

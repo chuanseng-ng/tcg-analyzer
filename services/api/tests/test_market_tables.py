@@ -99,6 +99,7 @@ def test_the_market_domain_declares_three_tables_and_the_registry_saw_them() -> 
         "market_snapshots",
         "exchange_rates",
         "market_quarantine",
+        "market_ingestion_runs",
     }
     assert {table.name for table in tables.TABLES} == names
     declared = {table.name for table in DECLARED_TABLES}
@@ -644,6 +645,68 @@ def test_the_new_triggers_guard_update_and_not_delete() -> None:
         assert "DELETE" not in str(trigger)
     # The market-data revision owns the function; a second copy would silently win.
     assert "CREATE OR REPLACE FUNCTION" not in NORMALIZATION_MIGRATION
+
+
+# ---------------------------------------------------------------------------
+# #54 — one row per ingestion run
+# ---------------------------------------------------------------------------
+INGESTION_MIGRATION = (VERSIONS / "20260915_record_market_ingestion_runs.py").read_text(
+    encoding="utf-8"
+)
+
+
+def test_an_ingestion_run_records_what_it_did() -> None:
+    assert set(tables.market_ingestion_runs.c.keys()) == {
+        "id",
+        "provider_id",
+        "status",
+        "failure_reason",
+        "started_at",
+        "completed_at",
+        "batches",
+        "batches_failed",
+        "stored",
+        "quarantined",
+        "unmapped",
+        "snapshot_id",
+    }
+
+
+def test_a_run_status_and_failure_reason_are_built_from_their_vocabularies() -> None:
+    status = check_constraint(tables.market_ingestion_runs, "status_is_a_run_status")
+    for value in tables.INGESTION_RUN_STATUSES:
+        assert f"'{value}'" in status
+    reason = check_constraint(tables.market_ingestion_runs, "failure_reason_is_a_run_failure")
+    for value in tables.INGESTION_FAILURE_REASONS:
+        assert f"'{value}'" in reason
+
+
+def test_the_migration_lists_the_same_run_vocabularies() -> None:
+    """Alembic compares a CHECK's name but not its text; nothing else would notice."""
+    for constant, values in (
+        ("RUN_STATUSES", tables.INGESTION_RUN_STATUSES),
+        ("FAILURE_REASONS", tables.INGESTION_FAILURE_REASONS),
+    ):
+        listed = re.search(rf'{constant} = "(.*)"', INGESTION_MIGRATION)
+        assert listed is not None
+        assert listed.group(1) == ", ".join(f"'{value}'" for value in values)
+
+
+def test_only_one_run_may_be_running() -> None:
+    """The snapshot cut-line is sound only while there is one ingestion writer (#51)."""
+    [index] = [
+        index
+        for index in tables.market_ingestion_runs.indexes
+        if index.name == "uq_market_ingestion_runs_one_running"
+    ]
+    assert index.unique
+    assert "status = 'running'" in str(index.dialect_options["postgresql"]["where"])
+    assert "uq_market_ingestion_runs_one_running" in INGESTION_MIGRATION
+
+
+def test_a_run_is_not_append_only() -> None:
+    """A run record moves from `running` to an outcome; it is not market data."""
+    assert "market_rows_are_immutable" not in INGESTION_MIGRATION
 
 
 def test_each_ddl_statement_is_one_statement() -> None:

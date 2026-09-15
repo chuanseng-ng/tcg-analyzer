@@ -419,6 +419,30 @@ def test_the_corpus_cannot_reach_a_users_reported_grade(module: str) -> None:
     )
 
 
+def test_serving_the_api_never_reaches_market_ingestion() -> None:
+    """#54: no user request may call a provider — spec §37.
+
+    A request reads a snapshot. The run that fetches from a provider is the
+    worker's, and a route that imported it would be one call away from
+    ingesting on a user's behalf.
+    """
+    pulled = _modules_matching("tcg_api.market.ingestion", after_importing="tcg_api.main")
+
+    assert pulled == [], (
+        f"importing tcg_api.main pulled in {pulled}. Market ingestion runs on a "
+        "schedule in the worker; nothing a request reaches may import it."
+    )
+
+
+def test_the_worker_is_what_reaches_market_ingestion() -> None:
+    """Guard the guard: without this, a misspelt module name passes the test above."""
+    pulled = _modules_matching(
+        "tcg_api.market.ingestion", after_importing="tcg_api.market.ingestion"
+    )
+
+    assert pulled == ["tcg_api.market.ingestion"]
+
+
 def test_the_feedback_routes_are_what_reach_the_feedback_domain() -> None:
     """Guard the guard: without this, deleting the domain would 'fix' the test above."""
     pulled = _modules_matching("tcg_api.feedback", after_importing="tcg_api.routers.feedback")

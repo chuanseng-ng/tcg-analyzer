@@ -181,13 +181,32 @@ deployment decision, not a budget edit.
 
 ### 4. Market-data latency
 
-Nothing has ever ingested (ADR 0006 gates the provider on a subscription that
-is not active), so there is no figure and there cannot be one until #54
-runs. The event name is **reserved as `market.prices_ingested`**, with a
-`duration_ms` for the run, so that the first ingestion writes a line this
-document can be extended with. Its per-run budget is left unset until then:
-a number chosen before the provider has been called once would be a guess
-dressed as a budget.
+#54's daily run (`tcg_api.market.ingestion`, 18:00 UTC) writes
+**`market.prices_ingested`** once per run it claims, with `duration_ms`,
+`status`, `batches`, `batches_failed`, `stored`, `quarantined` by reason, and
+`unmapped` — counts only, never a quote. Each run also leaves a
+`market_ingestion_runs` row with the same figures.
+
+Nothing has ingested real prices yet: ADR 0006 gates the provider on a
+subscription that is not active, so no `QuoteSource` is configured and every
+run records `skipped` (`market.ingestion_skipped`). The per-run budget stays
+unset until #52's first real runs, since a number chosen before the provider
+has been called once would be a guess dressed as a budget.
+
+**`market.ingestion_alert`** (level `error`) is the alert. It is written once per
+`reason`:
+
+| `reason` | When |
+| --- | --- |
+| `run_failed` | the provider answered no batch (`provider_unavailable`), or the store was lost mid-write (`store_unreachable`) |
+| `run_abandoned` | a run left `running` for more than 6 h, which is a killed worker |
+| `batches_failed` | some batch went unanswered after 3 attempts; the run still cut a snapshot |
+| `coverage_dropped` | `stored` fell below 80% of the previous completed run's |
+| `unmapped_cards` | the provider quoted an identifier no catalog card carries |
+
+`coverage_dropped` exists because a run that "succeeds" while storing half the
+usual prices is the failure most likely to go unnoticed. Both thresholds are
+placeholders #52 recalibrates.
 
 What *can* be budgeted today is the age of what a user is shown.
 `stale_after_seconds` on the wire is `Settings.market_stale_after_days`,

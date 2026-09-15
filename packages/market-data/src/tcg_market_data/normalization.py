@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException
 from enum import StrEnum
-from typing import Final
+from typing import Final, Protocol
 from uuid import UUID
 
 from tcg_domain.card import CardReference
@@ -64,6 +64,7 @@ __all__ = [
     "ProviderQuote",
     "QuarantineReason",
     "Quarantined",
+    "QuoteSource",
     "normalize",
 ]
 
@@ -185,6 +186,42 @@ class ProviderQuote:
             "grade": text(self.grade),
             "metadata": text(self.metadata),
         }
+
+
+class QuoteSource(Protocol):
+    """Where a daily ingestion run reads a provider's quotes from — issue #54.
+
+    The other shape from :class:`~tcg_market_data.port.MarketDataProvider`. That
+    port answers one card at a time for a reader holding a `CardReference`; a run
+    over a whole catalog asks for a batch of the provider's **own identifiers**
+    and wants back what the provider said, as quotes (:class:`ProviderQuote`).
+    Nothing is converted, mapped to a card or bound-checked here — all three are
+    :func:`normalize`'s, and doing them twice is how two answers start
+    disagreeing.
+
+    Declared here, beside `ProviderQuote`, rather than in `port`: `port` naming a
+    type from this module would make the two modules import each other.
+
+    #52's adapter implements this. **Pacing to the provider's quota is the
+    source's job**, because only the adapter knows the quota; the run promises
+    only that it never calls :meth:`fetch` concurrently.
+    """
+
+    @property
+    def provider(self) -> str:
+        """The provider's lowercase slug — the `market_providers.slug` it ingests under."""
+
+    async def fetch(self, external_ids: Sequence[str]) -> Sequence[ProviderQuote]:
+        """What the provider says for each identifier it has a price for.
+
+        An identifier with no price is simply absent from the result. A quote
+        for an identifier nobody asked about is returned as it came, and
+        normalization quarantines it as unmapped rather than this method
+        guessing.
+
+        Raises:
+            MarketProviderUnavailable: If the provider could not be reached.
+        """
 
 
 @dataclass(frozen=True, slots=True)
