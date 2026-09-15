@@ -30,7 +30,7 @@ __all__ = [
 
 #: What located a card. Recorded on every image the detector ran against; never
 #: a pointer to "current", per the project's versioning invariant.
-CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.17.0"
+CARD_DETECTION_VERSION: Final = "card-detection-opencv-v0.18.0"
 
 #: A trading card is 63 x 88 mm, so its short edge is this fraction of its long
 #: one. The acceptance band around it is wide because perspective shortens one
@@ -255,6 +255,32 @@ class DetectionThresholds:
     #: so do not lower it on the phantoms' side alone.
     phantom_min_edge_support: float = 0.5
 
+    #: A returned quadrilateral with a saturated band just outside it on at
+    #: least :attr:`border_band_min_sides` sides is a card's inner panel whose
+    #: border blended into the surface, and nothing is returned (#341). The
+    #: band is read at 2.5-3.5% of the quadrilateral's size across that side,
+    #: inside a real border's width; the surface at 9-11%. A side counts when
+    #: the band's saturation is at least this.
+    #:
+    #: Measured over 202 real photographs: a panel's band read 51-233 on the
+    #: sides that counted, while a card's own quadrilateral, sitting a few
+    #: pixels inside its edge, reads the surface there.
+    border_band_min_saturation: float = 50.0
+    #: And the band is at least this much more saturated than the surface
+    #: beyond it. Panels stepped +30 to +206; a real card reached both lines on
+    #: one side at most (+34 and +71 on the two highest), so the margin is in
+    #: the side count, not this number. **Do not lower either line** to reach
+    #: the two panels still returned (black-surface Erika `back-10`, steps
+    #: +91/+11/+154/+21, and Blissey `back-20`, +13/+2/+152/+101): their
+    #: missing sides step less than those real cards do.
+    border_band_min_step: float = 30.0
+    #: How many sides must carry the band. On 3 sides the rule refused 19 of the
+    #: 202 photographs, every one a wrong quadrilateral (12 panels, 4 panel-plus-
+    #: border quads, #360's 2 inner quads, and a two-card photograph's panel)
+    #: and no card; on 4 it kept 8 of those 12 panels. A tilt foreshortens the
+    #: far border below the near line, so 4 is not asked.
+    border_band_min_sides: int = 3
+
     def __post_init__(self) -> None:
         if self.work_long_edge <= 0:
             raise ValueError(f"work_long_edge must be positive, got {self.work_long_edge!r}")
@@ -315,6 +341,19 @@ class DetectionThresholds:
             raise ValueError(
                 "phantom_min_edge_support must lie in (0, 1], got "
                 f"{self.phantom_min_edge_support!r}"
+            )
+        if not 0.0 < self.border_band_min_saturation <= 255.0:
+            raise ValueError(
+                "border_band_min_saturation must lie in (0, 255], got "
+                f"{self.border_band_min_saturation!r}"
+            )
+        if self.border_band_min_step <= 0.0:
+            raise ValueError(
+                f"border_band_min_step must be positive, got {self.border_band_min_step!r}"
+            )
+        if not 1 <= self.border_band_min_sides <= 4:
+            raise ValueError(
+                f"border_band_min_sides must lie in [1, 4], got {self.border_band_min_sides!r}"
             )
 
         for name, low, high in (

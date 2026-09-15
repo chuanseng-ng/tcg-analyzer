@@ -142,6 +142,17 @@ luminance pass traced the upper card inside it. A returned quadrilateral no
 other pass traced, holding a luminance-traced one that lies along it, is
 counted as two the same way.
 
+**A quadrilateral with the card's border running round it is not the card.**
+#341: on a dim surface a back's dark-blue border is the surface's own grey, so
+every luminance pass traced the light panel inside it, the saturation pass's
+map was noise and never closed the card, and the panel was warped as the card
+at `poor`. Its shape gives nothing away. What does is outside it: the border,
+still saturated, running round it on at least three sides, with the
+unsaturated surface beyond. Then nothing is returned, and the gate refuses as
+it does when nothing is found, because the card was not. A card's own
+quadrilateral has only the surface outside it, so the rule never refuses one
+that was found on its edge.
+
 **The boundary is the outermost quadrilateral of that group, on purpose.** The
 issue is explicit: do not crop tight to the detected boundary, because M7's edge
 and corner analysis needs the card's actual edge and a tight crop shaves the
@@ -208,6 +219,15 @@ _IN_A_CASE: Final = (
     "the card is inside a rigid case, and the quadrilateral found is the case rather than the card"
 )
 
+#: Said when a saturated border runs round the quadrilateral found (#341): it is
+#: the card's inner panel, and the card's own edge was not found. The gate
+#: reports it as `no_card_found`, the same refusal as finding nothing, because
+#: that is what happened to the card.
+_BORDER_OUTSIDE: Final = (
+    "a saturated border runs round the only card-like quadrilateral found, so it is the "
+    "card's inner panel and the card's own edge was not found"
+)
+
 #: Said when the bytes did not decode. The gate raises for this case; this
 #: package answers rather than racing it to the exception, so that the one place
 #: undecodable bytes become a job failure stays
@@ -265,6 +285,14 @@ _SATURATION_MAP: Final = 4
 #: card overlapping the first lies along it (0-3 degrees on the real pairs); a
 #: front's artwork window lies across it (87-89).
 _PARALLEL_MAX_DEGREES: Final = 45.0
+
+#: Where #341's border band and the surface beyond it are read, as fractions of
+#: the quadrilateral's size across the side: three lines each, averaged. The
+#: near lines sit inside a real back's border (2.5-6.5% of the card per side),
+#: and past the few pixels a card's own quadrilateral sits inside its edge; the
+#: far lines lie on the surface.
+_BAND_NEAR: Final = (0.025, 0.03, 0.035)
+_BAND_FAR: Final = (0.09, 0.10, 0.11)
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +388,11 @@ def detect(
         and _opposite_side_ratio(card.quad) <= thresholds.case_square_on_max_perspective_ratio
     ):
         return CardNotLocated(_IN_A_CASE, refusal=GateRefusal.CARD_IN_A_CASE)
+    # A saturated border running round what would be returned, with the
+    # surface beyond it, is a card's inner panel whose border blended into the
+    # surface (#341): the card was not found, so nothing is returned.
+    if _border_outside(card.quad, saturation, thresholds=thresholds):
+        return InsufficientInformation(_BORDER_OUTSIDE)
     # A frame-touching group with no edge where it ends is lighting on the
     # table, not a second card (#334). Counting only: the card group is never
     # tested, because a slab's own returned quadrilateral has such sides too.
@@ -966,6 +999,73 @@ def _saturation_union(
         <= _PARALLEL_MAX_DEGREES
         for inner in candidates
     )
+
+
+def _border_outside(quad: _Quad, saturation: _Gray, *, thresholds: DetectionThresholds) -> bool:
+    """Whether a saturated border runs round the quadrilateral, with the surface beyond (#341).
+
+    A dark-blue border on a dim surface is the surface's own grey, so every
+    luminance pass traces the light panel inside it, and the saturation pass,
+    whose map is noise at that value, never closes the card. The panel's own
+    shape says nothing: square-on its aspect is 0.03 from a card's, and a tilt
+    erases that. Outside it, the border is still saturated, and the surface
+    beyond it is not.
+
+    Per side, not an average: a tilt foreshortens the far border below the near
+    line, and a glare-lit side loses its saturation.
+    """
+    blurred = cv2.GaussianBlur(saturation, (5, 5), 0)
+    sides = 0
+    for index in range(4):
+        near = _band_level(quad, index, _BAND_NEAR, blurred)
+        far = _band_level(quad, index, _BAND_FAR, blurred)
+        if near is None or far is None:
+            continue
+        if (
+            near >= thresholds.border_band_min_saturation
+            and near - far >= thresholds.border_band_min_step
+        ):
+            sides += 1
+    return sides >= thresholds.border_band_min_sides
+
+
+def _band_level(
+    quad: _Quad, index: int, fractions: tuple[float, ...], image: _Gray
+) -> float | None:
+    """`image` along side `index` moved outward, averaged over `fractions` of the size across it.
+
+    Each line is sampled like :func:`_edge_support`, over the side's middle 80%,
+    and only where it lies inside the frame. `None` when no line has a sample.
+    """
+    first, second = quad[index], quad[(index + 1) % 4]
+    third, fourth = quad[(index + 2) % 4], quad[(index + 3) % 4]
+    across = math.hypot(
+        (first[0] + second[0] - third[0] - fourth[0]) / 2.0,
+        (first[1] + second[1] - third[1] - fourth[1]) / 2.0,
+    )
+    normal_x, normal_y = second[1] - first[1], first[0] - second[0]
+    length = math.hypot(normal_x, normal_y)
+    if length <= 0.0:
+        return None
+    normal_x, normal_y = normal_x / length, normal_y / length
+    centre_x, centre_y = _centre(quad)
+    midpoint_x, midpoint_y = (first[0] + second[0]) / 2.0, (first[1] + second[1]) / 2.0
+    if (midpoint_x - centre_x) * normal_x + (midpoint_y - centre_y) * normal_y < 0.0:
+        normal_x, normal_y = -normal_x, -normal_y
+    height, width = image.shape[:2]
+    levels: list[float] = []
+    for fraction in fractions:
+        start = (first[0] + normal_x * fraction * across, first[1] + normal_y * fraction * across)
+        end = (second[0] + normal_x * fraction * across, second[1] + normal_y * fraction * across)
+        values = [
+            float(image[row, column])
+            for step in np.linspace(0.1, 0.9, _SIDE_SAMPLES)
+            if 0 <= (column := round(start[0] + (end[0] - start[0]) * step)) < width
+            and 0 <= (row := round(start[1] + (end[1] - start[1]) * step)) < height
+        ]
+        if values:
+            levels.append(float(np.mean(values)))
+    return float(np.mean(levels)) if levels else None
 
 
 def _long_axis_degrees(quad: _Quad) -> float:
