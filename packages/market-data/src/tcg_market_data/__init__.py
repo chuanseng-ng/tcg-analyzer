@@ -48,6 +48,7 @@ from tcg_market_data.port import (
     MarketDataProvider,
     MarketType,
     PriceObservation,
+    QuoteSource,
     validated_grade_key,
 )
 from tcg_market_data.snapshot import MarketSnapshot
@@ -73,6 +74,7 @@ __all__ = [
     "ProviderQuote",
     "QuarantineReason",
     "Quarantined",
+    "QuoteSource",
     "normalize",
     "price_age",
     "price_confidence",
