@@ -93,13 +93,16 @@ def test_the_market_domain_declares_three_tables_and_the_registry_saw_them() -> 
     every table it cannot reach — so a module that declares a table and is never
     imported is worse than one that declares none.
     """
-    assert {table.name for table in tables.TABLES} == {
+    names = {
         "market_providers",
         "market_observations",
         "market_snapshots",
+        "exchange_rates",
+        "market_quarantine",
     }
+    assert {table.name for table in tables.TABLES} == names
     declared = {table.name for table in DECLARED_TABLES}
-    assert {"market_providers", "market_observations", "market_snapshots"} <= declared
+    assert names <= declared
 
 
 def test_the_provider_columns_are_section_35s_fields_plus_a_slug_and_provenance() -> None:
@@ -128,6 +131,8 @@ def test_the_observation_columns_are_section_35s_fields_plus_confidence() -> Non
     assert set(market_observations.c.keys()) == SECTION_35_OBSERVATION_COLUMNS | {
         "confidence",
         "created_at",
+        "price_sgd",
+        "exchange_rate_id",
     }
 
 
@@ -497,6 +502,8 @@ def test_all_three_tables_are_guarded_against_update() -> None:
     assert "BEFORE UPDATE ON market_providers" in str(tables._PROVIDERS_TRIGGER)
     assert "BEFORE UPDATE ON market_observations" in str(tables._OBSERVATIONS_TRIGGER)
     assert "BEFORE UPDATE ON market_snapshots" in str(tables._SNAPSHOTS_TRIGGER)
+    assert "BEFORE UPDATE ON exchange_rates" in str(tables._EXCHANGE_RATES_TRIGGER)
+    assert "BEFORE UPDATE ON market_quarantine" in str(tables._QUARANTINE_TRIGGER)
 
 
 def test_no_trigger_guards_delete() -> None:
@@ -539,6 +546,104 @@ def test_the_migration_declares_the_same_trigger_body() -> None:
     """Two copies by design; this is what keeps them one behaviour."""
     for fragment in ("TG_TABLE_NAME", "restrict_violation", "market_rows_are_immutable()"):
         assert fragment in MIGRATION
+
+
+# ---------------------------------------------------------------------------
+# #53 — a converted price records how it was converted
+# ---------------------------------------------------------------------------
+NORMALIZATION_MIGRATION = (
+    VERSIONS / "20260915_record_exchange_rates_and_market_quarantine.py"
+).read_text(encoding="utf-8")
+
+
+def test_the_sgd_price_is_exact_and_matches_the_quoted_one() -> None:
+    """Same type as `price`, so a round trip through `Money` changes nothing."""
+    price_sgd = market_observations.c.price_sgd.type
+    assert isinstance(price_sgd, sa.Numeric)
+    assert (price_sgd.precision, price_sgd.scale) == (12, 2)
+    assert market_observations.c.price_sgd.nullable is False
+    assert check_constraint(market_observations, "price_sgd_is_not_negative").startswith(
+        "(price_sgd >= 0)"
+    )
+
+
+def test_a_foreign_price_names_its_rate_and_an_sgd_one_does_not() -> None:
+    """Without the rate a historical snapshot cannot be reproduced (§36)."""
+    assert (
+        check_constraint(market_observations, "foreign_prices_name_their_exchange_rate")
+        == "((currency = 'SGD') = (exchange_rate_id IS NULL)), "
+    )
+    assert "REFERENCES exchange_rates (id) ON DELETE RESTRICT" in ddl(market_observations)
+
+
+def test_an_sgd_quote_is_stored_unconverted() -> None:
+    assert (
+        check_constraint(market_observations, "sgd_prices_are_not_converted")
+        == "(currency <> 'SGD' OR price_sgd = price), "
+    )
+
+
+def test_an_exchange_rate_converts_to_sgd_only() -> None:
+    """V1 reports SGD; a rate into anything else is a rate nothing may use."""
+    assert set(tables.exchange_rates.c.keys()) == {
+        "id",
+        "base_currency",
+        "quote_currency",
+        "rate",
+        "as_of",
+        "source_reference",
+        "created_at",
+    }
+    assert check_constraint(tables.exchange_rates, "quote_currency_is_sgd").startswith(
+        "(quote_currency = 'SGD')"
+    )
+    rate = tables.exchange_rates.c.rate.type
+    assert isinstance(rate, sa.Numeric)
+    assert not isinstance(rate, sa.Float)
+    assert check_constraint(tables.exchange_rates, "rate_is_positive").startswith("(rate > 0)")
+
+
+def test_one_rate_per_pair_per_day() -> None:
+    """A second rate for the same day would make "the rate used" ambiguous."""
+    assert "UNIQUE (base_currency, quote_currency, as_of)" in ddl(tables.exchange_rates)
+
+
+def test_a_quarantine_reason_is_built_from_the_enum() -> None:
+    from tcg_market_data import QuarantineReason
+
+    rendered = check_constraint(tables.market_quarantine, "reason_is_a_quarantine_reason")
+    for reason in QuarantineReason:
+        assert f"'{reason.value}'" in rendered
+
+
+def test_the_migration_lists_the_same_quarantine_reasons() -> None:
+    """Alembic compares a CHECK's name but not its text; nothing else would notice."""
+    from tcg_market_data import QuarantineReason
+
+    listed = re.search(r'QUARANTINE_REASONS = "(.*)"', NORMALIZATION_MIGRATION)
+    assert listed is not None
+    assert listed.group(1) == ", ".join(f"'{reason.value}'" for reason in QuarantineReason)
+
+
+def test_a_quarantined_record_keeps_its_provider() -> None:
+    assert "REFERENCES market_providers (id) ON DELETE RESTRICT" in ddl(tables.market_quarantine)
+    assert set(tables.market_quarantine.c.keys()) == {
+        "id",
+        "provider_id",
+        "external_id",
+        "reason",
+        "detail",
+        "record",
+        "created_at",
+    }
+
+
+def test_the_new_triggers_guard_update_and_not_delete() -> None:
+    for trigger in (tables._EXCHANGE_RATES_TRIGGER, tables._QUARANTINE_TRIGGER):
+        assert str(trigger).count("market_rows_are_immutable()") == 1
+        assert "DELETE" not in str(trigger)
+    # The market-data revision owns the function; a second copy would silently win.
+    assert "CREATE OR REPLACE FUNCTION" not in NORMALIZATION_MIGRATION
 
 
 def test_each_ddl_statement_is_one_statement() -> None:

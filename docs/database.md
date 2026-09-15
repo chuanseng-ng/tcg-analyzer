@@ -567,6 +567,61 @@ moving pointer is the one thing a reproducibility record may not name.
 **It runs from the API image**: registering a bundle decodes no photograph, so
 nothing on this path needs OpenCV.
 
+## Recording an exchange rate
+
+ADR 0006's market-data provider prices in USD, and every figure this product
+reports is SGD, so ingestion converts. **No FX feed exists, deliberately**: one
+would be a new external provider, needing its own ADR, and the application has
+no route out. An operator records the rate instead, with the URL it was read
+from:
+
+```bash
+uv run tcg-record-exchange-rate --base USD --rate 1.3421 --as-of 2026-09-15 --source https://www.mas.gov.sg/statistics/exchange-rates
+```
+
+One row per currency per day, in `exchange_rates`, and append-only: a rewritten
+rate would silently reprice every observation that names it. A rate is refused
+before it is written if the currency is not an ISO 4217 code, is SGD itself, or
+the rate is not positive or has more than eight decimal places (the column would
+round it into a rate nobody published). A wrong rate that nothing has used yet
+is corrected by deleting it; one an observation used cannot be deleted at all.
+
+A quote is converted with the newest rate dated **on or before** the day it was
+observed, and only if that rate is at most seven days older. A quote with no
+such rate is quarantined as `no_exchange_rate`, never priced with a guess — so
+record a rate before an ingestion run that needs one.
+
+## Quarantined market records
+
+Normalization (#53) judges every provider quote before it reaches
+`market_observations`. A quote that passes is stored with **both** figures:
+`price` and `currency` as the provider quoted them, and `price_sgd` with the
+`exchange_rate_id` that produced it. Snapshots resolve `price_sgd`, so the
+economic engine never converts. Nothing is smoothed, averaged or interpolated.
+
+A quote that fails is kept in `market_quarantine` with a reason, a sentence and
+the record as the provider sent it — never dropped, because a silent drop makes a
+coverage gap look exactly like a bug:
+
+| Reason | Means |
+| --- | --- |
+| `unmapped_card` | No catalog card carries this provider's identifier. **A catalog problem**: add the `card_external_ids` row; never invent a card. |
+| `ambiguous_card` | The identifier names more than one catalog card (a holo and a reverse holo, say). Never guessed between. |
+| `missing_field` | No price, currency, observation time or confidence, or a company without a grade (or the reverse). |
+| `invalid_price` | Not a non-negative decimal in whole cents. A float is refused; a third decimal place is refused rather than rounded. |
+| `price_out_of_bounds` | Above SGD 500,000 after conversion. A wildly implausible price is worse than a missing one. |
+| `invalid_confidence` | Outside [0, 1], or not a number. |
+| `invalid_currency` | Not an ISO 4217 code. |
+| `no_exchange_rate` | No rate for that currency within seven days before the observation. |
+| `unsupported_company` | A grading company V1 does not ship. |
+| `invalid_grade` | Not a canonical grade key (`9.25`, `9.0`, `ten`). |
+| `unsupported_grade` | A grade the company does not issue — PSA 9.5. |
+| `implausible_observed_at` | Naive, more than 30 days old, or more than five minutes in the future. |
+
+The bounds are named constants in `tcg_market_data.normalization` and are
+**uncalibrated**: nothing has been ingested to calibrate them against, and #54's
+first real runs are expected to revisit them.
+
 Tests that need a live database are marked `integration` and skip when
 `TCG_API_DATABASE_URL` is unset, so the default suite never needs Docker:
 

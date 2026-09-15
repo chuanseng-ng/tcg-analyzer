@@ -1,8 +1,10 @@
 """Spec §35's market tables and spec §36's snapshots, as SQLAlchemy Core.
 
-Three tables. One row per price a provider reported for a card at a moment, one
+Five tables. One row per price a provider reported for a card at a moment, one
 row per provider recording **what this project is licensed to do with those
-prices**, and one row per immutable snapshot of the first. `license`,
+prices**, one row per immutable snapshot of the first, one row per
+operator-recorded exchange rate, and one row per provider record normalization
+refused (#53). `license`,
 `commercial_use` and `terms_reference` are enforcement fields rather than
 documentation: ADR 0006 relies on one right — derived data, its risk R5 — that
 no shortlisted candidate grants expressly, and gates commercial use on an active
@@ -38,10 +40,12 @@ Six decisions, each of which binds a later milestone:
   `grading_rules.company` deliberately does not. A price row is data *about* a
   company V1 ships; a `grading_rules` row is the company's own record.
 
-* **`currency` admits any ISO 4217 code, not only SGD.** V1 reports SGD and
-  converts nothing, but ADR 0006's provider prices in USD, and an observation
-  records what the provider actually said. A column admitting one value would be
-  SGD hard-coded rather than §35's currency column; #53 owns normalization.
+* **`currency` admits any ISO 4217 code, not only SGD.** V1 reports SGD, but
+  ADR 0006's provider prices in USD, and an observation records what the
+  provider actually said. A column admitting one value would be SGD hard-coded
+  rather than §35's currency column. #53 added `price_sgd` beside it, with the
+  `exchange_rate_id` that produced it; snapshots resolve `price_sgd`, so the
+  economic engine never converts.
 
 * **`price` is `NUMERIC(12, 2)`.** Never floating point: the economic engine
   sums fees, shipping and proceeds, and a value that starts as 0.1 is already
@@ -58,8 +62,8 @@ Six decisions, each of which binds a later milestone:
   join a snapshot that was cut before it arrived. `tcg_api.market.snapshots`
   resolves it; nothing copies a price.
 
-All three tables are append-only, and say so in the database rather than in a
-comment — see the trigger at the foot of this module.
+All five tables are append-only, and say so in the database rather than in a
+comment — see the triggers at the foot of this module.
 """
 
 from __future__ import annotations
@@ -69,7 +73,7 @@ from typing import Final
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 from tcg_grading_companies import GradingCompany
-from tcg_market_data import MarketType
+from tcg_market_data import MarketType, QuarantineReason
 
 # `market_observations.card_id` points into the catalog, so the catalog is a
 # hard dependency of this module rather than merely of the migration
@@ -82,7 +86,14 @@ from tcg_api.tables import NO_METADATA as _NO_METADATA
 from tcg_api.tables import PRINTED as _PRINTED
 from tcg_api.tables import metadata, one_of
 
-__all__ = ["TABLES", "market_observations", "market_providers", "market_snapshots"]
+__all__ = [
+    "TABLES",
+    "exchange_rates",
+    "market_observations",
+    "market_providers",
+    "market_quarantine",
+    "market_snapshots",
+]
 
 
 #: A lowercase slug, mirroring `tcg_domain.card.validated_slug`'s grammar so the
@@ -232,6 +243,74 @@ market_providers = sa.Table(
 )
 
 
+exchange_rates = sa.Table(
+    "exchange_rates",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "base_currency",
+        sa.Text(),
+        nullable=False,
+        comment="The ISO 4217 code converted from.",
+    ),
+    sa.Column(
+        "quote_currency",
+        sa.Text(),
+        nullable=False,
+        comment="Always SGD in V1: the currency every stored price is normalized to.",
+    ),
+    sa.Column(
+        "rate",
+        sa.Numeric(18, 8),
+        nullable=False,
+        comment=(
+            "Units of `quote_currency` per one `base_currency`, exactly. Never "
+            "floating point: it multiplies a price."
+        ),
+    ),
+    sa.Column(
+        "as_of",
+        sa.Date(),
+        nullable=False,
+        comment="The day the rate applies to.",
+    ),
+    sa.Column(
+        "source_reference",
+        sa.Text(),
+        nullable=False,
+        comment=(
+            "Where the operator read the rate, as a URL a human can open. Never "
+            "empty: a rate with no source is a number someone typed."
+        ),
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.func.now(),
+        nullable=False,
+        comment="When the rate was recorded, as distinct from the day it applies to.",
+    ),
+    sa.PrimaryKeyConstraint("id", name="pk_exchange_rates"),
+    # One rate per pair per day: a second would make "the rate used" ambiguous.
+    sa.UniqueConstraint(
+        "base_currency",
+        "quote_currency",
+        "as_of",
+        name="uq_exchange_rates_base_currency_quote_currency_as_of",
+    ),
+    sa.CheckConstraint(
+        f"base_currency ~ '{_CURRENCY_PATTERN}'", name="base_currency_is_an_iso_4217_code"
+    ),
+    sa.CheckConstraint("quote_currency = 'SGD'", name="quote_currency_is_sgd"),
+    sa.CheckConstraint("rate > 0", name="rate_is_positive"),
+    comment=(
+        "One operator-recorded exchange rate into SGD — issue #53. Append-only, "
+        "enforced by trg_exchange_rates_immutable: a rewritten rate would silently "
+        "reprice every observation that names it."
+    ),
+)
+
+
 market_observations = sa.Table(
     "market_observations",
     metadata,
@@ -305,10 +384,9 @@ market_observations = sa.Table(
         sa.Text(),
         nullable=False,
         comment=(
-            "The ISO 4217 code the provider quoted in. V1 reports SGD and converts "
-            "nothing, but the selected provider prices in USD — an observation records "
-            "what was said, and normalization owns the conversion. Not COLLATE C: "
-            "compared for equality only."
+            "The ISO 4217 code the provider quoted in, as it said it. `price` is in this "
+            "currency; `price_sgd` is the normalized figure, and `exchange_rate_id` names "
+            "the rate between them. Not COLLATE C: compared for equality only."
         ),
     ),
     sa.Column(
@@ -321,6 +399,31 @@ market_observations = sa.Table(
             "is a legal observation — a card nobody will pay for really is worth "
             "nothing, and that is the one value which must never be confused with an "
             "absent price. Negative is not a price anybody ever saw."
+        ),
+    ),
+    sa.Column(
+        "price_sgd",
+        sa.Numeric(12, 2),
+        nullable=False,
+        comment=(
+            "The price in SGD, which is what snapshots resolve and the economic engine "
+            "reads (spec §46). Equal to `price` for an SGD quote; otherwise `price` "
+            "times the named rate, rounded half away from zero as `Money` rounds. Issue #53."
+        ),
+    ),
+    sa.Column(
+        "exchange_rate_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            exchange_rates.c.id,
+            ondelete="RESTRICT",
+            name="fk_market_observations_exchange_rate_id_exchange_rates",
+        ),
+        nullable=True,
+        comment=(
+            "The rate that converted `price` into `price_sgd`. NULL exactly when the "
+            "quote was already SGD. RESTRICT: a rate an observation used must stay "
+            "resolvable, or the SGD figure could not be reproduced."
         ),
     ),
     sa.Column(
@@ -388,6 +491,17 @@ market_observations = sa.Table(
     ),
     sa.CheckConstraint(f"currency ~ '{_CURRENCY_PATTERN}'", name="currency_is_an_iso_4217_code"),
     sa.CheckConstraint("price >= 0", name="price_is_not_negative"),
+    # #53: a converted price names the rate that converted it, so a historical
+    # snapshot can be reproduced; an SGD quote names none and is stored as said.
+    sa.CheckConstraint("price_sgd >= 0", name="price_sgd_is_not_negative"),
+    sa.CheckConstraint(
+        "(currency = 'SGD') = (exchange_rate_id IS NULL)",
+        name="foreign_prices_name_their_exchange_rate",
+    ),
+    sa.CheckConstraint(
+        "currency <> 'SGD' OR price_sgd = price",
+        name="sgd_prices_are_not_converted",
+    ),
     sa.CheckConstraint(
         "confidence >= 0 AND confidence <= 1",
         name="confidence_is_a_unit_interval",
@@ -504,7 +618,77 @@ market_snapshots = sa.Table(
 )
 
 
-TABLES: Final = (market_providers, market_observations, market_snapshots)
+market_quarantine = sa.Table(
+    "market_quarantine",
+    metadata,
+    sa.Column("id", sa.Uuid(), primary_key=True),
+    sa.Column(
+        "provider_id",
+        sa.Uuid(),
+        sa.ForeignKey(
+            "market_providers.id",
+            ondelete="RESTRICT",
+            name="fk_market_quarantine_provider_id_market_providers",
+        ),
+        nullable=False,
+        comment="Which provider sent the record, and so under which licence it is held.",
+    ),
+    sa.Column(
+        "external_id",
+        sa.Text(),
+        nullable=True,
+        comment="The provider's identifier for the card, verbatim, if it sent one.",
+    ),
+    sa.Column(
+        "reason",
+        sa.Text(),
+        nullable=False,
+        comment=(
+            "Why the record was not stored — `tcg_market_data.QuarantineReason`. "
+            "`unmapped_card` is a catalog problem worth reporting, not something to "
+            "invent a card for."
+        ),
+    ),
+    sa.Column(
+        "detail",
+        sa.Text(),
+        nullable=False,
+        comment="The specific failure, in words a human reviewing the run can act on.",
+    ),
+    sa.Column(
+        "record",
+        postgresql.JSONB(),
+        nullable=False,
+        comment=(
+            "The quote as the provider said it, with amounts and timestamps as text so "
+            "nothing is rounded or re-zoned on the way in."
+        ),
+    ),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        server_default=sa.func.now(),
+        nullable=False,
+    ),
+    sa.PrimaryKeyConstraint("id", name="pk_market_quarantine"),
+    sa.CheckConstraint(one_of("reason", QuarantineReason), name="reason_is_a_quarantine_reason"),
+    # #54's run report reads "this provider's quarantines since the run began".
+    sa.Index("ix_market_quarantine_provider_id_created_at", "provider_id", "created_at"),
+    comment=(
+        "A provider record normalization refused, kept with its reason rather than "
+        "dropped — issue #53. Append-only, enforced by "
+        "trg_market_quarantine_immutable; DELETE stays open for pruning."
+    ),
+)
+
+
+TABLES: Final = (
+    market_providers,
+    exchange_rates,
+    market_observations,
+    market_snapshots,
+    market_quarantine,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +771,30 @@ _SNAPSHOTS_TRIGGER: Final = _ddl(
     """
 )
 
+_EXCHANGE_RATES_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_exchange_rates_immutable
+    BEFORE UPDATE ON exchange_rates
+    FOR EACH ROW EXECUTE FUNCTION market_rows_are_immutable();
+    """
+)
+
+_QUARANTINE_TRIGGER: Final = _ddl(
+    """
+    CREATE TRIGGER trg_market_quarantine_immutable
+    BEFORE UPDATE ON market_quarantine
+    FOR EACH ROW EXECUTE FUNCTION market_rows_are_immutable();
+    """
+)
+
+_DROP_EXCHANGE_RATES_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_exchange_rates_immutable ON exchange_rates"
+)
+
+_DROP_QUARANTINE_TRIGGER: Final = _ddl(
+    "DROP TRIGGER IF EXISTS trg_market_quarantine_immutable ON market_quarantine"
+)
+
 # Two statements, two DDL objects: the asyncpg driver prepares each statement it
 # is handed, and a prepared statement may not contain more than one.
 _DROP_PROVIDERS_TRIGGER: Final = _ddl(
@@ -627,6 +835,26 @@ sa.event.listen(
     market_providers,
     "before_drop",
     _DROP_PROVIDERS_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    exchange_rates,
+    "after_create",
+    _EXCHANGE_RATES_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    market_quarantine,
+    "after_create",
+    _QUARANTINE_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    exchange_rates,
+    "before_drop",
+    _DROP_EXCHANGE_RATES_TRIGGER.execute_if(dialect="postgresql"),
+)
+sa.event.listen(
+    market_quarantine,
+    "before_drop",
+    _DROP_QUARANTINE_TRIGGER.execute_if(dialect="postgresql"),
 )
 sa.event.listen(
     market_observations,

@@ -213,6 +213,11 @@ tcg-register-model-bundle = "tcg_api.models.registration:main"
 # alone — and it never sees a return code, which the row stores only as a
 # digest. Runs from the API image: reviewing a report reads two columns.
 tcg-review-grade-feedback = "tcg_api.feedback.review:main"
+# Records one exchange rate into SGD (#53), with the URL it was read from. No FX
+# feed exists — one would be a new provider needing its own ADR — so a rate is
+# an operator's act, and every converted market price names the row it used.
+# Append-only; runs from the API image.
+tcg-record-exchange-rate = "tcg_api.market.exchange_rates:main"
 
 [build-system]
 requires = ["hatchling"]
