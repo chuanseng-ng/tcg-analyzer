@@ -451,6 +451,88 @@ def test_a_frame_filling_blob_is_refused_rather_than_returned_confidently() -> N
     assert found.reason and "frame" in found.reason
 
 
+#: #341's scene: a dim surface whose grain is independent per channel, so its
+#: saturation is noise as well, and a card back whose dark-blue border sits at
+#: the surface's own grey around a light printed panel. The border is inset
+#: 4.4% of the card's width, as on a real back. BGR.
+_DIM_SURFACE = 18
+_DIM_GRAIN = 10
+_PANEL_INSET = 28
+
+
+def dark_bordered(border: tuple[int, int, int], *, seed: int = 0) -> NDArray[np.uint8]:
+    """A card back on a dim surface: a coloured border around a light panel."""
+    rng = np.random.default_rng(seed)
+    left, top, width, height = CARD
+    picture = np.full((HEIGHT, WIDTH, 3), _DIM_SURFACE, np.int16)
+    picture += rng.integers(-_DIM_GRAIN, _DIM_GRAIN + 1, size=(HEIGHT, WIDTH, 3))
+    picture[top : top + height, left : left + width] = border
+    picture[top : top + height, left : left + width] += rng.integers(
+        -_DIM_GRAIN, _DIM_GRAIN + 1, size=(height, width, 3)
+    )
+    inset = _PANEL_INSET
+    picture[top + inset : top + height - inset, left + inset : left + width - inset] = printed(
+        width - 2 * inset, height - 2 * inset, 150
+    )
+    return np.clip(picture, 0, 255).astype(np.uint8)
+
+
+def test_a_panel_whose_dark_border_blends_into_the_surface_is_refused() -> None:
+    """#341: a back's light inner panel was returned as the card, at `poor`.
+
+    On a dim surface the dark-blue border is the surface's grey (real steps +2
+    to +9), so every luminance pass traces the panel, and the saturation pass,
+    whose map is noise at that value, never closes the card. Nothing today
+    tells that panel from a card by its own shape. What gives it away is outside
+    it: the saturated border, running round it on at least three sides, with
+    the unsaturated surface beyond. Over 202 real photographs that refused 19,
+    every one a panel or a quadrilateral not on the card, and no card.
+
+    Here the panel is returned on ten noise seeds out of ten without the rule.
+    """
+    found = detect(png(dark_bordered((70, 22, 8))))
+
+    assert isinstance(found, InsufficientInformation), found
+    assert found.reason and "border" in found.reason
+
+
+def test_a_dark_bordered_card_whose_own_edge_is_found_is_not_refused() -> None:
+    """#341's guard: the same scene one step brighter, where the card is found.
+
+    Its border lies inside the returned quadrilateral, and outside it is only
+    the surface, so nothing saturated runs round it. Real cards reached the band
+    on one side at most. Found on its edge on ten noise seeds out of ten.
+    """
+    assert_on_the_card(located(png(dark_bordered((80, 26, 9)))))
+
+
+def test_a_card_on_a_saturated_surface_is_not_refused() -> None:
+    """#341's second guard: the band must out-saturate the surface beyond it.
+
+    On a blue mat what lies just outside a card is as saturated as the mat
+    further out, with no border anywhere near it. Counted without that step,
+    every card on a saturated surface would be refused as a panel.
+    """
+    picture = place(tinted(WIDTH, HEIGHT, (120, 70, 40), ink=False), CARD, 200)
+
+    assert_on_the_card(located(png(picture)))
+
+
+def test_a_saturated_object_beside_one_side_of_a_card_is_not_refused() -> None:
+    """#341's third guard: the band must run round the quadrilateral, not lie beside it.
+
+    A card found on its edge can have something saturated next to one side:
+    another object, a stripe on the mat. Real cards reached the band on one
+    side at most (+34 and +71 on the two highest). Counted on one side, each
+    would be refused.
+    """
+    picture = place(background(), CARD, 210)
+    left, top, _width, height = CARD
+    picture[top : top + height, left - 36 : left - 16] = (200, 60, 20)
+
+    assert_on_the_card(located(png(picture)))
+
+
 def test_two_cards_are_counted_as_two() -> None:
     picture = background()
     place(picture, (60, 360, 500, 700), 210)
