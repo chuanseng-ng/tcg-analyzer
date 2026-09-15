@@ -1,8 +1,10 @@
 """Spec §35's market tables and spec §36's snapshots, as SQLAlchemy Core.
 
-Three tables. One row per price a provider reported for a card at a moment, one
+Five tables. One row per price a provider reported for a card at a moment, one
 row per provider recording **what this project is licensed to do with those
-prices**, and one row per immutable snapshot of the first. `license`,
+prices**, one row per immutable snapshot of the first, one row per
+operator-recorded exchange rate, and one row per provider record normalization
+refused (#53). `license`,
 `commercial_use` and `terms_reference` are enforcement fields rather than
 documentation: ADR 0006 relies on one right — derived data, its risk R5 — that
 no shortlisted candidate grants expressly, and gates commercial use on an active
@@ -38,10 +40,12 @@ Six decisions, each of which binds a later milestone:
   `grading_rules.company` deliberately does not. A price row is data *about* a
   company V1 ships; a `grading_rules` row is the company's own record.
 
-* **`currency` admits any ISO 4217 code, not only SGD.** V1 reports SGD and
-  converts nothing, but ADR 0006's provider prices in USD, and an observation
-  records what the provider actually said. A column admitting one value would be
-  SGD hard-coded rather than §35's currency column; #53 owns normalization.
+* **`currency` admits any ISO 4217 code, not only SGD.** V1 reports SGD, but
+  ADR 0006's provider prices in USD, and an observation records what the
+  provider actually said. A column admitting one value would be SGD hard-coded
+  rather than §35's currency column. #53 added `price_sgd` beside it, with the
+  `exchange_rate_id` that produced it; snapshots resolve `price_sgd`, so the
+  economic engine never converts.
 
 * **`price` is `NUMERIC(12, 2)`.** Never floating point: the economic engine
   sums fees, shipping and proceeds, and a value that starts as 0.1 is already
@@ -58,8 +62,8 @@ Six decisions, each of which binds a later milestone:
   join a snapshot that was cut before it arrived. `tcg_api.market.snapshots`
   resolves it; nothing copies a price.
 
-All three tables are append-only, and say so in the database rather than in a
-comment — see the trigger at the foot of this module.
+All five tables are append-only, and say so in the database rather than in a
+comment — see the triggers at the foot of this module.
 """
 
 from __future__ import annotations

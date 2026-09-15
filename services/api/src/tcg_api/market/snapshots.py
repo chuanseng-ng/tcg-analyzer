@@ -64,8 +64,8 @@ from tcg_domain.card import CardReference
 from tcg_domain.catalog import Card
 from tcg_domain.confidence import Confidence
 from tcg_domain.grade import Grade
-from tcg_domain.money import Currency, Money
-from tcg_market_data import InvalidMarketObservation, MarketSnapshot, PriceObservation
+from tcg_domain.money import Money
+from tcg_market_data import MarketSnapshot, PriceObservation
 
 from tcg_api.database import execute
 from tcg_api.market.tables import market_observations, market_providers, market_snapshots
@@ -133,8 +133,9 @@ _PRICES: Final = (
     sa.select(
         market_observations.c.grading_company,
         market_observations.c.grade,
-        market_observations.c.price,
-        market_observations.c.currency,
+        # The normalized figure, never `price`: `price` is what the provider
+        # quoted, in whatever currency it quoted in (#53).
+        market_observations.c.price_sgd,
         market_observations.c.confidence,
         market_observations.c.observed_at,
         market_providers.c.slug,
@@ -161,24 +162,13 @@ def _entity(row: sa.Row[Any]) -> MarketSnapshot:
 
 
 def _observation(row: sa.Row[Any], card: CardReference) -> PriceObservation:
-    # `market_observations.currency` admits any ISO 4217 code, deliberately —
-    # #50's argument is that an observation records what the provider actually
-    # said, and ADR 0006's provider prices in USD. `tcg_domain.money.Currency`
-    # models only SGD, because V1 reports SGD and #53 owns the conversion. So a
-    # row can, in principle, hold a currency this type cannot carry. Nothing has
-    # ingested yet, so no such row exists; when one does, #53 is the milestone
-    # that adds the member and the conversion. Refused with a message that says
-    # so, rather than with the enum's own `ValueError`.
-    try:
-        currency = Currency(row.currency)
-    except ValueError as error:
-        raise InvalidMarketObservation(
-            f"{row.currency} is stored but not modelled by tcg_domain.money.Currency; "
-            "normalization owns the conversion"
-        ) from error
+    # `price_sgd`, never `price`. #50 kept `currency` open so an observation
+    # records what the provider said, and #53 stores the converted figure beside
+    # it with the rate that produced it — so `Money` stays SGD-only and the
+    # economic engine never converts.
     return PriceObservation(
         card=card,
-        price=Money(amount=row.price, currency=currency),
+        price=Money(amount=row.price_sgd),
         observed_at=row.observed_at,
         confidence=Confidence(row.confidence),
         provider=row.slug,
