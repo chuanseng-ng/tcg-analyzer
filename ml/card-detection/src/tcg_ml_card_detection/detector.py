@@ -713,10 +713,21 @@ def _unsupported_at_frame(
     Only the sides clear of the frame are read: the frame supplies the others,
     for a phantom and a clipped card alike. One supported side is enough to
     count the group, so a clipped card whose far edge is soft is still a card.
+
+    A group traced once is never counted, whatever its edges (#363): on a
+    textured mat the Otsu pass alone traced a patch at the frame, and the mat's
+    own speckle supported its sides. Every real second card measured is traced
+    by several members.
+
+    ponytail: a real clipped second card that only one pass traces goes
+    uncounted. None has been photographed (the synthetic one has five members);
+    re-measure against one before relaxing this.
     """
     outer = max(group, key=lambda member: member.area)
     if outer.boundary_margin > thresholds.frame_margin_fraction:
         return False
+    if len(group) == 1:
+        return True
     height, width = edges.shape[:2]
     for index in range(4):
         first, second = outer.quad[index], outer.quad[(index + 1) % 4]
