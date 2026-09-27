@@ -175,3 +175,22 @@ Nothing else here changes: the file sync, the migration service, the `no-new-pri
 baseline and the uid 1001 claim are the same, and the production stage drops to
 the same user. The last consequence above — "the web app's production packaging
 remains genuinely unbuilt" — is what this addendum retires.
+
+## Addendum — 2026-09-27: the object store is RustFS (ADR 0013)
+
+MinIO withdrew its public images, and
+[ADR 0013](0013-the-object-store-is-rustfs.md) replaced it. Three statements
+above read differently now:
+
+- the `minio` service is `storage`, on `rustfs/rustfs`, with volume
+  `storage-data`;
+- the bucket is no longer a `mkdir` under the data root. RustFS keeps bucket
+  metadata of its own, so a one-shot `storage-init` on the client image creates
+  it, and `api` and `worker` wait for it with `service_completed_successfully`
+  as they do for `migrate`;
+- "the MinIO image runs as root" no longer holds. RustFS runs as its own
+  `rustfs` user (uid 10001) and owns its data volume.
+
+The `--wait` observation stands, with a sharper edge: it fails on a requested
+one-shot that has exited, even at 0, unless something else in the request
+depends on it, which is why "just the backing services" is now two commands.

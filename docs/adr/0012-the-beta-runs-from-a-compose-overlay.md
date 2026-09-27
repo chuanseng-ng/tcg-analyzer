@@ -135,3 +135,14 @@ Revisit when:
 - the worker needs a second replica;
 - photographs retained under #148 need labelling on the host;
 - the first real photograph is timed, which sets the limits.
+
+## Addendum — 2026-09-27: the object store is RustFS (ADR 0013)
+
+MinIO withdrew its public images, and
+[ADR 0013](0013-the-object-store-is-rustfs.md) replaced it. In the overlay:
+`minio` is `storage`, `minio-init` is `storage-init` (on the `rustfs/rc` client
+image, creating the bucket as well as the scoped account), `minio-data` is
+`storage-data`, and the variables are `STORAGE_ROOT_USER`,
+`STORAGE_ROOT_PASSWORD`, `STORAGE_APP_ACCESS_KEY` and `STORAGE_APP_SECRET_KEY`.
+Checklist item 7 holds under RustFS and CI still asserts it: the scoped account
+sees one bucket and is refused elsewhere.

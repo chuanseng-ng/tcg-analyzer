@@ -3,8 +3,8 @@
 What the sweep has to get right is which keys the database still names, and
 that is a property of a statement PostgreSQL executes — including the clock,
 which is the database's and never this process's. The object store is
-`InMemoryObjectStorage`, `test_retention.py`'s choice and for its reason: MinIO
-proves `list` and `delete` in `packages/shared/tests/test_storage_contract.py`,
+`InMemoryObjectStorage`, `test_retention.py`'s choice and for its reason: the
+real store proves `list` and `delete` in `packages/shared/tests/test_storage_contract.py`,
 and what is under test here is the *set* the sweep computes.
 
 Skipped unless `TCG_API_DATABASE_URL` points at a live PostgreSQL:

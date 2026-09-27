@@ -57,6 +57,7 @@ const FORBIDDEN = [
   "amazonaws.com",
   "S3Client",
   "minio",
+  "rustfs",
   "presign",
   "signedUrl",
   "signed_url",
@@ -91,7 +92,7 @@ describe("the annotation tool does not reach an object store", () => {
       ...manifest.devDependencies,
     });
 
-    expect(declared.filter((name) => /aws|s3|minio|blob|storage/i.test(name))).toEqual([]);
+    expect(declared.filter((name) => /aws|s3|minio|rustfs|blob|storage/i.test(name))).toEqual([]);
   });
 
   it("knows exactly one origin, and it is the API's", () => {

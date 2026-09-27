@@ -2,15 +2,15 @@
 
 The claim this file has to make is that expired photographs are gone from
 *both* stores, and the two markers cannot be combined to make it: `integration`
-runs in a CI job with PostgreSQL and no MinIO, `object_storage` in one with
-MinIO and no PostgreSQL. So the split is deliberate and the proof is in three
+runs in a CI job with PostgreSQL and no object store, `object_storage` in one
+with the store and no PostgreSQL. So the split is deliberate and the proof is in three
 places:
 
 * here — the sweep's logic, against a real database and a real cascade, with
   the object store in memory so the assertion "the object is gone" is a direct
   read of what the store holds;
 * `packages/shared/tests/test_storage_contract.py` — that `delete` really
-  removes an object from MinIO, and that deleting an absent key succeeds;
+  removes an object from the store, and that deleting an absent key succeeds;
 * CI's `compose` job — the whole thing end to end, upload to empty bucket.
 
 The test worth reading twice is `test_a_storage_failure_leaves_the_row_due`.

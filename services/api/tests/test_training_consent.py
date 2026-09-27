@@ -12,12 +12,13 @@ shown takes them back.
 
 Skipped unless both are set:
 
-    docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+    docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+    docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
     export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
     export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 
 It carries both markers and both skips, like `test_anonymous_journey.py`: CI's
-database job has no MinIO and its storage job has both.
+database job has no object store and its storage job has both.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ pytestmark = [
     ),
     pytest.mark.skipif(
         not ENDPOINT_URL,
-        reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live MinIO to exercise",
+        reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live object store to exercise",
     ),
 ]
 

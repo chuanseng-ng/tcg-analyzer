@@ -8,12 +8,12 @@ duplicated per adapter. Adding a third store means adding a fixture parameter
 and nothing else — and if it cannot pass, it is not an `ObjectStorage`.
 
 The in-memory params always run. The S3 params carry the `object_storage`
-marker and skip unless `TCG_API_STORAGE_ENDPOINT_URL` points at a live MinIO,
+marker and skip unless `TCG_API_STORAGE_ENDPOINT_URL` points at a live store,
 so the default suite stays hermetic:
 
     docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 
-Three tests near the bottom run against MinIO *only*, deliberately. They check
+Three tests near the bottom run against the real store *only*, deliberately. They check
 that a signature is honoured and then refused, and no in-memory store can be
 honest about that: there is no server to enforce it.
 """
@@ -49,13 +49,13 @@ SECRET_ACCESS_KEY = os.environ.get("TCG_API_STORAGE_SECRET_ACCESS_KEY", "tcgloca
 JPEG = "image/jpeg"
 
 #: Short enough that the expiry test finishes quickly, long enough to survive
-#: the clock skew between the host and the container MinIO runs in — a 1-second
+#: the clock skew between the host and the store's container — a 1-second
 #: grant is already spent by the time the first request arrives.
 SHORT_TTL = timedelta(seconds=5)
 
-needs_minio = pytest.mark.skipif(
+needs_object_store = pytest.mark.skipif(
     not ENDPOINT_URL,
-    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live MinIO to exercise",
+    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live object store to exercise",
 )
 
 
@@ -72,7 +72,7 @@ def run[T](scenario: Callable[[], Awaitable[T]]) -> T:
 def _namespace() -> str:
     """A namespace nothing else has used.
 
-    MinIO keeps what a previous run put there, so a listing test that shared
+    The store keeps what a previous run put there, so a listing test that shared
     `contract` with its neighbours would see their objects. A fresh namespace
     per test is the cheapest isolation there is, and `[a-z0-9-]` is exactly what
     a namespace may contain.
@@ -95,7 +95,7 @@ def _s3_storage() -> S3ObjectStorage:
 @pytest.fixture(
     params=[
         pytest.param("memory", id="memory"),
-        pytest.param("s3", id="s3", marks=[pytest.mark.object_storage, needs_minio]),
+        pytest.param("s3", id="s3", marks=[pytest.mark.object_storage, needs_object_store]),
     ]
 )
 def storage(request: pytest.FixtureRequest) -> ObjectStorage:
@@ -241,7 +241,7 @@ def test_a_signed_url_is_scoped_to_the_one_key_it_was_minted_for(
 
 
 # ---------------------------------------------------------------------------
-# Signature enforcement — MinIO only.
+# Signature enforcement — the real store only.
 #
 # An in-memory store can mint a URL but cannot honour or refuse one, so these
 # are the tests that only a real S3-compatible implementation can pass.
@@ -249,7 +249,7 @@ def test_a_signed_url_is_scoped_to_the_one_key_it_was_minted_for(
 
 
 @pytest.mark.object_storage
-@needs_minio
+@needs_object_store
 def test_a_listing_longer_than_one_page_still_answers_in_full(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -257,7 +257,7 @@ def test_a_listing_longer_than_one_page_still_answers_in_full(
 
     A page of a thousand is the size worth shipping and the size no test wants
     to write, so the size is a named constant and this shrinks it. In-memory
-    holds a dict and has no pages, which is why this one is MinIO's alone.
+    holds a dict and has no pages, which is why this one is the real store's alone.
     """
     monkeypatch.setattr(s3, "_PAGE_SIZE", 2)
     storage = _s3_storage()
@@ -274,7 +274,7 @@ def test_a_listing_longer_than_one_page_still_answers_in_full(
 
 
 @pytest.mark.object_storage
-@needs_minio
+@needs_object_store
 def test_a_signed_upload_url_accepts_a_body_the_port_can_then_read() -> None:
     storage = _s3_storage()
     key = generate_key("contract")
@@ -297,7 +297,7 @@ def test_a_signed_upload_url_accepts_a_body_the_port_can_then_read() -> None:
 
 
 @pytest.mark.object_storage
-@needs_minio
+@needs_object_store
 def test_a_signed_download_url_serves_the_object() -> None:
     storage = _s3_storage()
     key = generate_key("contract")
@@ -313,7 +313,7 @@ def test_a_signed_download_url_serves_the_object() -> None:
 
 
 @pytest.mark.object_storage
-@needs_minio
+@needs_object_store
 def test_a_signed_url_stops_working_once_it_expires() -> None:
     """A URL that outlived its grant is a credential nobody revoked."""
     storage = _s3_storage()
