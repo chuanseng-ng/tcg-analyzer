@@ -49,12 +49,12 @@ def configured(**overrides: object) -> Settings:
 
 
 def test_storage_settings_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(STORAGE_ENDPOINT_URL_ENV_VAR, "http://minio.test:9000")
+    monkeypatch.setenv(STORAGE_ENDPOINT_URL_ENV_VAR, "http://storage.test:9000")
     monkeypatch.setenv(STORAGE_BUCKET_ENV_VAR, "cards")
 
     settings = Settings(_env_file=None)
 
-    assert settings.storage_endpoint_url == "http://minio.test:9000"
+    assert settings.storage_endpoint_url == "http://storage.test:9000"
     assert settings.storage_bucket == "cards"
 
 
@@ -73,7 +73,9 @@ def test_storage_is_absent_rather_than_fatal_when_unconfigured() -> None:
     assert settings.storage_endpoint_url is None
 
 
-@pytest.mark.parametrize("rejected", ["localhost:9000", "not a url", "ftp://minio:9000", "//minio"])
+@pytest.mark.parametrize(
+    "rejected", ["localhost:9000", "not a url", "ftp://storage:9000", "//storage"]
+)
 def test_a_malformed_storage_endpoint_is_rejected_at_startup(
     monkeypatch: pytest.MonkeyPatch, rejected: str
 ) -> None:

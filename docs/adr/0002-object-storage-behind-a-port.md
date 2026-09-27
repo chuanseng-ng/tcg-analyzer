@@ -102,3 +102,11 @@ packages/shared/src/tcg_shared/storage/
   with. Once #20 runs the API inside Compose, that is `http://minio:9000`, which
   a browser on the host cannot reach. M2 will need a separate public-endpoint
   setting; adding one now would be speculative.
+
+## Addendum — 2026-09-27: the store behind the port is RustFS (ADR 0013)
+
+MinIO withdrew its public images, and
+[ADR 0013](0013-the-object-store-is-rustfs.md) replaced it with RustFS under a
+Compose service named `storage`. The endpoint this ADR names as
+`http://minio:9000` is `http://storage:9000`; the port and everything above it
+are unchanged. `s3.py` did not change, which is what this ADR promised.

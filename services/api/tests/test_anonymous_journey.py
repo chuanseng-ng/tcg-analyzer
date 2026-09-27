@@ -19,12 +19,13 @@ Two services, both real, both required. It imports the CV stack at module
 scope on purpose, as `test_datasets_normalization.py` does, and is skipped
 unless both of these are set:
 
-    docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+    docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+    docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
     export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
     export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 
 It carries both the `integration` and the `object_storage` marker, and both
-skips: CI's database job has no MinIO and its storage job now has both, so
+skips: CI's database job has no object store and its storage job has both, so
 the module runs exactly where it can.
 """
 
@@ -61,9 +62,9 @@ requires_postgres = pytest.mark.skipif(
     not DATABASE_URL,
     reason="TCG_API_DATABASE_URL is unset; no live PostgreSQL to write to",
 )
-needs_minio = pytest.mark.skipif(
+needs_object_store = pytest.mark.skipif(
     not ENDPOINT_URL,
-    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live MinIO to exercise",
+    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live object store to exercise",
 )
 
 #: `test_analyses_endpoint.py`'s list: every process-wide cache that would
@@ -360,7 +361,7 @@ def probability_mass(distribution: list[dict[str, Any]]) -> float:
 @pytest.mark.integration
 @pytest.mark.object_storage
 @requires_postgres
-@needs_minio
+@needs_object_store
 def test_a_new_user_completes_an_anonymous_analysis(
     client: TestClient, enqueued: list[uuid.UUID], journey: list[str]
 ) -> None:
@@ -587,7 +588,7 @@ def test_a_new_user_completes_an_anonymous_analysis(
 @pytest.mark.integration
 @pytest.mark.object_storage
 @requires_postgres
-@needs_minio
+@needs_object_store
 def test_an_unusable_photograph_fails_the_analysis_honestly(
     client: TestClient, enqueued: list[uuid.UUID], journey: list[str]
 ) -> None:
@@ -655,7 +656,7 @@ def test_an_unusable_photograph_fails_the_analysis_honestly(
 @pytest.mark.integration
 @pytest.mark.object_storage
 @requires_postgres
-@needs_minio
+@needs_object_store
 def test_a_model_that_breaks_fails_the_analysis_honestly(
     client: TestClient,
     enqueued: list[uuid.UUID],

@@ -425,7 +425,7 @@ def test_an_analysis_with_no_photographs_needs_no_object_store(
     """Building the client is what raises when storage is unconfigured, so
     hoisting it above the loop turns "nothing to judge" into a job failure about
     configuration — which is what it did, and what the migrations CI job (which
-    has PostgreSQL and no MinIO) found."""
+    has PostgreSQL and no object store) found."""
     recorder = _Recorder({})
 
     def refuse() -> InMemoryObjectStorage:

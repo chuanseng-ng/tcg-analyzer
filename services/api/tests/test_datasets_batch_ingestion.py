@@ -68,7 +68,7 @@ requires_postgres = pytest.mark.skipif(
 )
 requires_storage = pytest.mark.skipif(
     not os.environ.get("TCG_API_STORAGE_ENDPOINT_URL"),
-    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live MinIO to put objects in",
+    reason="TCG_API_STORAGE_ENDPOINT_URL is unset; no live object store to put objects in",
 )
 
 

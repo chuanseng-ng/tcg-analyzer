@@ -574,3 +574,19 @@ reason, not a review finding.
 | [#285](https://github.com/chuanseng-ng/tcg-analyzer/issues/285) `docs: add SECURITY.md` | the missing disclosure path |
 | [#273](https://github.com/chuanseng-ng/tcg-analyzer/issues/273) (existing) | §55.10, §56.2, §56.3 — the checklist above, posted to the issue |
 | [#269](https://github.com/chuanseng-ng/tcg-analyzer/issues/269) (existing) | the `X-Forwarded-For` determination and the three text fixes |
+
+## Note — 2026-09-27: the object store is RustFS
+
+Not a re-review; the verdicts above are the reading at commit `0d9b918` and
+stand as written. This note maps the names, because
+[ADR 0013](adr/0013-the-object-store-is-rustfs.md) replaced MinIO with RustFS
+after MinIO withdrew its public images:
+
+| Above | Now |
+| --- | --- |
+| `minio` service, `minio:9000` | `storage`, `storage:9000` |
+| `minio-init` | `storage-init` (also creates the bucket) |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | `STORAGE_ROOT_USER` / `STORAGE_ROOT_PASSWORD` |
+| `MINIO_APP_ACCESS_KEY` / `MINIO_APP_SECRET_KEY` | `STORAGE_APP_ACCESS_KEY` / `STORAGE_APP_SECRET_KEY` |
+| "the MinIO console" (item 3) | RustFS's console, disabled in the overlay |
+| "a scoped MinIO service account" (item 7) | the same account on RustFS; CI's bucket-isolation step still asserts it |
