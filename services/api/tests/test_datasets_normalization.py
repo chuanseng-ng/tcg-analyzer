@@ -16,6 +16,7 @@ PostgreSQL:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from numpy.typing import NDArray
 from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.datasets.normalization import ARTIFACT_NAMESPACE, artifact, normalize_pending
 from tcg_api.datasets.tables import training_images
+from tcg_domain.confidence import InsufficientInformation
 from tcg_shared.storage import StorageError, StorageKey
 from tcg_shared.storage.memory import InMemoryObjectStorage
 from tcg_shared.storage.port import ObjectStorage
@@ -102,13 +104,25 @@ def test_a_photograph_of_a_card_yields_an_artifact() -> None:
     assert straightened.data.startswith(b"\x89PNG")
 
 
-def test_a_photograph_with_no_card_in_it_yields_no_artifact() -> None:
-    """The detector answers rather than raising, so this returns rather than raising."""
-    assert artifact(png(blank())) is None
+def test_a_photograph_with_no_card_in_it_yields_the_detectors_reason() -> None:
+    """The detector answers rather than raising, so this returns rather than raising.
+
+    What it returns is the detector's own admission, not a bare ``None``: the
+    pass logs *why* an image stays pending, so an operator can tell a slab
+    (`card_in_a_case`) from a photograph of nothing.
+    """
+    answer = artifact(png(blank()))
+
+    assert isinstance(answer, InsufficientInformation)
+    assert not answer
+    assert answer.reason
 
 
-def test_bytes_that_do_not_decode_yield_no_artifact() -> None:
-    assert artifact(b"not an image") is None
+def test_bytes_that_do_not_decode_yield_the_reason() -> None:
+    answer = artifact(b"not an image")
+
+    assert isinstance(answer, InsufficientInformation)
+    assert answer.reason
 
 
 def test_the_artifact_namespace_is_not_the_analysis_one() -> None:
@@ -303,16 +317,24 @@ def test_a_stored_artifact_is_never_replaced(storage: InMemoryObjectStorage) -> 
 @requires_postgres
 def test_an_image_with_no_locatable_card_is_counted_and_left_alone(
     storage: InMemoryObjectStorage,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Both columns stay NULL, which is what the viewer renders its fallback from."""
+    """Both columns stay NULL, which is what the viewer renders its fallback from.
+
+    The log line carries the detector's reason: a row that stays pending for
+    ever is only a finding if the operator can read what it was refused for.
+    """
     image_id = store(storage, png(blank()))
 
-    result = sweep(storage)
+    with caplog.at_level(logging.INFO, logger="tcg_api.datasets.normalization"):
+        result = sweep(storage)
 
     assert (result.stored, result.unlocatable) == (0, 1)
     row = stored_row(image_id)
     assert row.normalized_uri is None
     assert row.normalization_details is None
+    line = next(m for m in caplog.messages if str(image_id) in m and "no artifact" in m)
+    assert str(artifact(png(blank()))) in line
 
 
 @pytest.mark.integration

@@ -49,7 +49,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 from tcg_ml_card_detection import CARD_DETECTION_VERSION
-from tcg_ml_normalization import NORMALIZATION_VERSION
+from tcg_ml_normalization import NORMALIZATION_VERSION, Normalized
 from tcg_shared.storage import StorageError, StorageKey
 from tcg_shared.storage.port import ObjectStorage
 
@@ -123,7 +123,7 @@ def fingerprint_artifact(data: bytes) -> tuple[str, str] | None:
     cannot drift into two detect-then-straighten paths.
     """
     straightened = artifact(data)
-    if straightened is None:
+    if not isinstance(straightened, Normalized):
         return None
     return difference_hash(straightened.data)
 
