@@ -7,3 +7,7 @@
 # environment (#273): distinct values so an assertion cannot pass by
 # coincidence, and never used anywhere a service runs.
 2b6c8fc8d3cdedcdcf0b2971f64dd790571ff7b6:tests/test_compose_production.py:generic-api-key:86
+
+# The same dummy value on the same line, re-flagged because the key beside it
+# was renamed MINIO_ROOT_PASSWORD -> STORAGE_ROOT_PASSWORD (ADR 0013).
+aafe3e792d16b32648afdf2ea00aeaa4c5fde8a6:tests/test_compose_production.py:generic-api-key:86
