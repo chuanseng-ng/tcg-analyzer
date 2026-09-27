@@ -32,9 +32,15 @@ import pytest
 import sqlalchemy as sa
 from numpy.typing import NDArray
 from sqlalchemy.ext.asyncio import create_async_engine
-from tcg_api.datasets.normalization import ARTIFACT_NAMESPACE, artifact, normalize_pending
+from tcg_api.datasets.normalization import (
+    ARTIFACT_NAMESPACE,
+    artifact,
+    normalize_pending,
+    why_no_artifact,
+)
 from tcg_api.datasets.tables import training_images
 from tcg_domain.confidence import InsufficientInformation
+from tcg_domain.image_quality import CardNotLocated, GateRefusal
 from tcg_shared.storage import StorageError, StorageKey
 from tcg_shared.storage.memory import InMemoryObjectStorage
 from tcg_shared.storage.port import ObjectStorage
@@ -123,6 +129,28 @@ def test_bytes_that_do_not_decode_yield_the_reason() -> None:
 
     assert isinstance(answer, InsufficientInformation)
     assert answer.reason
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (CardNotLocated("nothing card-like"), "no_card_found"),
+        (CardNotLocated("a case", refusal=GateRefusal.CARD_IN_A_CASE), "card_in_a_case"),
+        (InsufficientInformation("could not encode the warp"), "could not be straightened"),
+    ],
+)
+def test_the_log_names_the_refusal_by_a_constant(
+    answer: InsufficientInformation, expected: str
+) -> None:
+    """Each refusal maps to a sentence of this module's own.
+
+    A closed lookup rather than `str(answer)`: the code an operator greps for
+    is the refusal's, and the detector's sentence never reaches the log.
+    """
+    sentence = why_no_artifact(answer)
+
+    assert expected in sentence
+    assert answer.reason not in sentence
 
 
 def test_the_artifact_namespace_is_not_the_analysis_one() -> None:
@@ -334,7 +362,10 @@ def test_an_image_with_no_locatable_card_is_counted_and_left_alone(
     assert row.normalized_uri is None
     assert row.normalization_details is None
     line = next(m for m in caplog.messages if str(image_id) in m and "no artifact" in m)
-    assert str(artifact(png(blank()))) in line
+    assert "no_card_found" in line
+    # The refusal's code, never the detector's answer itself: CodeQL reads a
+    # `CardNotLocated` as card data and flags a log line that formats one.
+    assert str(artifact(png(blank()))) not in line
 
 
 @pytest.mark.integration
