@@ -501,6 +501,47 @@ def test_the_publish_log_names_each_split_s_provenance_not_the_pooled_mix(
     assert "train empty" in line
 
 
+def test_the_publish_log_warns_about_a_slab_sourced_copy_in_the_test_split(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ADR 0008's addendum: trained on, never tested on. A line of INFO is easy to
+    miss in a publish log; a WARNING is not."""
+    manifest = _manifest(
+        _member("00000000-0000-0000-0000-00000000000a", DatasetSplit.TEST),
+        _member("00000000-0000-0000-0000-00000000000b", DatasetSplit.TEST),
+        _member("00000000-0000-0000-0000-00000000000c"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger=versioning.__name__):
+        versioning._report(manifest, Path("manifest.json"), verb="published")
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "2 slab-sourced image(s) in the test split" in warnings[0].getMessage()
+    assert "first_party/photographed_owned_slab 2" in warnings[0].getMessage()
+
+
+def test_the_publish_log_does_not_warn_when_only_raw_cards_reach_the_test_split(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw = ManifestMember(
+        training_image_id=uuid.UUID("00000000-0000-0000-0000-0000000000ff"),
+        sha256="f" * 64,
+        split=DatasetSplit.TEST,
+        side="back",
+        source="first_party",
+        acquisition_method="photographed_before_submission",
+        original_uri="training/ff.png",
+    )
+    # A slab copy in *train* is what ADR 0008 permits, so it must not warn either.
+    manifest = _manifest(raw, _member("00000000-0000-0000-0000-00000000000a"))
+
+    with caplog.at_level(logging.WARNING, logger=versioning.__name__):
+        versioning._report(manifest, Path("manifest.json"), verb="published")
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
 def test_proportions_are_exact_fractions_and_never_rounded() -> None:
     manifest = _manifest(
         *(_member(f"00000000-0000-0000-0000-00000000000{digit}") for digit in "abc")
