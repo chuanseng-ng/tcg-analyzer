@@ -286,7 +286,8 @@ class Manifest:
         not among §32's grouping keys, and `ml/evaluation` parses it onto
         `CorpusMember` without ever reading it back. Keeping slab-sourced
         copies out of the test split is a purchasing discipline, so this is
-        where the discipline becomes checkable.
+        where the discipline becomes checkable — and `_report` warns when a
+        slab-sourced copy has reached the test split.
 
         Derived and deliberately **not rendered**: the manifest's `provenance`
         key is part of a published version's bytes and `--regenerate`
@@ -793,6 +794,25 @@ def _report(manifest: Manifest, path: Path, *, verb: str) -> None:
             for split in DatasetSplit
         ),
     )
+    # ADR 0008's 2026-09-14 addendum: a slab-sourced copy may be trained on and
+    # never tested on. A WARNING rather than a refusal: by the time this runs
+    # the version is written, and the split is seeded, so the operator's remedy
+    # is a new version under a new seed, not a retry of this one.
+    # ponytail: warns after the fact; a refusal belongs before `create_version`
+    # with a re-seed loop, once a slab copy has actually reached a test split.
+    slabbed = {
+        name: count
+        for name, count in by_split[DatasetSplit.TEST].items()
+        if name.endswith("/photographed_owned_slab")
+    }
+    if slabbed:
+        logger.warning(
+            "%d slab-sourced image(s) in the test split (%s): ADR 0008 scores "
+            "photographed_owned_slab 0 on domain match, so §27's bound would measure "
+            "something the product does not do. Publish a new version under another seed.",
+            sum(slabbed.values()),
+            ", ".join(f"{name} {count}" for name, count in sorted(slabbed.items())),
+        )
     logger.info("manifest written to %s", path)
 
 

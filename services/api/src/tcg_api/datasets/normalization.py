@@ -46,6 +46,8 @@ from typing import Any, Final
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 from tcg_domain.card_geometry import CardGeometry
+from tcg_domain.confidence import InsufficientInformation
+from tcg_domain.image_quality import CardNotLocated, GateRefusal
 from tcg_ml_card_detection import detect
 from tcg_ml_normalization import MEDIA_TYPE, Normalized, normalize
 from tcg_shared.storage import StorageError, StorageKey, generate_key
@@ -64,9 +66,30 @@ __all__ = [
     "main",
     "normalize_pending",
     "run",
+    "why_no_artifact",
 ]
 
 logger = logging.getLogger(__name__)
+
+#: One sentence per refusal, keyed on the gate's closed vocabulary. The log
+#: line is built from these and never from the detector's answer: CodeQL's
+#: sensitive-data heuristics read anything named "card" (`CardNotLocated`) as
+#: payment-card data and flag a stdlib log call that formats one, and a lookup
+#: on the refusal logs a constant of this module's own instead. The code is in
+#: the sentence because it is what an operator greps for.
+_REFUSED: Final = {
+    GateRefusal.NO_CARD_FOUND: "no card was located (no_card_found)",
+    GateRefusal.CARD_IN_A_CASE: "the card is inside a grader's case (card_in_a_case)",
+}
+_NOT_STRAIGHTENED: Final = "the photograph could not be straightened"
+
+
+def why_no_artifact(answer: InsufficientInformation) -> str:
+    """The sentence the pass logs for a photograph that yielded no artifact."""
+    if isinstance(answer, CardNotLocated):
+        return _REFUSED.get(answer.refusal, _NOT_STRAIGHTENED)
+    return _NOT_STRAIGHTENED
+
 
 #: The storage namespace training artifacts live under, deliberately distinct
 #: from `tcg_api.analysis.quality.NORMALIZED_NAMESPACE`'s `normalized`. Spec
@@ -90,7 +113,8 @@ class NormalizationRun:
         unlocatable: Images examined that yielded no artifact — no card was
             found in them. Nothing is recorded, so they are examined again next
             run, and the annotation tool renders them from the photograph while
-            saying so.
+            saying so. The log line for each names the detector's reason and,
+            for a slab, its `card_in_a_case` refusal.
         unreadable: Images whose stored object did not come back. Nothing is
             recorded for these either, so the next run retries them.
     """
@@ -101,12 +125,18 @@ class NormalizationRun:
     unreadable: int
 
 
-def artifact(data: bytes) -> Normalized | None:
+def artifact(data: bytes) -> Normalized | InsufficientInformation:
     """Locate the card in a photograph and straighten it.
 
-    Returns ``None`` when no card could be located or the warp could not be
-    encoded — both of which `ml/card-detection` and `ml/normalization` answer
-    rather than raise, so this returns rather than raising too.
+    Returns the stage's own :class:`InsufficientInformation` when no card could
+    be located or the warp could not be encoded — both of which
+    `ml/card-detection` and `ml/normalization` answer rather than raise, so this
+    returns rather than raising too. A detector's answer comes back as a
+    :class:`~tcg_domain.image_quality.CardNotLocated` carrying the refusal —
+    `card_in_a_case` when the detector named it, otherwise `no_card_found`,
+    which is the gate's own derivation for a detector that found nothing — so
+    the pass can say why a row stays pending rather than only that it does.
+    The normalizer's answer is returned as it is.
 
     The order and the guards are
     `tcg_api.analysis.quality._locate_judge_and_straighten`'s. Spec §19's
@@ -115,11 +145,13 @@ def artifact(data: bytes) -> Normalized | None:
     would leave the tool guessing why.
     """
     geometry = detect(data)
+    if isinstance(geometry, CardNotLocated):
+        return geometry
     if not isinstance(geometry, CardGeometry):
-        return None
+        return CardNotLocated(geometry.reason)
     straightened = normalize(data, geometry)
     if not isinstance(straightened, Normalized):
-        return None
+        return straightened
     return straightened
 
 
@@ -167,12 +199,16 @@ async def normalize_pending(engine: AsyncEngine, storage: ObjectStorage) -> Norm
             continue
 
         straightened = artifact(data)
-        if straightened is None:
+        if not isinstance(straightened, Normalized):
             # No card was located, so there is nothing to straighten. Nothing is
             # written: the row stays pending, and the annotation tool falls back
             # to the photograph and labels it rather than showing a frame nobody
-            # can take a coordinate against.
-            logger.info("training image %s: no card was located, so no artifact", row.id)
+            # can take a coordinate against. The refusal is logged because the
+            # row is retried for ever: a slab (`card_in_a_case`) will never
+            # yield an artifact, and this line is the only place that says so.
+            logger.info(
+                "training image %s: %s, so no artifact", row.id, why_no_artifact(straightened)
+            )
             unlocatable += 1
             continue
 
