@@ -102,7 +102,9 @@ of §32's grouping keys, and `ml/evaluation` parses it onto `CorpusMember`
 without ever reading it back — so the splitter is as likely to put a slab card
 in `test` as anywhere else. Keeping them out is a purchasing discipline, and
 `tcg-publish-dataset-version` is where it is checked: the publish log prints the
-provenance mix **per split**.
+provenance mix **per split**, and logs a WARNING when a slab-sourced image has
+reached the test split. The version is already written by then; the remedy is a
+new version under another seed.
 
 Both published versions are clean — every image in `pokemon-condition-v0.1.0`
 and `v0.2.0` is `photographed_before_submission`, on all three splits.
@@ -392,6 +394,29 @@ The Singapore figures are community-reported.
 
 ### Before a card leaves the house
 
+**What a photograph must be.** The wording is Part B of the
+[contributor grant template](../datasets/documentation/contributor-photography-grant.md);
+it is the product's own quality gate stated as instructions, so a first-party
+photograph is held to the same list:
+
+- **Two per physical copy, front and back, in one sitting.** Two copies of the
+  same card are two entries, never one.
+- **The card is bare**: out of its sleeve, out of its toploader, out of its slab.
+  A card photographed through a case is `photographed_owned_slab`, not this.
+- **Flat, square to the camera, filling most of the frame, and the only card in
+  the frame.** V1 records `front` and `back` only; no tilted or angled shots.
+  The tilted photographs under `tcg-analyzer-test/` were detector evidence
+  (#320–#345), never training data.
+- **In focus, evenly lit, no glare.** No flash, no window reflection, no bright
+  spot on the gloss. Glare is the one thing v0.2.0's photographs failed on: five
+  of its fourteen fronts are `poor` for glare on a holographic surface, and none
+  of its backs.
+- **Unedited.** No sharpening, denoising, exposure or filters.
+- **At least 1000 px on the short edge, preferably 2000 or more**, against a
+  plain surface. A phone's full-resolution HEIC is fine for the batch command
+  (it converts to PNG); the camera must write EXIF `DateTimeOriginal`, or the
+  row states its own `acquired_at`.
+
 The mapping from card to physical-copy id stays **outside the repository,
 beside the photographs**:
 - `copies.csv` for the v0.2.0 cards;
@@ -405,6 +430,12 @@ For every card:
 
 No card ships unphotographed or without its copy id. When the slab comes back,
 record the grade against that id (step 4 of the loop).
+
+**There is no way back for a card that shipped unphotographed.** Once it is in
+a slab, the only photograph left to take is through the case:
+`photographed_owned_slab`, train split only, domain match 0, and one the
+detector refuses (`card_in_a_case`) so it never gets a normalized artifact to
+annotate. It does not add a test-split grade, which is what #314 is waiting on.
 
 ## Where trial data fits
 
