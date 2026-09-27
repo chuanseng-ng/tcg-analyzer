@@ -20,6 +20,7 @@ re-litigated silently later.
 | [0010](0010-what-surface-defects-are-measured-against.md) | What surface defects are measured against | accepted | 2026-08-29 |
 | [0011](0011-the-v1-grade-predictor-basis.md) | The V1 grade predictor is a declared-uncertainty baseline | accepted | 2026-09-02 |
 | [0012](0012-the-beta-runs-from-a-compose-overlay.md) | The beta runs from a Compose overlay on one host | accepted | 2026-09-11 |
+| [0013](0013-the-object-store-is-rustfs.md) | The object store in every Compose file is RustFS | accepted | 2026-09-27 |
 
 [`template.md`](template.md) is the shape for a new one. An accepted ADR is not
 rewritten: a decision that changes gets a new record, and the old one is marked

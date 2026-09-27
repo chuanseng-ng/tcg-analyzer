@@ -132,7 +132,7 @@ Two workspaces, split by language — see
 docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 ```
 
-That is the entire setup from a fresh clone. It starts PostgreSQL, MinIO and
+That is the entire setup from a fresh clone. It starts PostgreSQL, RustFS and
 Redis, runs the migrations, then starts the API, the analysis worker, the web
 application and the internal annotation tool in dependency order.
 
@@ -141,7 +141,7 @@ application and the internal annotation tool in dependency order.
 | Web application | <http://localhost:3000> |
 | Annotation tool | <http://localhost:3001> — internal, never a public surface |
 | API | <http://localhost:8000> — `/health`, `/readiness`, `/docs` |
-| MinIO console | <http://localhost:9001> |
+| Object-store console | <http://localhost:9001> |
 
 The landing page reports whether it can reach the API, so **"Analysis API
 reachable"** on <http://localhost:3000> means the whole stack is talking to

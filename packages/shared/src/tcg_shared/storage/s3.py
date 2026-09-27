@@ -1,7 +1,7 @@
 """The S3-compatible adapter — the only module here that knows what S3 is.
 
 Spec §8 asks for S3-compatible storage without naming a provider, so this
-adapter targets the protocol rather than AWS: MinIO locally, AWS S3 or Supabase
+adapter targets the protocol rather than AWS: RustFS locally, AWS S3 or Supabase
 Storage in a deployment, configured by endpoint alone.
 
 **Why synchronous boto3 rather than an async client.** boto3 is the reference
@@ -59,7 +59,7 @@ def create_s3_client(
 
     Args:
         endpoint_url: Where the store lives, or ``None`` for real AWS.
-        region: The region to sign for. MinIO ignores it but still requires one.
+        region: The region to sign for. A self-hosted store ignores it but still requires one.
         access_key_id: The access key.
         secret_access_key: The secret key.
 
@@ -75,10 +75,10 @@ def create_s3_client(
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key,
         config=Config(
-            # MinIO rejects presigned URLs signed with the older algorithm, and
+            # Self-hosted stores reject presigned URLs signed with the older algorithm, and
             # AWS has required v4 in every region since 2014.
             signature_version="s3v4",
-            # MinIO addresses buckets by path. Virtual-host style would need
+            # A self-hosted store addresses buckets by path. Virtual-host style would need
             # wildcard DNS pointing at the container, which local development
             # does not have.
             s3={"addressing_style": "path"},

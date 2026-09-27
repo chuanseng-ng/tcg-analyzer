@@ -10,7 +10,7 @@ read what it rendered.
 Every assertion is a line of #263's §56 checklist or a way the overlay could be
 quietly wrong: a datastore still published because a port list was merged
 rather than reset, a worker with egress because a service fell onto `default`,
-an application still holding MinIO's root credentials because the override
+an application still holding the store's root credentials because the override
 missed one key.
 """
 
@@ -38,8 +38,8 @@ CADDYFILE = REPO_ROOT / "infrastructure" / "deployment" / "Caddyfile"
 EXPECTED_SERVICES = frozenset(
     {
         "postgres",
-        "minio",
-        "minio-init",
+        "storage",
+        "storage-init",
         "redis",
         "certs",
         "migrate",
@@ -58,15 +58,15 @@ EXPECTED_SERVICES = frozenset(
 OPT_IN = ("annotation", "catalog-import")
 
 #: Run to completion by `up`, and waited for because something depends on each.
-ONE_SHOTS = ("certs", "minio-init", "migrate")
+ONE_SHOTS = ("certs", "storage-init", "migrate")
 
 #: Exactly the networks each service joins. `backend` and `edge` are internal;
 #: only `public` reaches outside, and only the proxy and the operator's catalog
 #: import are on it. `certs` is absent because it has no network at all.
 EXPECTED_NETWORKS = {
     "postgres": {"backend"},
-    "minio": {"backend"},
-    "minio-init": {"backend"},
+    "storage": {"backend"},
+    "storage-init": {"backend"},
     "redis": {"backend"},
     "migrate": {"backend"},
     "worker": {"backend"},
@@ -82,10 +82,10 @@ EXPECTED_NETWORKS = {
 DUMMY_ENV = {
     "TCG_DOMAIN": "beta.example.test",
     "POSTGRES_PASSWORD": "pg-dummy-0001",
-    "MINIO_ROOT_USER": "root-dummy",
-    "MINIO_ROOT_PASSWORD": "root-secret-dummy-0002",
-    "MINIO_APP_ACCESS_KEY": "app-dummy",
-    "MINIO_APP_SECRET_KEY": "app-secret-dummy-0003",
+    "STORAGE_ROOT_USER": "root-dummy",
+    "STORAGE_ROOT_PASSWORD": "root-secret-dummy-0002",
+    "STORAGE_APP_ACCESS_KEY": "app-dummy",
+    "STORAGE_APP_SECRET_KEY": "app-secret-dummy-0003",
     "REDIS_PASSWORD": "redis-dummy-0004",
 }
 
@@ -95,7 +95,7 @@ CONTAINER_TMP = "/tmp"  # noqa: S108
 
 #: Anything in the developer's shell that the files interpolate. Left in, a
 #: local `REDIS_PASSWORD` would make these assertions about that machine.
-_INTERPOLATED_PREFIXES = ("TCG_", "POSTGRES_", "MINIO_", "REDIS_", "COMPOSE_", "NEXT_PUBLIC_")
+_INTERPOLATED_PREFIXES = ("TCG_", "POSTGRES_", "STORAGE_", "REDIS_", "COMPOSE_", "NEXT_PUBLIC_")
 _INTERPOLATED_PORTS = ("API_PORT", "WEB_PORT", "ANNOTATION_PORT")
 
 
@@ -331,9 +331,9 @@ def test_the_application_holds_the_scoped_storage_account(
 ) -> None:
     environment = services[service]["environment"]
 
-    assert environment["TCG_API_STORAGE_ACCESS_KEY_ID"] == DUMMY_ENV["MINIO_APP_ACCESS_KEY"]
-    assert environment["TCG_API_STORAGE_SECRET_ACCESS_KEY"] == DUMMY_ENV["MINIO_APP_SECRET_KEY"]
-    assert DUMMY_ENV["MINIO_ROOT_PASSWORD"] not in json.dumps(environment)
+    assert environment["TCG_API_STORAGE_ACCESS_KEY_ID"] == DUMMY_ENV["STORAGE_APP_ACCESS_KEY"]
+    assert environment["TCG_API_STORAGE_SECRET_ACCESS_KEY"] == DUMMY_ENV["STORAGE_APP_SECRET_KEY"]
+    assert DUMMY_ENV["STORAGE_ROOT_PASSWORD"] not in json.dumps(environment)
 
 
 @pytest.mark.parametrize("service", ["api", "worker"])
@@ -413,7 +413,7 @@ def test_redis_waits_for_its_certificate(services: dict[str, Any]) -> None:
 def test_the_application_waits_for_its_storage_account(
     services: dict[str, Any], service: str
 ) -> None:
-    condition = services[service]["depends_on"]["minio-init"]["condition"]
+    condition = services[service]["depends_on"]["storage-init"]["condition"]
 
     assert condition == "service_completed_successfully"
 

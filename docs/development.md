@@ -7,7 +7,8 @@ they are what CI runs — the Compose stack in the
 Start only what a workflow needs:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 ```
 
 ## The web application
@@ -119,12 +120,12 @@ the `pnpm … build` above would fail on a Windows host. See
 
 ## Object storage
 
-Uploaded card images live in S3-compatible object storage — MinIO locally, any
+Uploaded card images live in S3-compatible object storage — RustFS locally, any
 S3-compatible provider in a deployment. The application never talks to either
 directly: it goes through the `ObjectStorage` port in `packages/shared`, so the
 provider is replaceable ([ADR 0002](adr/0002-object-storage-behind-a-port.md)).
 
-The same `up` that starts PostgreSQL starts MinIO and creates the bucket:
+The same `up` that starts PostgreSQL starts RustFS and creates the bucket:
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml up -d --wait
@@ -133,7 +134,7 @@ export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 ```
 
 The browser console is on <http://localhost:9001>. `down -v` discards the
-`minio-data` volume along with the database's, so the next `up` starts from an
+`storage-data` volume along with the database's, so the next `up` starts from an
 empty bucket.
 
 Two rules matter more than the configuration:
@@ -146,21 +147,22 @@ Two rules matter more than the configuration:
   bearer credential nobody can revoke, so the only bound on its misuse is
   `TCG_API_STORAGE_SIGNED_URL_TTL_SECONDS`.
 
-Tests that need a live MinIO are marked `object_storage` and skip when
+Tests that need a live store are marked `object_storage` and skip when
 `TCG_API_STORAGE_ENDPOINT_URL` is unset. They are separate from `integration`
 because the two need different services:
 
 ```bash
-uv run pytest -m object_storage   # requires MinIO to be running
+uv run pytest -m object_storage   # requires the store to be running
 ```
 
 One module needs both. `services/api/tests/test_anonymous_journey.py` drives an
 anonymous analysis through every endpoint — real photographs into the store,
 the real worker reading them back, the results at the end — and carries both
-markers, so it runs only where PostgreSQL and MinIO are both reachable:
+markers, so it runs only where PostgreSQL and the store are both reachable:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 uv run alembic upgrade head

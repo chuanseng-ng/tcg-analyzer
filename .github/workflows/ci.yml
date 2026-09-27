@@ -57,7 +57,7 @@ jobs:
         run: uv run mypy packages/domain/src packages/shared/src packages/grading-companies/src packages/market-data/src packages/economic-engine/src services/api/src ml/image-quality/src ml/card-detection/src ml/normalization/src ml/centering/src ml/corners/src ml/edges/src ml/surface/src ml/condition/src ml/evaluation/src ml/grading/psa/src ml/grading/tag/src ml/grading/bgs/src
 
       # Tests needing a live service are deselected here and covered by the jobs
-      # that have one: `migrations` has PostgreSQL, `storage` has MinIO. Nothing
+      # that have one: `migrations` has PostgreSQL, `storage` has the object store. Nothing
       # covers `network`, on purpose — it reaches api.tcgdex.net, which ADR 0004
       # records as having no SLA and no published rate limit, so a CI job
       # depending on it would fail for reasons that are not this repository's.
@@ -201,11 +201,12 @@ jobs:
         run: uv run pytest -m integration
 
   storage:
-    name: Storage — MinIO, PostgreSQL and the anonymous journey
+    name: Storage — RustFS, PostgreSQL and the anonymous journey
     runs-on: ubuntu-latest
 
-    # Not a `services:` block: MinIO needs `server /data`, and a service
-    # container cannot supply a command. Running the Compose file instead has a
+    # Not a `services:` block: the bucket is made by a one-shot `storage-init`
+    # container, which a service container cannot express. Running the Compose
+    # file instead has a
     # second benefit — it makes that file a tested artifact rather than one
     # nobody exercises until a developer clones the repository.
     #
@@ -234,17 +235,21 @@ jobs:
       # `--wait` blocks until both healthchecks pass, so the first signed
       # request does not race the store's startup and the first migration
       # does not race the database's.
-      - name: Start MinIO and PostgreSQL
-        run: >-
-          docker compose -f infrastructure/local/docker-compose.yml
-          up -d --wait postgres minio
+      # Two commands: `--wait` fails on a service it was asked for that has
+      # exited, even at 0, and nothing in this job depends on `storage-init`
+      # to exempt it. `run` waits for `storage` to be healthy and returns the
+      # one-shot's exit code.
+      - name: Start the object store and PostgreSQL
+        run: |
+          docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+          docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 
       - run: uv run alembic upgrade head
 
       - name: Object-storage tests, and the anonymous journey
         run: uv run pytest -m object_storage
 
-      - name: Stop MinIO and PostgreSQL
+      - name: Stop the object store and PostgreSQL
         if: always()
         run: docker compose -f infrastructure/local/docker-compose.yml down -v
 
@@ -356,9 +361,8 @@ jobs:
         run: $COMPOSE up -d --wait
 
       # `up --wait` waits for services to be running or healthy, and a
-      # container that has finished its job is neither — the trap that made
-      # MinIO create its own bucket rather than use an `mc` init container. The
-      # `migrate` service is exempt because `api` depends on it with
+      # container that has finished its job is neither. `migrate` and
+      # `storage-init` are exempt because `api` depends on them with
       # `service_completed_successfully`; this asserts that exemption holds
       # rather than trusting it.
       - name: Migrations ran and exited cleanly
@@ -369,11 +373,11 @@ jobs:
       # `/health` is dependency-free by design, so it proves only that the
       # container is alive. `/readiness` is the one that proves the stack was
       # actually wired together: it returns 503 unless the API reached both
-      # PostgreSQL and MinIO.
+      # PostgreSQL and the object store.
       - name: The API is live
         run: curl -fsS --retry 5 --retry-all-errors localhost:8000/health
 
-      - name: The API reached PostgreSQL, MinIO and Redis
+      - name: The API reached PostgreSQL, the object store and Redis
         run: |
           readiness=$(curl -fsS --retry 5 --retry-all-errors localhost:8000/readiness)
           echo "$readiness"
@@ -429,7 +433,7 @@ jobs:
             test "$present" = absent
           done
 
-      # The only job where PostgreSQL, MinIO and the API are all real, so the
+      # The only job where PostgreSQL, the object store and the API are all real, so the
       # only place the upload path can be proved end to end. The JPEG is made
       # inside the API container, which also proves Pillow is in the deployed
       # image rather than only in the developer's virtualenv.
@@ -841,10 +845,10 @@ jobs:
           cat > infrastructure/deployment/.env <<EOF
           TCG_DOMAIN=localhost
           POSTGRES_PASSWORD=$(secret)
-          MINIO_ROOT_USER=root$(openssl rand -hex 4)
-          MINIO_ROOT_PASSWORD=$(secret)
-          MINIO_APP_ACCESS_KEY=app$(openssl rand -hex 4)
-          MINIO_APP_SECRET_KEY=$(secret)
+          STORAGE_ROOT_USER=root$(openssl rand -hex 4)
+          STORAGE_ROOT_PASSWORD=$(secret)
+          STORAGE_APP_ACCESS_KEY=app$(openssl rand -hex 4)
+          STORAGE_APP_SECRET_KEY=$(secret)
           REDIS_PASSWORD=$(secret)
           EOF
 
@@ -853,7 +857,7 @@ jobs:
           $COMPOSE config --quiet
           $COMPOSE --profile annotation --profile catalog-import config --quiet
 
-      # Twice: the second `up` re-runs `certs`, `minio-init` and `migrate`
+      # Twice: the second `up` re-runs `certs`, `storage-init` and `migrate`
       # against the state the first left, which is what an operator's next
       # deploy does. Each must still exit 0.
       - name: Start the stack, twice
@@ -861,7 +865,7 @@ jobs:
           $COMPOSE up -d --wait
           $COMPOSE up -d --wait
           $COMPOSE ps -a
-          for job in certs minio-init migrate; do
+          for job in certs storage-init migrate; do
             code=$($COMPOSE ps -aq "$job" | xargs docker inspect -f '{{.State.ExitCode}}')
             echo "$job exited $code"
             test "$code" = 0
@@ -960,12 +964,12 @@ jobs:
 
       # Checklist item 7: the key the application holds can do nothing beyond
       # its bucket. A second bucket is made with root first, because with only
-      # one bucket in the store "sees only its own" proves nothing: MinIO
+      # one bucket in the store "sees only its own" proves nothing: RustFS
       # answers ListBuckets with what the caller may see, not with a refusal.
       - name: The storage account is scoped to the bucket
         run: |
-          $COMPOSE exec -T minio sh -c \
-            'mc alias set root http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb --ignore-existing root/tcg-other'
+          $COMPOSE run --rm --entrypoint /bin/sh storage-init -ec \
+            'rc alias set root http://storage:9000 "$STORAGE_ROOT_USER" "$STORAGE_ROOT_PASSWORD" >/dev/null && rc mb --ignore-existing root/tcg-other'
           verdicts=$($COMPOSE exec -T api python -c "
           import os
           import boto3
@@ -1080,7 +1084,7 @@ jobs:
     # screens, at the 375 px viewport the product is built for. It starts its
     # own stack rather than joining `compose`, because that job exhausts the
     # rate limiter on purpose part-way through and seeds no catalog. `web` and
-    # `worker` pull in the api, migrate, postgres, minio and redis; the
+    # `worker` pull in the api, migrate, postgres, storage and redis; the
     # annotation tool is not part of the journey and is not built.
     env:
       COMPOSE: docker compose -f infrastructure/local/docker-compose.yml

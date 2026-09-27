@@ -38,11 +38,12 @@ ordinal, seed and `created_at`.
 ## 1. An empty corpus database
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 docker compose -f infrastructure/local/docker-compose.yml exec postgres createdb -U tcg tcg_corpus
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg_corpus
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
-# The restore and normalization write to MinIO, so they also need the bucket and credentials.
+# The restore and normalization write to the object store, so they also need the bucket and credentials.
 # These are the local defaults from .env.example; use your own if you changed them.
 export TCG_API_STORAGE_BUCKET=tcg-local TCG_API_STORAGE_REGION=us-east-1
 export TCG_API_STORAGE_ACCESS_KEY_ID=tcg TCG_API_STORAGE_SECRET_ACCESS_KEY=tcglocaldev
@@ -193,7 +194,7 @@ Afterwards:
 ## Doing it without the command
 
 If `tcg-restore-dataset-version` is ever broken, the same rebuild is possible by
-hand with `psql` and the MinIO console (`:9001`). Do it in one transaction, in
+hand with `psql` and the store's console (`:9001`). Do it in one transaction, in
 this order.
 
 1. **`physical_copies`**: one row per distinct `physical_copy_id`, with just the

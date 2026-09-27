@@ -42,11 +42,11 @@ x-database-url: &database-url
 # What the API and the worker both hold. The broker is TLS-only and verified
 # against the CA `certs` generated — kombu and redis-py both read `ssl_*` from
 # the URL, so no code knows it is here. The storage keys are the scoped
-# account `minio-init` creates, never MinIO's root.
+# account `storage-init` creates, never the store's root.
 x-application: &application
   TCG_API_REDIS_URL: rediss://:${REDIS_PASSWORD:?}@redis:6379/0?ssl_cert_reqs=required&ssl_ca_certs=/certs/ca.crt
-  TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_APP_ACCESS_KEY:?}
-  TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_APP_SECRET_KEY:?}
+  TCG_API_STORAGE_ACCESS_KEY_ID: ${STORAGE_APP_ACCESS_KEY:?}
+  TCG_API_STORAGE_SECRET_ACCESS_KEY: ${STORAGE_APP_SECRET_KEY:?}
 
 services:
   # ---------------------------------------------------------------------------
@@ -58,37 +58,35 @@ services:
     ports: !reset []
     networks: [backend]
 
-  minio:
+  storage:
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
-    # Both the S3 API and the console. An operator reaches the console, if at
-    # all, with `docker compose exec minio mc ...`.
+      RUSTFS_ACCESS_KEY: ${STORAGE_ROOT_USER:?}
+      RUSTFS_SECRET_KEY: ${STORAGE_ROOT_PASSWORD:?}
+      # No console: nothing on this host is a browser. An operator reaches the
+      # store, if at all, through `rc` in a `docker compose run --rm
+      # --entrypoint /bin/sh storage-init` shell.
+      RUSTFS_CONSOLE_ENABLE: "false"
     ports: !reset []
     networks: [backend]
 
-  # The application's MinIO account: one bucket, four actions. `ListBucket` is
-  # not only the retention sweep's `list()` — without it S3 answers a GET for a
-  # missing key with 403 rather than 404, and `/readiness` would report storage
-  # down. Every command is idempotent, so a second `up` re-runs it harmlessly.
-  minio-init:
-    # **`quay.io/`, never the bare `minio/minio`.** MinIO's Docker Hub
-    # repository is gone — a pull answers "repository does not exist", which
-    # reads like a credentials problem and is not one. quay.io is MinIO's own
-    # registry and carries this release; the tag is otherwise unchanged.
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    <<: *hardening
+  # The bucket and the application's account: one bucket, four actions.
+  # `ListBucket` is not only the retention sweep's `list()` — without it S3
+  # answers a GET for a missing key with 403 rather than 404, and `/readiness`
+  # would report storage down. Every command is idempotent, so a second `up`
+  # re-runs it harmlessly. The image, entrypoint and dependency are the local
+  # file's; only the command grows.
+  storage-init:
     cap_drop: [ALL]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
-      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?}
-      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?}
+      STORAGE_ROOT_USER: ${STORAGE_ROOT_USER:?}
+      STORAGE_ROOT_PASSWORD: ${STORAGE_ROOT_PASSWORD:?}
+      STORAGE_APP_ACCESS_KEY: ${STORAGE_APP_ACCESS_KEY:?}
+      STORAGE_APP_SECRET_KEY: ${STORAGE_APP_SECRET_KEY:?}
       BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
-    entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        mc alias set tcg http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+        rc alias set tcg http://storage:9000 "$$STORAGE_ROOT_USER" "$$STORAGE_ROOT_PASSWORD" >/dev/null
+        rc mb --ignore-existing "tcg/$$BUCKET"
         cat > /tmp/policy.json <<EOF
         {
           "Version": "2012-10-17",
@@ -99,14 +97,10 @@ services:
           ]
         }
         EOF
-        mc admin user add tcg "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY"
-        mc admin policy create tcg tcg-application /tmp/policy.json
-        mc admin policy attach tcg tcg-application --user "$$MINIO_APP_ACCESS_KEY"
-    depends_on:
-      minio:
-        condition: service_healthy
+        rc admin user add tcg "$$STORAGE_APP_ACCESS_KEY" "$$STORAGE_APP_SECRET_KEY"
+        rc admin policy create tcg tcg-application /tmp/policy.json
+        rc admin policy attach tcg tcg-application --user "$$STORAGE_APP_ACCESS_KEY"
     networks: [backend]
-    restart: "no"
 
   # The broker's certificate: a private CA and one server certificate, written
   # to a volume on the first `up` and left alone after. The CA's key never
@@ -212,12 +206,12 @@ services:
     # so the API has no route out.
     networks: [backend, edge]
     depends_on:
-      minio-init:
+      storage-init:
         condition: service_completed_successfully
 
   # Spec §56, all four lines: minimal privileges (the local file's
   # `cap_drop: ALL`, `no-new-privileges` and uid 1001, kept), no unnecessary
-  # network (`backend` only — PostgreSQL, Redis and MinIO are all it needs, and
+  # network (`backend` only — PostgreSQL, Redis and the store are all it needs, and
   # there is no route out), restricted filesystem (read-only, with beat's
   # schedule on the tmpfs), and it never executes an upload — nothing it writes
   # could be executed anyway.
@@ -241,7 +235,7 @@ services:
       - redis-certs:/certs:ro
     networks: [backend]
     depends_on:
-      minio-init:
+      storage-init:
         condition: service_completed_successfully
 
   # Built for one domain: Next inlines NEXT_PUBLIC_* at build time, so the

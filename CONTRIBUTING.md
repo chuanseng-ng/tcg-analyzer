@@ -151,13 +151,13 @@ Write the test with the change, in the same PR.
   itself.
 - The default suite needs no Docker. Tests that need PostgreSQL are marked
   `integration` and skip unless `TCG_API_DATABASE_URL` is set; tests that need
-  MinIO are marked `object_storage` and skip unless
+  the object store are marked `object_storage` and skip unless
   `TCG_API_STORAGE_ENDPOINT_URL` is set.
 
 ```bash
 uv run pytest                     # everything runnable without Docker
 uv run pytest -m integration      # requires PostgreSQL
-uv run pytest -m object_storage   # requires MinIO
+uv run pytest -m object_storage   # requires the object store
 uv run pytest -m "integration and object_storage"   # requires both: the anonymous journey
 pnpm --filter @tcg/web test
 pnpm --filter @tcg/web e2e        # requires the Compose stack, seeded: the browser journey
