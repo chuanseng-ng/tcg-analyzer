@@ -294,11 +294,11 @@ The claim that deletion reaches storage and not only the database is asserted in
 three places, because no single one of them can make it:
 `services/api/tests/test_retention.py` drives the sweep against a real
 PostgreSQL, `packages/shared/tests/test_storage_contract.py` proves `delete`
-really removes an object from MinIO, and CI's `compose` job uploads a
+really removes an object from the store, and CI's `compose` job uploads a
 photograph, backdates its session, sweeps, and then asks object storage whether
 the object is still there. The orphan sweep is split the same way:
 `services/api/tests/test_analysis_orphans.py` drives the set it computes against
-real PostgreSQL, and the contract suite proves `list` against MinIO.
+real PostgreSQL, and the contract suite proves `list` against RustFS.
 The feedback sweep needs neither split — it deletes rows and no objects, so
 `services/api/tests/test_retention.py` is the whole claim.
 

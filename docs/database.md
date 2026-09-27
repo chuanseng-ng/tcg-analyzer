@@ -256,7 +256,8 @@ the card, because the next photograph of it is framed differently. So the
 artifact is an object with a key of its own, and this is what produces one:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 uv run tcg-normalize-training-images
@@ -293,7 +294,8 @@ recompressed, or the same card retaken under different light, each of which is a
 different digest and the same card.
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000
 uv run tcg-detect-duplicate-training-images

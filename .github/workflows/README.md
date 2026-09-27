@@ -5,7 +5,7 @@ GitHub Actions workflows. Together these enforce the Definition of Done
 
 | Workflow | Runs on | Checks |
 | --- | --- | --- |
-| `ci.yml` | PR, push to `main`, weekly | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against MinIO and one anonymous analysis driven through every endpoint; the same journey driven through a browser at 375 px against the Compose stack; API image build; secret scan; dependency review; a vulnerability audit of both lockfiles; a vulnerability scan of each image built |
+| `ci.yml` | PR, push to `main`, weekly | ruff, mypy, pytest; eslint, prettier, OpenAPI type drift, tsc, vitest, `next build`; migrations against a fresh PostgreSQL; signed URLs against RustFS and one anonymous analysis driven through every endpoint; the same journey driven through a browser at 375 px against the Compose stack; API image build; secret scan; dependency review; a vulnerability audit of both lockfiles; a vulnerability scan of each image built |
 | `codeql.yml` | PR, push to `main`, weekly | Static analysis for Python and TypeScript |
 | `pr-title.yml` | PR opened or edited | Conventional Commits, since a PR title becomes the squash-merge subject |
 
@@ -21,14 +21,14 @@ Dependency updates are configured in [`../dependabot.yml`](../dependabot.yml).
 
 **`/health` and `/readiness` are checked separately** because they answer
 different questions — see `services/api`. The migrations job has a database and
-no MinIO, the storage job has both, and the Python job deselects `-m integration`
+no object store, the storage job has both, and the Python job deselects `-m integration`
 and `-m object_storage` alike.
 
 **The storage job runs the local Compose file** rather than a service container,
-because MinIO needs a `server /data` command and a service container cannot
-supply one. It also means `infrastructure/local/docker-compose.yml` is exercised
+because the bucket is created by a one-shot `storage-init` container, which a
+service container cannot express. It also means `infrastructure/local/docker-compose.yml` is exercised
 on every PR instead of only when someone clones the repository. Since #250 it
-brings up Compose's PostgreSQL beside MinIO, because
+brings up Compose's PostgreSQL beside the store, because
 `services/api/tests/test_anonymous_journey.py` uploads real photographs and runs
 the real worker against them — the one module that needs both, and it carries
 both markers and both skips so the migrations job passes over it.
@@ -36,7 +36,7 @@ both markers and both skips so the migrations job passes over it.
 **The e2e job starts its own Compose stack** rather than joining the `compose`
 job, because that job exhausts the rate limiter on purpose part-way through and
 seeds no catalog. It brings up `web worker` — the dependency closure is the api,
-the migration, PostgreSQL, MinIO and Redis; the annotation tool is not part of
+the migration, PostgreSQL, the store and Redis; the annotation tool is not part of
 the journey — seeds the catalog and the grading rules, and runs
 `pnpm --filter @tcg/web e2e`: Playwright, Chromium only, the browser installed
 in the job and never committed. A failed test's trace is uploaded as the

@@ -476,7 +476,7 @@ The bytes come back from `…/bytes`, which reads them through ADR 0002's
 **The service streams rather than minting a signed URL, which is a deliberate
 departure from what the issue asked for.** Two reasons: a presigned URL names the
 host the *service* reaches the store on, which inside the local Compose network
-is `minio:9000` and resolves for nobody with a browser; and a signed URL is a
+is `storage:9000` and resolves for nobody with a browser; and a signed URL is a
 bearer credential nobody can revoke, which is a poor thing to hand out for a
 training photograph when ADR 0008 makes withdrawal a right the corpus has to
 honour. Streaming from a route already behind its own ingress is less to get

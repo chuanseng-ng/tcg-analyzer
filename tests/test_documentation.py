@@ -9,7 +9,7 @@ it breaks silently, because nothing else in the suite reads prose.
 The checks here are *static*. They resolve each documented command against the
 repository — is that a real pnpm script, a registered pytest marker, a Compose
 service that exists — rather than executing it. Executing them would need
-Docker, PostgreSQL and MinIO, would take minutes, and would duplicate the CI
+Docker, PostgreSQL and the object store, would take minutes, and would duplicate the CI
 jobs that already start the stack for real. Static resolution catches the
 failure that actually happens in practice: a rename on one side of the
 documentation boundary and not the other.

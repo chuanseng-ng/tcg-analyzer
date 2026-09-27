@@ -2,7 +2,7 @@
 #
 #   docker compose -f infrastructure/local/docker-compose.yml up -d --wait
 #
-# Brings up PostgreSQL, MinIO, Redis, the FastAPI service, the analysis worker
+# Brings up PostgreSQL, RustFS, Redis, the FastAPI service, the analysis worker
 # and the Next.js application, having first run the migrations. That is M0's acceptance criterion: a
 # developer can clone the repository and run the complete empty application
 # locally without a setup step.
@@ -89,52 +89,57 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  minio:
-    # MinIO speaks the S3 API, so local development exercises the same protocol
+  storage:
+    # RustFS speaks the S3 API, so local development exercises the same protocol
     # a deployment will (spec §8 asks for "S3-compatible", not for AWS). Nothing
     # in the application knows which of the two it is talking to — that is the
-    # point of the port in packages/shared.
-    # **`quay.io/`, never the bare `minio/minio`.** MinIO's Docker Hub
-    # repository is gone — a pull answers "repository does not exist", which
-    # reads like a credentials problem and is not one. quay.io is MinIO's own
-    # registry and carries this release; the tag is otherwise unchanged.
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # point of the port in packages/shared. It replaced MinIO when MinIO
+    # withdrew its public images from Docker Hub and quay.io (ADR 0013); the
+    # service is named for its role so the next vendor change is a one-line edit.
+    image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
     <<: *hardening
-    # The bucket is created before the server starts, so a fresh volume comes up
-    # usable and nobody has to be told to click through the console first.
-    #
-    # A separate `mc mb` init container would say this more idiomatically, and
-    # was the first attempt. It cannot work here: `up --wait` waits for services
-    # to be *running or healthy*, and a container that has finished its job is
-    # neither — Compose reports failure even when it exits 0. A bucket is a
-    # top-level directory under MinIO's data root, so `mkdir` is sufficient and
-    # leaves every service long-running.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        mkdir -p "/data/${TCG_API_STORAGE_BUCKET:-tcg-local}"
-        exec minio server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tcg}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
+      RUSTFS_ACCESS_KEY: ${STORAGE_ROOT_USER:-tcg}
+      RUSTFS_SECRET_KEY: ${STORAGE_ROOT_PASSWORD:-tcglocaldev}
+      # The browser console, which is useful for seeing what an upload
+      # actually produced.
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      # 9000 is the S3 API; 9001 is the browser console, which is useful for
-      # seeing what an upload actually produced.
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      # 9000 is the S3 API; 9001 is the browser console.
+      - "${STORAGE_PORT:-9000}:9000"
+      - "${STORAGE_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio-data:/data
+      - storage-data:/data
     healthcheck:
-      # MinIO's own liveness endpoint. `mc ready` would need the client, which
-      # this image has but the check would then depend on an alias being
-      # configured first.
-      test: ["CMD", "mc", "ready", "local"]
+      # The server's own liveness endpoint; curl is in the image.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9000/health"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
     restart: unless-stopped
+
+  # The bucket, created before anything writes to it. MinIO let a `mkdir` under
+  # its data root stand in for this; RustFS keeps bucket metadata of its own, so
+  # the bucket is made through the API by the client image. A one-shot: `up
+  # --wait` exempts a service that others depend on with
+  # `service_completed_successfully`, exactly as it does `migrate`.
+  storage-init:
+    image: rustfs/rc:v0.1.36@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699
+    <<: *hardening
+    environment:
+      STORAGE_ROOT_USER: ${STORAGE_ROOT_USER:-tcg}
+      STORAGE_ROOT_PASSWORD: ${STORAGE_ROOT_PASSWORD:-tcglocaldev}
+      BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        rc alias set tcg http://storage:9000 "$$STORAGE_ROOT_USER" "$$STORAGE_ROOT_PASSWORD" >/dev/null
+        rc mb --ignore-existing "tcg/$$BUCKET"
+    depends_on:
+      storage:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     # The broker the analysis job queue runs on (spec §8). Redis rather than a
@@ -157,7 +162,7 @@ services:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-tcglocaldev}
     ports:
       # Published so a host-based `uv run pytest -m integration` can reach it,
-      # exactly as PostgreSQL and MinIO are.
+      # exactly as PostgreSQL and the object store are.
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -208,14 +213,14 @@ services:
       - /app/packages
     environment:
       <<: [*api-database-url, *api-redis-url]
-      # The API reaches MinIO over the Compose network. A signed URL generated
+      # The API reaches the store over the Compose network. A signed URL generated
       # against this endpoint is NOT reachable from a browser on the host —
       # ADR 0002 records that, and M2 adds a separate public-endpoint setting
       # when there is finally something to upload.
-      TCG_API_STORAGE_ENDPOINT_URL: http://minio:9000
+      TCG_API_STORAGE_ENDPOINT_URL: http://storage:9000
       TCG_API_STORAGE_BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
-      TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
-      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
+      TCG_API_STORAGE_ACCESS_KEY_ID: ${STORAGE_ROOT_USER:-tcg}
+      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${STORAGE_ROOT_PASSWORD:-tcglocaldev}
       # Spelled out rather than left to the default, so that overriding
       # WEB_PORT or ANNOTATION_PORT does not silently break CORS for the app
       # that was moved. **Both applications are here**: the annotation tool is a
@@ -234,8 +239,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      storage:
         condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       migrate:
@@ -311,17 +318,19 @@ services:
       # The worker reads uploaded photographs back out of object storage to run
       # spec §19's quality gate over them, so it needs the same storage
       # configuration the API has. Before #36 it had none and could not have.
-      TCG_API_STORAGE_ENDPOINT_URL: http://minio:9000
+      TCG_API_STORAGE_ENDPOINT_URL: http://storage:9000
       TCG_API_STORAGE_BUCKET: ${TCG_API_STORAGE_BUCKET:-tcg-local}
-      TCG_API_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tcg}
-      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-tcglocaldev}
+      TCG_API_STORAGE_ACCESS_KEY_ID: ${STORAGE_ROOT_USER:-tcg}
+      TCG_API_STORAGE_SECRET_ACCESS_KEY: ${STORAGE_ROOT_PASSWORD:-tcglocaldev}
       TCG_API_LOG_FORMAT: ${TCG_API_LOG_FORMAT:-json}
       TCG_API_LOG_LEVEL: ${TCG_API_LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      storage:
         condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       migrate:
@@ -399,4 +408,4 @@ services:
 
 volumes:
   postgres-data:
-  minio-data:
+  storage-data:

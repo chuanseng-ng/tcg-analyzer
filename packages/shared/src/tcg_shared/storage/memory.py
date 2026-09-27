@@ -4,12 +4,12 @@ Two uses, both real. It is the reference implementation the contract tests run
 alongside the S3 adapter — that pairing is what makes "swapping the adapter
 requires no change to calling code" a demonstrated property rather than a claim
 — and it lets a developer or a test exercise code that stores images without
-running MinIO.
+running a store.
 
 What it cannot do is honour a signature: the URLs it mints record the grant but
 nothing enforces it, because there is no server to enforce it. Only a real
 S3-compatible store can prove expiry, so the tests that check enforcement run
-against MinIO alone. Never use this adapter where the signature has to hold.
+against a real store alone. Never use this adapter where the signature has to hold.
 """
 
 from __future__ import annotations

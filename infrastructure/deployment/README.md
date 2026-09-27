@@ -38,7 +38,7 @@ The first `up` does five things in order:
 
 1. Builds the images. The web image is built for `TCG_DOMAIN`.
 2. Generates the broker's certificate.
-3. Creates the application's MinIO account.
+3. Creates the bucket and the application's store account.
 4. Runs the migrations.
 5. Waits for every service to be healthy.
 
@@ -74,7 +74,7 @@ These are the lines of #263's §56 checklist, and where each one landed:
 | The worker's filesystem | `read_only: true`, with `/tmp` on a tmpfs (beat's schedule) |
 | The worker's limits | `mem_limit: 2g` and `pids_limit: 512`, marked unmeasured until a real photograph is timed |
 | Privileges | The local file's `cap_drop: ALL`, `no-new-privileges` and uid 1001 stay |
-| Object storage | `minio-init` creates an account scoped to the one bucket. MinIO's root credentials are in no application container |
+| Object storage | `storage-init` creates an account scoped to the one bucket. The store's root credentials are in no application container |
 | The broker | TLS only (`rediss://`), verified against a private CA that `certs` generates on first `up` |
 | Client addresses | Caddy overwrites `X-Forwarded-For`, and the API reads it with `TCG_API_TRUSTED_PROXY_COUNT=1` |
 | Logs | JSON, the default |
@@ -94,12 +94,13 @@ stack.
   volume. The next `up` generates a new one.
 - **`POSTGRES_PASSWORD`** is applied only when the data volume is first
   initialised. Changing it later means an `ALTER ROLE` as well as the edit.
-- **The MinIO application key.** Change it in `.env` and `up`. The old account
-  remains until it is removed with `mc admin user rm` inside `minio`.
+- **The store's application key.** Change it in `.env` and `up`. The old account
+  remains until it is removed with `rc admin user rm` from a
+  `docker compose run --rm --entrypoint /bin/sh storage-init` shell.
 
 ## Not decided here
 
 These are all for the later ADR: the host or platform, DNS, backups (the state
-is the `postgres-data` and `minio-data` volumes), monitoring beyond
+is the `postgres-data` and `storage-data` volumes), monitoring beyond
 `docker compose logs`, a secrets manager, HSTS, and an ingress for the
 annotation tool.

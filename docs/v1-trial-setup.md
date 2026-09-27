@@ -218,7 +218,7 @@ adding that variable to the `api` service's environment in the overlay.
 - **The annotation tool is off on the host.** It belongs to the local stack
   (ADR 0009, ADR 0012).
 - **No backups and no monitoring beyond the logs.** The state is the
-  `postgres-data` and `minio-data` volumes, and backups are the later platform
+  `postgres-data` and `storage-data` volumes, and backups are the later platform
   decision.
 - **One worker, with two analyses in flight at a time.** That is ample for a
   trial: a run's steps measured under a second in CI, against a 10 s budget.

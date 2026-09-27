@@ -105,7 +105,7 @@ def _require_redis_url(value: str) -> str:
 
     Only the scheme and a host are checked. Whether the *deployment* uses
     `rediss://` and credentials is a matter for the deployment — local
-    development runs plain http against MinIO and plain TCP against PostgreSQL,
+    development runs plain http against the object store and plain TCP against PostgreSQL,
     and refusing `redis://` here would only mean a second setting to turn the
     check off.
     """
@@ -391,7 +391,7 @@ class Settings(BaseSettings):
     storage_endpoint_url: StorageEndpointUrl | None = Field(
         default=None,
         validation_alias=STORAGE_ENDPOINT_URL_ENV_VAR,
-        description="S3-compatible endpoint, e.g. http://localhost:9000 for MinIO",
+        description="S3-compatible endpoint, e.g. http://localhost:9000 for the Compose store",
     )
     """Where the object store lives. ``None`` means real AWS S3, whose endpoint
     boto3 derives from the region."""
@@ -404,7 +404,7 @@ class Settings(BaseSettings):
     """The bucket. ``None`` means unconfigured, not invalid."""
 
     storage_region: str = "us-east-1"
-    """The region to sign for. MinIO ignores it, but a v4 signature needs one."""
+    """The region to sign for. A self-hosted store ignores it, but a v4 signature needs one."""
 
     storage_access_key_id: str | None = Field(
         default=None,

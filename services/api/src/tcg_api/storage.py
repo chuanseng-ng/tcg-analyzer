@@ -75,7 +75,7 @@ def create_object_storage(settings: Settings | None = None) -> ObjectStorage:
         raise RuntimeError(
             f"object storage is not configured: {', '.join(missing)} "
             f"{'are' if len(missing) > 1 else 'is'} not set. For local development set "
-            f"{STORAGE_ENDPOINT_URL_ENV_VAR}=http://localhost:9000 and start MinIO with "
+            f"{STORAGE_ENDPOINT_URL_ENV_VAR}=http://localhost:9000 and start the object store with "
             f"docker compose -f infrastructure/local/docker-compose.yml up -d --wait. "
             f"See .env.example."
         )

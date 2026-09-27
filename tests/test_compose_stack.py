@@ -32,16 +32,25 @@ COMPOSE_FILE = REPO_ROOT / "infrastructure" / "local" / "docker-compose.yml"
 #: included: it is not a service in the running sense, but its absence would
 #: mean the database is never migrated, which is the failure this list guards.
 EXPECTED_SERVICES = frozenset(
-    {"postgres", "minio", "redis", "migrate", "api", "worker", "web", "annotation"}
+    {
+        "postgres",
+        "storage",
+        "storage-init",
+        "redis",
+        "migrate",
+        "api",
+        "worker",
+        "web",
+        "annotation",
+    }
 )
 
 #: The services whose images this repository builds, and which are therefore
 #: the ones it can hold to the non-root, least-privilege baseline. The
-#: PostgreSQL image drops to its own `postgres` user internally; the MinIO
-#: image runs as root and pinning `user:` would fight its named volume's
-#: ownership on first start; the Redis image drops to `redis`. All three are
-#: upstream images, and none is something this file can honestly claim to have
-#: hardened.
+#: PostgreSQL image drops to its own `postgres` user internally; the RustFS
+#: image runs as its own `rustfs` user (uid 10001) and owns its data volume;
+#: the Redis image drops to `redis`. All three are upstream images, and none is
+#: something this file can honestly claim to have hardened.
 BUILT_SERVICES = frozenset({"migrate", "api", "worker", "web", "annotation"})
 
 
@@ -79,7 +88,7 @@ def test_every_expected_service_is_declared(services: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("dependency", ["postgres", "minio"])
+@pytest.mark.parametrize("dependency", ["postgres", "storage"])
 def test_the_api_waits_for_its_dependencies_to_be_healthy(
     services: dict[str, Any], dependency: str
 ) -> None:
@@ -142,7 +151,7 @@ def test_the_worker_can_reach_object_storage(services: dict[str, Any]) -> None:
 
     assert environment["TCG_API_STORAGE_ENDPOINT_URL"]
     assert environment["TCG_API_STORAGE_BUCKET"]
-    assert services["worker"]["depends_on"]["minio"]["condition"] == "service_healthy"
+    assert services["worker"]["depends_on"]["storage"]["condition"] == "service_healthy"
 
 
 def test_the_migration_service_does_not_restart(services: dict[str, Any]) -> None:
@@ -178,7 +187,7 @@ def test_the_browser_is_given_a_url_it_can_actually_resolve(services: dict[str, 
 
 @pytest.mark.parametrize(
     ("variable", "expected_host"),
-    [("TCG_API_DATABASE_URL", "@postgres:5432/"), ("TCG_API_STORAGE_ENDPOINT_URL", "minio:9000")],
+    [("TCG_API_DATABASE_URL", "@postgres:5432/"), ("TCG_API_STORAGE_ENDPOINT_URL", "storage:9000")],
 )
 def test_the_api_reaches_its_dependencies_by_service_name(
     services: dict[str, Any], variable: str, expected_host: str

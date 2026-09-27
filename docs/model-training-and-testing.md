@@ -57,7 +57,8 @@ Its manifest is in [`datasets/manifests/`](../datasets/manifests).
 To create the corpus database on a fresh stack:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres minio
+docker compose -f infrastructure/local/docker-compose.yml up -d --wait postgres storage
+docker compose -f infrastructure/local/docker-compose.yml run --rm storage-init
 docker compose -f infrastructure/local/docker-compose.yml exec postgres createdb -U tcg tcg_corpus
 export TCG_API_DATABASE_URL=postgresql+asyncpg://tcg:tcg@localhost:5432/tcg_corpus
 export TCG_API_STORAGE_ENDPOINT_URL=http://localhost:9000

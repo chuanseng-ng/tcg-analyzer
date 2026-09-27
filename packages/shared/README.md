@@ -16,7 +16,7 @@ The object-storage port and its adapters — see
 | `port` | The `ObjectStorage` protocol and `SignedUrl`. No provider concepts. |
 | `keys` | `StorageKey`, `generate_key`, `sanitise_filename`. |
 | `errors` | `StorageError` and its subclasses. |
-| `memory` | `InMemoryObjectStorage`, for tests and for running without MinIO. |
+| `memory` | `InMemoryObjectStorage`, for tests and for running without a store. |
 | `s3` | `S3ObjectStorage` — the only module that imports boto3. |
 
 `import tcg_shared.storage` pulls in nothing outside the standard library, so
@@ -28,7 +28,7 @@ every adapter — that pairing is what makes an adapter swap safe.
 Keys are generated server-side. `generate_key` takes no filename argument, so a
 client-supplied name cannot reach a storage path (spec §55).
 
-Storage integration tests need MinIO and are marked `object_storage`:
+Storage integration tests need a live S3-compatible store (RustFS in Compose) and are marked `object_storage`:
 
 ```bash
 docker compose -f infrastructure/local/docker-compose.yml up -d --wait
