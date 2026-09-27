@@ -28,7 +28,7 @@ FROM ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1
 # Both stages share one base image so the interpreter the virtual environment
 # points at is byte-identical to the interpreter that runs it.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS builder
+FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
@@ -65,7 +65,7 @@ COPY database/ database/
 # --------------------------------------------------------------------------
 # Runtime — the environment and the source, run unprivileged.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
+FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 
 # Uploaded card images are untrusted input; nothing here needs root.
 RUN groupadd --system --gid 1001 tcg \

@@ -39,7 +39,7 @@ FROM ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1
 # Builder — resolve the workspace, plus the worker's extra, into a virtual
 # environment.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS builder
+FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --------------------------------------------------------------------------
 # Runtime — the environment and the source, run unprivileged.
 # --------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
+FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS runtime
 
 # Uploaded card images are untrusted input and this is the container that
 # *decodes* them (spec §56). Same uid as the API image, so a bind-mounted path
