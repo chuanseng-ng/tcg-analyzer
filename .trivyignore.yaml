@@ -19,4 +19,55 @@
 #         Reached only through <function>, which nothing in this repository
 #         calls. Upstream fix expected in <version>.
 #       expired_at: 2026-10-01
-vulnerabilities: []
+vulnerabilities:
+  # `libpcre2-8-0` 10.42-1+deb12u1 in the Debian bookworm base of every image
+  # this repository builds. Debian has published the fix (10.42-1+deb12u2,
+  # DSA-6530-1) and the official images have not been rebuilt with it: pulled
+  # on 2026-10-04, `python:3.12-slim-bookworm` (rebuilt 2026-10-02) and
+  # `node:26-bookworm-slim` (2026-09-22) both still ship deb12u1, so there is
+  # no newer base to pin to. Repinning is the fix, as it was for the three
+  # earlier pcre2 advisories (8c3e631); an `apt-get upgrade` layer is not,
+  # because it trades away the reproducibility the digest pin exists for.
+  - id: CVE-2026-103111
+    statement: >-
+      libpcre2 is a transitive system library of the Debian base, not a
+      dependency of anything this project runs: CPython's `re` is `_sre` and
+      Node's RegExp is V8's Irregexp, so neither runtime links it, and nothing
+      in this repository compiles an attacker-supplied regular expression
+      through it. Reaching this needs a crafted pattern given to a pcre2 caller,
+      and the only callers in the image are base-system tools that see no
+      request data. Fixed in Debian as 10.42-1+deb12u2; waiting on an upstream
+      image rebuild to pin.
+    expired_at: 2026-10-25
+  # Three findings in the npm that `node:26-bookworm-slim` bundles under
+  # /usr/local/lib/node_modules/npm (npm 11.19.1): its own `brace-expansion`
+  # 5.0.9 and `undici` 6.28.0. They are not this repository's dependencies —
+  # pnpm-lock.yaml resolves brace-expansion at 5.0.12 and undici at 8.11.2 —
+  # and nothing in the images runs npm: the Dockerfiles install with corepack's
+  # pnpm, and the production stages run `node server.js`. They refresh when
+  # upstream rebuilds node with a newer npm, which is the same event the pcre2
+  # entry above waits on. Removing npm from the images was considered and is a
+  # separate change: the development stage's tooling has not been checked for
+  # an npm dependency, and a reviewed hardening beats a guess inside an
+  # unbreak-CI commit.
+  - id: CVE-2026-102276
+    statement: >-
+      npm's bundled `brace-expansion` 5.0.9, reached only when npm expands a
+      brace pattern on its own command line. Nothing in the images invokes npm,
+      and no request data reaches it. Fixed upstream in 5.0.10; waiting on an
+      upstream node image rebuild.
+    expired_at: 2026-10-25
+  - id: CVE-2026-102278
+    statement: >-
+      The same bundled `brace-expansion` 5.0.9, reached the same way and by
+      nothing here — see CVE-2026-102276 above. Fixed upstream in 5.0.11;
+      waiting on an upstream node image rebuild.
+    expired_at: 2026-10-25
+  - id: CVE-2026-19534
+    statement: >-
+      npm's bundled `undici` 6.28.0, npm's own HTTP client for registry calls.
+      Nothing in the images invokes npm, so no connection is ever made through
+      it; the application's own fetches go through Node's built-in client in
+      the node binary, not this copy. Fixed upstream in 6.28.1; waiting on an
+      upstream node image rebuild.
+    expired_at: 2026-10-25
