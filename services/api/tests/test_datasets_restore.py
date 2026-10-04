@@ -19,7 +19,8 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -164,14 +165,22 @@ def png(colour: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
-def ingest(storage: InMemoryObjectStorage, front: bytes, back: bytes) -> uuid.UUID:
+#: Each seeded card is photographed a minute after the one before. One instant
+#: for every card would read, to `ingest_card`, as one photograph exported
+#: twice — which is exactly the thing it refuses.
+MINUTE = timedelta(minutes=1)
+
+
+def ingest(
+    storage: InMemoryObjectStorage, front: bytes, back: bytes, *, taken: datetime
+) -> uuid.UUID:
     async def scenario() -> uuid.UUID:
         engine = create_async_engine(DATABASE_URL or "")
         try:
             copy_id, _ = await ingest_card(
                 engine,
                 storage,
-                provenance=PROVENANCE,
+                provenance=replace(PROVENANCE, acquired_at=taken),
                 front=front,
                 back=back,
                 max_bytes=10_000_000,
@@ -240,8 +249,8 @@ def do_restore(
 def a_corpus(storage: InMemoryObjectStorage) -> tuple[list[str], list[Photograph]]:
     """Two graded-or-annotated cards, published twice: ordinals 1 and 2."""
     pictures = [png((10 * i, 40, 200 - 10 * i)) for i in range(4)]
-    first = ingest(storage, pictures[0], pictures[1])
-    second = ingest(storage, pictures[2], pictures[3])
+    first = ingest(storage, pictures[0], pictures[1], taken=PROVENANCE.acquired_at)
+    second = ingest(storage, pictures[2], pictures[3], taken=PROVENANCE.acquired_at + MINUTE)
 
     rows = run(_images)
     by_copy = {row.physical_copy_id: row.id for row in rows}
@@ -283,8 +292,9 @@ def a_corpus(storage: InMemoryObjectStorage) -> tuple[list[str], list[Photograph
     )
 
     manifests = [publish("pokemon-condition-v0.1.0", 1), publish("pokemon-condition-v0.2.0", 2)]
+    taken = {first: PROVENANCE.acquired_at, second: PROVENANCE.acquired_at + MINUTE}
     photographs = [
-        Photograph(data=pictures[index], physical_copy_id=copy, acquired_at=PROVENANCE.acquired_at)
+        Photograph(data=pictures[index], physical_copy_id=copy, acquired_at=taken[copy])
         for index, copy in enumerate((first, first, second, second))
     ]
     return manifests, photographs

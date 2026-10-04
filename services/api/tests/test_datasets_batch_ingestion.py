@@ -527,6 +527,24 @@ def test_a_batch_lands_every_row_and_a_rerun_skips_what_landed(tmp_path: Path) -
 
     assert (again.landed, again.refused, again.already_present) == (0, 0, 2)
 
+    # The same front exported again — a JPEG now, so a different digest — at
+    # the same EXIF instant. The digest no longer matches; the instant does,
+    # and the output CSV names the copy it already belongs to.
+    (tmp_path / "one-front.png").write_bytes(
+        _image("JPEG", taken="2026:08:01 10:14:22", colour=(10, 20, 30))
+    )
+    one_copy = next(
+        uuid.UUID(entry["physical_copy_id"]) for entry in written if entry["label"] == "card-one"
+    )
+
+    re_encoded = asyncio.run(batch_run(arguments))
+
+    assert (re_encoded.landed, re_encoded.refused, re_encoded.already_present) == (0, 0, 2)
+    rewritten = list(csv.DictReader((tmp_path / "cards.ingested.csv").read_text().splitlines()))
+    assert rewritten[0]["status"] == "already_present"
+    assert uuid.UUID(rewritten[0]["physical_copy_id"]) == one_copy
+    assert len(_rows_for({one_copy})) == 2, "nothing was added to card one"
+
 
 @pytest.mark.integration
 @pytest.mark.object_storage

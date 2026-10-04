@@ -43,10 +43,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tcg_api.catalog.tables import cards, sets
 from tcg_api.datasets.ingestion import (
     APPROVED_SOURCES,
+    AlreadyInCorpus,
     ProvenanceRefused,
     TrainingImageProvenance,
     _parser,
     _validated,
+    ingest_card,
     ingest_training_image,
     verify_provenance,
 )
@@ -513,6 +515,93 @@ def test_the_same_photograph_twice_is_refused_and_stores_nothing(
 
     assert len(fetch(sa.select(training_images))) == 1
     assert len(storage.objects) == 1
+
+
+def ingest_whole_card(
+    storage: InMemoryObjectStorage,
+    *,
+    front: bytes | None = None,
+    back: bytes | None = None,
+    provenance: TrainingImageProvenance = FIRST_PARTY,
+    **keywords: Any,
+) -> Any:
+    """`ingest_card`, the way both commands reach the corpus."""
+
+    async def scenario() -> Any:
+        engine = create_async_engine(DATABASE_URL or "")
+        try:
+            return await ingest_card(
+                engine,
+                storage,
+                provenance=provenance,
+                front=front,
+                back=back,
+                max_bytes=GENEROUS_BYTES,
+                max_pixels=GENEROUS_PIXELS,
+                **keywords,
+            )
+        finally:
+            await engine.dispose()
+
+    return run(scenario)
+
+
+@pytest.mark.integration
+@requires_postgres
+def test_a_re_encoded_photograph_at_the_same_instant_is_refused_before_anything_is_written(
+    storage: InMemoryObjectStorage,
+) -> None:
+    """The other half of deduplication, which the digest cannot do.
+
+    `sha256` is over the stored bytes, so a HEIC converted again is a new
+    digest of the same photograph and the constraint lets it through as a new
+    physical copy. One phone does not photograph the same side twice in the
+    same second, so `(acquired_at, side)` is the identity a re-encode keeps —
+    and the check runs before the copy row, so a refusal leaves nothing behind.
+    """
+    instant = datetime(2026, 8, 29, 23, 17, 6, tzinfo=UTC)
+    taken = replace(FIRST_PARTY, acquired_at=instant)
+    copy_id, _ = ingest_whole_card(storage, front=a_photograph((10, 20, 30)), provenance=taken)
+
+    # Different bytes, the same instant and side: the stand-in for a re-encode.
+    with pytest.raises(AlreadyInCorpus) as refused:
+        ingest_whole_card(storage, front=a_photograph((40, 50, 60)), provenance=taken)
+
+    assert refused.value.physical_copy_id == copy_id
+    assert refused.value.side == "front"
+    assert str(copy_id) in str(refused.value)
+    assert len(fetch(sa.select(physical_copies))) == 1, "no copy row for a refused card"
+    assert len(fetch(sa.select(training_images))) == 1
+    assert len(storage.objects) == 1
+
+    # Controls. A second later is another photograph, and lands as its own copy;
+    # the other side at the same instant is the same card's back, and joins it.
+    later = replace(FIRST_PARTY, acquired_at=instant.replace(second=7))
+    other_copy, _ = ingest_whole_card(storage, front=a_photograph((40, 50, 60)), provenance=later)
+    assert other_copy != copy_id
+    _, joined = ingest_whole_card(
+        storage, back=a_photograph((70, 80, 90)), provenance=taken, physical_copy_id=copy_id
+    )
+    assert len(joined) == 1
+    assert len(fetch(sa.select(physical_copies))) == 2
+    assert len(fetch(sa.select(training_images))) == 3
+
+
+def test_the_refusal_names_the_side_the_instant_and_the_copy() -> None:
+    """The reader is the person holding the photograph, so the message says what to do."""
+    copy_id = uuid.UUID("de488450-b2bd-4206-b856-a7643d374c0f")
+    image_id = uuid.UUID("11111111-2222-3333-4444-555555555555")
+    instant = datetime(2026, 8, 29, 23, 17, 6, tzinfo=UTC)
+
+    refusal = AlreadyInCorpus(
+        side="front", acquired_at=instant, physical_copy_id=copy_id, training_image_id=image_id
+    )
+
+    message = str(refusal)
+    assert "front" in message
+    assert "2026-08-29T23:17:06+00:00" in message
+    assert str(copy_id) in message
+    assert "--physical-copy-id" in message
 
 
 @pytest.mark.integration

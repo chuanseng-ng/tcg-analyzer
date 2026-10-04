@@ -55,6 +55,7 @@ from tcg_api.analysis.image_validation import InvalidImage
 from tcg_api.config import Settings, get_settings
 from tcg_api.database import create_engine
 from tcg_api.datasets.ingestion import (
+    AlreadyInCorpus,
     ProvenanceRefused,
     TrainingImageProvenance,
     approved_pairs,
@@ -594,8 +595,21 @@ async def _ingest_row(
     except (InvalidImage, ProvenanceRefused) as refusal:
         logger.error("row %d refused: %s", row.number, refusal)
         return "refused", None
+    except AlreadyInCorpus as known:
+        # The same photograph exported again: a HEIC converted twice is two
+        # digests and one capture instant. The output CSV names the copy it
+        # already belongs to, which is the identifier the grade will need.
+        logger.info(
+            "row %d is already in the corpus as copy %s (same capture instant, re-encoded); "
+            "a re-run skips what landed",
+            row.number,
+            known.physical_copy_id,
+        )
+        return "already_present", known.physical_copy_id
     except IntegrityError as conflict:
         if "uq_training_images_sha256" in str(conflict.orig):
+            # Byte-identical, so the row is known only by its digest: the copy
+            # it belongs to is not in the error, and the CSV leaves it blank.
             logger.info("row %d is already in the corpus; a re-run skips what landed", row.number)
             return "already_present", None
         logger.error("row %d refused by the database: %s", row.number, conflict.orig)

@@ -132,7 +132,11 @@ uv run tcg-ingest-training-batch --manifest cards.csv --timezone +08:00 --source
 - **It loops one card's transaction; it never widens it.** A row that fails is
   logged by number and skipped, and the rows before it stand.
 - **Re-running is safe.** A photograph already in the corpus is a refusal
-  (`uq_training_images_sha256`), so a resumed run skips what landed.
+  (`uq_training_images_sha256`), so a resumed run skips what landed. The same
+  photograph exported again — a HEIC converted twice is two digests — is refused
+  on its capture instant and side instead, and reported `already_present` with
+  the copy it belongs to. So a manifest that lists cards already in the corpus
+  does no harm: they skip, and the output CSV names their existing copy ids.
 - **Whatever Pillow can decode becomes a JPEG or a PNG.** A HEIC straight off a
   phone converts to lossless PNG; a file that is already JPEG or PNG is stored
   byte for byte, never re-encoded.

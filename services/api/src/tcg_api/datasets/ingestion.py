@@ -53,7 +53,11 @@ An already-ingested photograph is a **refusal**, not a silent skip.
 `uq_training_images_sha256` is the exact-duplicate half of deduplication and all
 of it this issue owns — the near-duplicate half is #155's — and "no
 deduplication beyond whatever a unique constraint gives for free" is an explicit
-non-goal, so the constraint is left to do the whole job.
+non-goal, so the constraint is left to do the whole job. One case escapes it:
+the digest is over the stored bytes, so a HEIC converted again is a new digest
+of the same photograph. :func:`ingest_card` closes that with the other identity
+a re-encode keeps, the capture instant and the side — see
+:class:`AlreadyInCorpus`.
 
 The command line is in this module rather than beside it, following
 `tcg_api/grading/seed.py` and `tcg_api/catalog/import_catalog.py`: both keep
@@ -90,6 +94,7 @@ __all__ = [
     "APPROVED_SOURCES",
     "GATED_FIELDS",
     "NAMESPACE",
+    "AlreadyInCorpus",
     "IngestedImage",
     "ProvenanceRefused",
     "TrainingImageProvenance",
@@ -166,6 +171,50 @@ class ProvenanceRefused(ValueError):
     message names the rule and the field, never the constraint: the reader is
     the person holding the photograph.
     """
+
+
+class AlreadyInCorpus(ValueError):
+    """A photograph of this side at this instant is already in the corpus.
+
+    `uq_training_images_sha256` catches the same bytes; this catches the same
+    photograph exported again, which is a new digest. One phone does not take
+    two photographs of the same side in the same second, so `(acquired_at,
+    side)` is the identity a re-encode keeps.
+
+    Args:
+        side: The side that collided.
+        acquired_at: The instant both photographs claim.
+        physical_copy_id: The copy the corpus already files it under, or `None`
+            for approved class 4, whose copies nothing identifies.
+        training_image_id: The row that is already there.
+    """
+
+    def __init__(
+        self,
+        *,
+        side: str,
+        acquired_at: datetime,
+        physical_copy_id: uuid.UUID | None,
+        training_image_id: uuid.UUID,
+    ) -> None:
+        self.side = side
+        self.acquired_at = acquired_at
+        self.physical_copy_id = physical_copy_id
+        self.training_image_id = training_image_id
+        filed_under = (
+            f"copy {physical_copy_id}" if physical_copy_id is not None else "no copy, class 4"
+        )
+        later_session = (
+            f" Leave this card out of the manifest, or pass --physical-copy-id "
+            f"{physical_copy_id} for a genuinely later session's photographs."
+            if physical_copy_id is not None
+            else ""
+        )
+        super().__init__(
+            f"the {side} was taken at {acquired_at.isoformat()}, the instant of a photograph "
+            f"already in the corpus ({filed_under}, image {training_image_id}); a re-encode "
+            f"is a new digest of the same photograph.{later_session}"
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -514,6 +563,39 @@ async def _resolve_copy(
     return copy_id
 
 
+async def _refuse_if_already_in_corpus(
+    connection: AsyncConnection, *, side: str, acquired_at: datetime
+) -> None:
+    """The re-encode check: same side, same capture instant, already a row.
+
+    Here and not in :func:`ingest_training_image`, because the consent route
+    reaches that one directly with an upload's `created_at`, where two
+    strangers in the same second are two photographs and a refusal would be
+    wrong. Both commands come through :func:`ingest_card`, and a command's
+    `acquired_at` is a camera's instant.
+
+    ponytail: a full scan on `acquired_at` — the corpus is tens of rows, and an
+    index is a migration for a column nobody else filters on. If an instant
+    ever collides for real (two cameras, one second), the exact upgrade is a
+    digest over the decoded pixels, not a looser check here.
+    """
+    existing = (
+        await connection.execute(
+            sa.select(training_images.c.id, training_images.c.physical_copy_id).where(
+                training_images.c.acquired_at == acquired_at,
+                training_images.c.side == side,
+            )
+        )
+    ).first()
+    if existing is not None:
+        raise AlreadyInCorpus(
+            side=side,
+            acquired_at=acquired_at,
+            physical_copy_id=existing.physical_copy_id,
+            training_image_id=existing.id,
+        )
+
+
 async def ingest_card(
     engine: AsyncEngine,
     storage: ObjectStorage,
@@ -557,12 +639,21 @@ async def ingest_card(
         InvalidImage: If a photograph is empty, oversized, not a JPEG or PNG, or
             cannot be decoded.
         ProvenanceRefused: If ADR 0008 does not admit it.
+        AlreadyInCorpus: If a photograph of the same side at the same instant
+            is already in the corpus — the same photograph exported again,
+            which the digest cannot see. Checked before the copy row is
+            written, so nothing is left behind.
         IntegrityError: If a photograph is already in the corpus, or the row
             names a card or copy that is not.
     """
     ingested: list[IngestedImage] = []
     try:
         async with engine.begin() as connection:
+            for side, data in (("front", front), ("back", back)):
+                if data is not None:
+                    await _refuse_if_already_in_corpus(
+                        connection, side=side, acquired_at=provenance.acquired_at
+                    )
             copy_id = await _resolve_copy(
                 connection,
                 source=provenance.source,
@@ -646,10 +737,7 @@ def main() -> int:
 
     try:
         copy_id, ingested = asyncio.run(run(arguments))
-    except ProvenanceRefused as refusal:
-        logger.error("training image refused: %s", refusal)
-        return 1
-    except InvalidImage as refusal:
+    except (ProvenanceRefused, InvalidImage, AlreadyInCorpus) as refusal:
         logger.error("training image refused: %s", refusal)
         return 1
     except IntegrityError as conflict:
