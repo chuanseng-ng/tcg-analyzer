@@ -209,7 +209,10 @@ refused once, before a photograph is opened.
   card's: `acquired_at` belongs to the provenance record, which is one card's.
 - **A bad row is logged by number and skipped**, and the exit code is 1 if any
   were. A photograph already in the corpus reports `already_present` rather than
-  failing, which is what makes a resumed run safe.
+  failing, which is what makes a resumed run safe. That covers a re-encode too:
+  a HEIC converted again is a new digest, so the command also refuses a
+  photograph of the same side at the same capture instant, and in that case the
+  output CSV carries the copy it already belongs to.
 - **`cards.ingested.csv` lands beside the manifest** with the `physical_copy_id`
   per row — the mapping `tcg-record-grading-outcome` needs when the slabs come
   back. `--output` moves it.
@@ -231,7 +234,12 @@ them is not ours.
 A source outside ADR 0008's four approved classes is refused by name. A
 photograph already in the corpus is refused too — `sha256` is unique here, where
 `images.sha256` in the analysis domain deliberately is not — and because the row
-is written before the bytes are, that refusal stores nothing at all.
+is written before the bytes are, that refusal stores nothing at all. The digest
+is over the stored bytes, so the same photograph exported again would pass it;
+both commands therefore also refuse a photograph of the same side at the same
+`acquired_at`, naming the copy it is already filed under, before any row is
+written. A genuinely later session has a later instant and goes in with
+`--physical-copy-id`.
 
 Validation is the analysis domain's, reused rather than reimplemented: the type
 is sniffed instead of trusted, the byte and pixel limits apply separately, and
