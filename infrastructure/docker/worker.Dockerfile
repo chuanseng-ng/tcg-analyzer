@@ -33,7 +33,7 @@
 # (dependabot-core#5103). Inline, the digest below would be pinned once and
 # then never bumped again, which is the opposite of what pinning it is for.
 # --------------------------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
 
 # --------------------------------------------------------------------------
 # Builder — resolve the workspace, plus the worker's extra, into a virtual
